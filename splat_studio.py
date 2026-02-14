@@ -1,3 +1,7 @@
+import tkinter as tk
+from tkinter import filedialog, ttk, messagebox
+import subprocess
+import threading
 import os
 import sys
 import queue
