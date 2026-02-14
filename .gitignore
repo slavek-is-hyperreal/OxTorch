@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+ENV/
+
+# Project Data (Important!)
+output/
+video/
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# COLMAP / Open3D / Taichi artifacts
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.ply
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
+
+# Project Checkpoints
+*.splatproj
