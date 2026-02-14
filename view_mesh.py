@@ -55,19 +55,39 @@ def main():
         window.show()
 
 if __name__ == "__main__":
-    # Actually, Open3D's visualization is much better for large meshes
-    # Let's provide an Open3D based viewer instead for better UX.
     import open3d as o3d
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=str, default="output/room_mesh.obj")
+    parser.add_argument("--input", type=str, default="output/reconstruction.ply")
     args = parser.parse_args()
     
     if os.path.exists(args.input):
         print(f"Opening {args.input} in Open3D Viewer...")
+        
+        # Determine geometry type
+        # Open3D's draw_geometries can take a list of things
+        geometries = []
+        
+        # Try loading as mesh
         mesh = o3d.io.read_triangle_mesh(args.input)
-        mesh.compute_vertex_normals()
-        o3d.visualization.draw_geometries([mesh], window_name="3D Mesh Viewer",
-                                          width=1280, height=720,
-                                          mesh_show_back_face=True)
+        if mesh.has_triangles():
+            mesh.compute_vertex_normals()
+            geometries.append(mesh)
+        else:
+            # Try loading as LineSet (Graph)
+            ls = o3d.io.read_line_set(args.input)
+            if ls.has_lines():
+                geometries.append(ls)
+            else:
+                # Fallback to PointCloud
+                pcd = o3d.io.read_point_cloud(args.input)
+                if pcd.has_points():
+                    geometries.append(pcd)
+        
+        if not geometries:
+            print("Unsupported or empty geometry file.")
+        else:
+            o3d.visualization.draw_geometries(geometries, window_name="Splat Research Viewer",
+                                              width=1280, height=720,
+                                              mesh_show_back_face=True)
     else:
         print(f"File {args.input} not found.")

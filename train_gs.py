@@ -4,6 +4,7 @@ import argparse
 import os
 import struct
 from PIL import Image
+import random
 
 # Initialize Taichi with Vulkan backend
 ti.init(arch=ti.vulkan, device_memory_GB=1.5)
@@ -194,6 +195,13 @@ class GaussianModel:
                     count += 1
             canvas[i, j] = acc / count
 
+    @ti.kernel
+    def update_params(self, lr: ti.f32):
+        for i in range(self.num_points):
+            self.pos[i] -= lr * self.pos.grad[i]
+            for j, k in ti.static(ti.ndrange(1, 3)):
+                self.sh[i, j, k] -= lr * self.sh.grad[i, j, k]
+
     def export_ply(self, path):
         pos = self.pos.to_numpy()
         color = self.display_color.to_numpy()
@@ -310,7 +318,7 @@ def main():
         print(f"Starting Training on {len(images)} images...")
         img_list = list(images.values())
         for i in range(args.iterations):
-            img_data = np.random.choice(img_list)
+            img_data = random.choice(img_list)
             cam = cameras[img_data["cam_id"]]
             img_path = os.path.join(args.img_path, img_data["name"])
             

@@ -63,8 +63,20 @@ class SplatEditor:
         tk.Entry(config_frame, textvariable=self.iter_var).grid(row=1, column=1, sticky="w")
 
         # AI Enhancement Toggle
-        self.ai_var = tk.BooleanVar(value=True)
+        self.ai_var = tk.BooleanVar(value=False) # Default to off as per user request
         tk.Checkbutton(config_frame, text="Enable AI Depth Auto-Density (CPU)", variable=self.ai_var, font=("Helvetica", 10, "bold")).grid(row=2, column=0, columnspan=2, sticky="w", pady=5)
+
+        # Research Section
+        research_frame = tk.LabelFrame(self.root, text="Impressionistic Research (Experimental)", padx=10, pady=10)
+        research_frame.pack(fill="x", padx=20, pady=5)
+        
+        self.reconstruct_mode = tk.StringVar(value="orbital")
+        tk.Radiobutton(research_frame, text="Method A: Orbital Field", variable=self.reconstruct_mode, value="orbital").grid(row=0, column=0, sticky="w")
+        tk.Radiobutton(research_frame, text="Method B: Statistical Graph", variable=self.reconstruct_mode, value="graph").grid(row=0, column=1, sticky="w")
+        tk.Radiobutton(research_frame, text="Method C: Impresjonista", variable=self.reconstruct_mode, value="impressionist").grid(row=0, column=2, sticky="w")
+        
+        reconstruct_btn = tk.Button(research_frame, text="RUN RESEARCH RECONSTRUCTION", command=self.run_reconstruction_manual, bg="#FF9800", fg="white", font=("Helvetica", 9, "bold"))
+        reconstruct_btn.grid(row=1, column=0, columnspan=3, pady=5, sticky="ew")
 
         # Controls
         ctrl_frame = tk.Frame(self.root)
@@ -220,6 +232,29 @@ class SplatEditor:
                 
             # Launch viewer
             subprocess.Popen([sys.executable, "train_gs.py", "--view"])
+            
+    def run_reconstruction_manual(self):
+        mode = self.reconstruct_mode.get()
+        if not os.path.exists("output/trained_splats.ply"):
+            messagebox.showwarning("Incomplete", "Please run Phase 4 (Training) first to get the .ply model.")
+            return
+        
+        self.log(f"Starting {mode} reconstruction research...")
+        threading.Thread(target=self.run_reconstruction_thread, args=(mode,), daemon=True).start()
+
+    def run_reconstruction_thread(self, mode):
+        try:
+            self.set_status(f"Stage 5/5: Researching {mode}...", 0)
+            cmd = [sys.executable, "gs_to_mesh.py", "--input", "output/trained_splats.ply", "--mode", mode, "--output", f"output/research_{mode}.ply"]
+            self.run_command(cmd, f"Reconstructing ({mode})", 0, 100)
+            self.log(f"Success! Result saved to output/research_{mode}.ply")
+            self.set_status("Reconstruction Done!", 100)
+            
+            if messagebox.askyesno("Complete", f"Research model '{mode}' generated. Open Research Viewer?"):
+                subprocess.Popen([sys.executable, "view_mesh.py", "--input", f"output/research_{mode}.ply"])
+        except Exception as e:
+            self.log(f"Reconstruction failed: {e}")
+            self.set_status("Error in Stage 5", 0)
 
     def stop_pipeline(self):
         if self.process:
