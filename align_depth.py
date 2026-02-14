@@ -1,10 +1,13 @@
 import os
+os.environ["TORCH_CPP_LOG_LEVEL"] = "ERROR" # Suppress NNPACK warnings
 import argparse
 import torch
 import numpy as np
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 import struct
+import warnings
+warnings.filterwarnings("ignore")
 
 def read_colmap_images(path):
     # Minimal reader for R, T and names
@@ -51,19 +54,32 @@ def main():
     
     dense_points = []
     
-    print(f"Processing {len(images)} images for AI Depth...")
+    print(f"Processing every 10th image ({len(images)//10} total) for AI Depth...")
     for i, (img_id, data) in enumerate(images.items()):
+        # Optimization 2: Skip redundant temporal frames
+        if i % 10 != 0:
+            continue
+            
         img_file = os.path.join(args.img_path, data["name"])
         image = Image.open(img_file).convert("RGB")
         
+        # Optimization 1: Downscale for faster CPU inference
+        max_dim = 512
+        w, h = image.size
+        scale = max_dim / max(w, h)
+        if scale < 1.0:
+            low_res_img = image.resize((int(w * scale), int(h * scale)), Image.BILINEAR)
+        else:
+            low_res_img = image
+        
         # AI Inference
-        inputs = processor(images=image, return_tensors="pt").to(device)
+        inputs = processor(images=low_res_img, return_tensors="pt").to(device)
         with torch.no_grad():
             outputs = model(**inputs)
             depth = outputs.predicted_depth
         
-        # Resize depth to match original image
-        depth = torch.nn.functional.interpolate(depth.unsqueeze(1), size=image.size[::-1], mode="bicubic", align_corners=False)
+        # Resize depth to match original image size for reprojection
+        depth = torch.nn.functional.interpolate(depth.unsqueeze(1), size=(h, w), mode="bicubic", align_corners=False)
         depth = depth.squeeze().cpu().numpy()
         
         # Simple reprojection (simplified focal, assuming cam_id=1)
