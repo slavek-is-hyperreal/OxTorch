@@ -45,10 +45,13 @@ class NoGrad:
     def __exit__(self, *a): pass
 torch.no_grad = lambda: NoGrad()
 
-# 5. THE MAGIC: Hijack sys.modules
-sys.modules['torch'] = torch
-sys.modules['torch.nn'] = nn
-sys.modules['torch.nn.functional'] = functional
+# 5. Optional: Hijack sys.modules
+def hijack_torch():
+    """Call this to force other libraries to use VulkanNN instead of real PyTorch."""
+    sys.modules['torch'] = torch
+    sys.modules['torch.nn'] = nn
+    sys.modules['torch.nn.functional'] = functional
+    print("VulkanTorch: Global Hijack Active!")
 
 # Export for 'import vulkan_torch as torch'
 F = functional
@@ -58,4 +61,4 @@ no_grad = torch.no_grad
 load = torch.load
 device = torch.device
 
-print("VulkanTorch: SUCCESS! Full PyTorch Namespace Hijacked. Running on Vulkan.")
+print("VulkanTorch: Shim loaded. Use hijack_torch() to replace real PyTorch globally.")

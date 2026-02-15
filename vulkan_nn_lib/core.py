@@ -16,9 +16,15 @@ def k_zero(X: ti.types.ndarray(), Total: int):
         X[i] = 0.0
 
 @ti.kernel
+def k_copy(Src: ti.types.ndarray(), Dst: ti.types.ndarray(), Total: int):
+    for i in range(Total):
+        Dst[i] = Src[i]
+
+
+@ti.kernel
 def k_rope(X: ti.types.ndarray(), cos: ti.types.ndarray(), sin: ti.types.ndarray(), 
-           B: int, L: int, H: int, D: int):
-    # Rotary Positional Embedding
+           B: int, L: int, H: int, D: int, pos_offset: int):
+    # Rotary Positional Embedding with absolute position support
     for b, l, h, i in ti.ndrange(B, L, H, D // 2):
         idx1 = ((b * L + l) * H + h) * D + i
         idx2 = ((b * L + l) * H + h) * D + i + D // 2
@@ -26,8 +32,9 @@ def k_rope(X: ti.types.ndarray(), cos: ti.types.ndarray(), sin: ti.types.ndarray
         v1 = X[idx1]
         v2 = X[idx2]
         
-        c = cos[l * (D // 2) + i]
-        s = sin[l * (D // 2) + i]
+        abs_pos = pos_offset + l
+        c = cos[abs_pos * (D // 2) + i]
+        s = sin[abs_pos * (D // 2) + i]
         
         X[idx1] = v1 * c - v2 * s
         X[idx2] = v1 * s + v2 * c
@@ -157,6 +164,11 @@ def k_mul(A: ti.types.ndarray(), B: ti.types.ndarray(), Total: int):
         A[i] *= B[i]
 
 @ti.kernel
+def k_scale(A: ti.types.ndarray(), scale: float, Total: int):
+    for i in range(Total):
+        A[i] *= scale
+
+@ti.kernel
 def k_kv_cache_update(K_cache: ti.types.ndarray(), V_cache: ti.types.ndarray(),
                      K_new: ti.types.ndarray(), V_new: ti.types.ndarray(),
                      B: int, L_new: int, H: int, D: int, pos_offset: int, max_len: int):
@@ -169,12 +181,17 @@ def k_kv_cache_update(K_cache: ti.types.ndarray(), V_cache: ti.types.ndarray(),
 
 @ti.kernel
 def k_attention(Q: ti.types.ndarray(), K: ti.types.ndarray(), V: ti.types.ndarray(), Out: ti.types.ndarray(),
-                B: int, L_q: int, L_k: int, H: int, D: int, scale: float):
-    # Scale Dot-Product Attention optimized
+                B: int, L_q: int, L_k: int, H: int, D: int, scale: float, pos_offset: int):
+    # Causal Scaled Dot-Product Attention
     for b, h, i in ti.ndrange(B, H, L_q):
+        # Causal: query at position (pos_offset + i) can attend to keys at positions 0..pos_offset+i
+        causal_limit = pos_offset + i + 1
+        if causal_limit > L_k:
+            causal_limit = L_k
+        
         # 1. Calculate Max for Softmax stability
         max_score = -1e30
-        for j in range(L_k):
+        for j in range(causal_limit):
             attn_score = 0.0
             for d in range(D):
                 idx_q = (((b * L_q + i) * H + h) * D + d)
@@ -185,14 +202,14 @@ def k_attention(Q: ti.types.ndarray(), K: ti.types.ndarray(), V: ti.types.ndarra
             
         # 2. Calculate Softmax Denominator (ExpSum)
         expsum = 0.0
-        for j in range(L_k):
+        for j in range(causal_limit):
             score = 0.0
             for d in range(D):
                 score += Q[(((b * L_q + i) * H + h) * D + d)] * K[(((b * L_k + j) * H + h) * D + d)]
             expsum += ti.exp(score * scale - max_score)
             
-        # 3. Weighted Sum of Values (One pass over D)
-        for j in range(L_k):
+        # 3. Weighted Sum of Values
+        for j in range(causal_limit):
             score = 0.0
             for d2 in range(D):
                 score += Q[(((b * L_q + i) * H + h) * D + d2)] * K[(((b * L_k + j) * H + h) * D + d2)]
@@ -244,6 +261,12 @@ class Tensor:
     @shape.setter
     def shape(self, val):
         self._shape = val
+
+    def clone(self):
+        """Create a deep copy with its own GPU buffer (GPU-only, no CPU roundtrip)."""
+        new_t = Tensor(None, shape=self.shape)
+        k_copy(self.arr, new_t.arr, self.total_size)
+        return new_t
 
     def squeeze(self, dim=None):
         if dim is None:
@@ -323,7 +346,8 @@ class Linear(Module):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        w_data = np.random.randn(in_features, out_features).astype(np.float32) * np.sqrt(2.0 / in_features)
+        # Use zeros instead of randn for faster initialization; weights are typically loaded from disk.
+        w_data = np.zeros((in_features, out_features), dtype=np.float32)
         self.weight = Tensor(w_data)
         self.has_bias = bias
         if bias:
@@ -357,8 +381,8 @@ class TiledLinear(Module):
         self.out_features = out_features
         self.tile_size = tile_size
         
-        # Store weights in RAM (numpy) instead of Tensor/VRAM
-        self.weight_ram = np.random.randn(in_features, out_features).astype(np.float32) * np.sqrt(2.0 / in_features)
+        # Store weights in RAM (numpy). Use zeros for fast initialization.
+        self.weight_ram = np.zeros((in_features, out_features), dtype=np.float32)
         
         self.has_bias = bias
         if bias:
@@ -472,6 +496,34 @@ class Embedding(Module):
         k_embedding_1d(x.arr, self.weight.arr, out.arr, B, L, D)
         return out
 
+class TiledEmbedding(Module):
+    def __init__(self, num_embeddings, embedding_dim):
+        super().__init__()
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+        # Keep weights in RAM. Use zeros for fast initialization.
+        self.weight_ram = np.zeros((num_embeddings, embedding_dim), dtype=np.float32)
+        # Small temporary buffer for transfer if needed, but for embedding we can direct copy
+        self.weight = Tensor(None, shape=(1, embedding_dim)) # Placeholder for state_dict compatibility
+
+    def forward(self, x: Tensor) -> Tensor:
+        # x is (B, L)
+        indices = x.to_numpy().flatten().astype(np.int32)
+        B, L = x.shape
+        D = self.embedding_dim
+        
+        # Fetch only the required rows from RAM
+        # This is very memory efficient for sparse lookups (LLM inference)
+        vectors = self.weight_ram[indices].reshape(B, L, D)
+        
+        # Create output tensor on GPU and copy data
+        out = Tensor(vectors)
+        return out
+
+    def load_weight(self, data):
+        self.weight_ram = data
+        self.weight.shape = data.shape # Update placeholder shape
+
 class Conv2d(Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, bias=True):
         super().__init__()
@@ -544,23 +596,26 @@ class Concatenate(Module):
 
 class RoPE(Module):
     """Rotary Positional Embedding layer."""
-    def forward(self, x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
+    def forward(self, x: Tensor, cos: Tensor, sin: Tensor, pos_offset: int = 0) -> Tensor:
         B, L, H, D = x.shape
-        k_rope(x.arr, cos.arr, sin.arr, B, L, H, D)
+        k_rope(x.arr, cos.arr, sin.arr, B, L, H, D, pos_offset)
         return x
 
 class Gemma3Block(Module):
-    """A real Gemma 3 Transformer Block (MatFormer-ready)."""
-    def __init__(self, hidden_size=2048, num_heads=16, intermediate_size=8192, tile_size=1024):
+    """A real Gemma 3 Transformer Block with GQA support."""
+    def __init__(self, hidden_size=2048, num_heads=8, num_kv_heads=2, head_dim=256, intermediate_size=8192, tile_size=1024):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads
+        self.head_dim = head_dim
+        self.num_groups = num_heads // num_kv_heads  # GQA group ratio
         
-        # Attention Projections
-        self.q_proj = MatFormerLinear(hidden_size, hidden_size, bias=False, tile_size=tile_size)
-        self.k_proj = MatFormerLinear(hidden_size, hidden_size, bias=False, tile_size=tile_size)
-        self.v_proj = MatFormerLinear(hidden_size, hidden_size, bias=False, tile_size=tile_size)
-        self.o_proj = MatFormerLinear(hidden_size, hidden_size, bias=False, tile_size=tile_size)
+        # Attention Projections (GQA: K/V are smaller)
+        self.q_proj = MatFormerLinear(hidden_size, num_heads * head_dim, bias=False, tile_size=tile_size)
+        self.k_proj = MatFormerLinear(hidden_size, num_kv_heads * head_dim, bias=False, tile_size=tile_size)
+        self.v_proj = MatFormerLinear(hidden_size, num_kv_heads * head_dim, bias=False, tile_size=tile_size)
+        self.o_proj = MatFormerLinear(num_heads * head_dim, hidden_size, bias=False, tile_size=tile_size)
         
         # MatFormer FFN (Gated MLP)
         self.gate_proj = MatFormerLinear(hidden_size, intermediate_size, bias=False, tile_size=tile_size)
@@ -575,30 +630,40 @@ class Gemma3Block(Module):
                 k_cache: Tensor = None, v_cache: Tensor = None, 
                 pos_offset: int = 0, sub_features=None) -> Tensor:
         # Pre-LN Attention
-        residual = x
+        residual = x.clone()  # Deep copy: RMSNorm modifies x in-place
         x = self.input_layernorm(x)
         
-        q = self.q_proj(x, sub_out_features=sub_features)
-        k = self.k_proj(x, sub_out_features=sub_features)
-        v = self.v_proj(x, sub_out_features=sub_features)
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
         
         B, L_new, _ = q.shape
-        H = self.num_heads
-        D = q.shape[-1] // H
+        H_q = self.num_heads
+        H_kv = self.num_kv_heads
+        D = self.head_dim
         
-        q.reshape(B, L_new, H, D)
-        k.reshape(B, L_new, H, D)
-        v.reshape(B, L_new, H, D)
+        q.reshape(B, L_new, H_q, D)
+        k.reshape(B, L_new, H_kv, D)
+        v.reshape(B, L_new, H_kv, D)
         
-        self.rope(q, cos, sin)
-        self.rope(k, cos, sin)
+        self.rope(q, cos, sin, pos_offset)
+        self.rope(k, cos, sin, pos_offset)
+        
+        # GQA: Repeat KV heads to match Q heads
+        # Each KV head is shared by (num_groups) Q heads
+        if H_kv < H_q:
+            k_np = k.to_numpy().reshape(B, L_new, H_kv, D)
+            v_np = v.to_numpy().reshape(B, L_new, H_kv, D)
+            k_expanded = np.repeat(k_np, self.num_groups, axis=2)  # (B, L, H_q, D)
+            v_expanded = np.repeat(v_np, self.num_groups, axis=2)
+            k = Tensor(k_expanded)
+            v = Tensor(v_expanded)
         
         # KV-Cache Update
         L_total = L_new
         if k_cache is not None:
              max_len = k_cache.shape[1]
-             k_kv_cache_update(k_cache.arr, v_cache.arr, k.arr, v.arr, B, L_new, H, D, pos_offset, max_len)
-             # Use the cache for attention
+             k_kv_cache_update(k_cache.arr, v_cache.arr, k.arr, v.arr, B, L_new, H_q, D, pos_offset, max_len)
              k_full = k_cache
              v_full = v_cache
              L_total = pos_offset + L_new
@@ -607,23 +672,22 @@ class Gemma3Block(Module):
              v_full = v
 
         # Real Scaled Dot-Product Attention
-        attn_out = Tensor(None, shape=(B, L_new, H, D))
+        attn_out = Tensor(None, shape=(B, L_new, H_q, D))
+        k_zero(attn_out.arr, attn_out.total_size)  # Critical: zero before += accumulation
         scale = 1.0 / ti.sqrt(float(D))
-        k_attention(q.arr, k_full.arr, v_full.arr, attn_out.arr, B, L_new, L_total, H, D, scale)
+        k_attention(q.arr, k_full.arr, v_full.arr, attn_out.arr, B, L_new, L_total, H_q, D, scale, pos_offset)
         
-        x = attn_out.reshape(B, L_new, H * D)
+        x = attn_out.reshape(B, L_new, H_q * D)
         x = self.o_proj(x)
         
         k_add(x.arr, residual.arr, x.total_size)
         
         # Pre-LN FFN
-        residual = x
+        residual = x.clone()  # Deep copy: RMSNorm modifies x in-place
         x = self.post_attention_layernorm(x)
         
-        inter_size = (sub_features * 4) if sub_features else None
-        
-        gate = self.gate_proj(x, sub_out_features=inter_size)
-        up = self.up_proj(x, sub_out_features=inter_size)
+        gate = self.gate_proj(x)
+        up = self.up_proj(x)
         
         SiLU()(gate)
         k_mul(gate.arr, up.arr, gate.total_size)
@@ -634,26 +698,36 @@ class Gemma3Block(Module):
         return x
 
 class Gemma3Model(Module):
-    """The full Gemma 3 Transformer Model."""
-    def __init__(self, num_layers=35, hidden_size=2048, num_heads=16, intermediate_size=8192, vocab_size=256000, tile_size=1024):
+    """The full Gemma 3 Transformer Model with GQA."""
+    def __init__(self, num_layers=30, hidden_size=2048, num_heads=8, num_kv_heads=2, head_dim=256, intermediate_size=8192, vocab_size=262400, tile_size=1024):
         super().__init__()
-        self.embed_tokens = Embedding(vocab_size, hidden_size)
-        self.layers = [Gemma3Block(hidden_size, num_heads, intermediate_size, tile_size) for _ in range(num_layers)]
-        for i, layer in enumerate(self.layers):
-             self._modules[f"layers.{i}"] = layer
+        self.hidden_size = hidden_size
+        self.embed_tokens = TiledEmbedding(vocab_size, hidden_size)
+        print("Initializing Transformer layers...")
+        self.layers = []
+        for i in range(num_layers):
+             if i % 5 == 0: print(f"Building layer {i}/{num_layers}...")
+             self.layers.append(Gemma3Block(hidden_size, num_heads, num_kv_heads, head_dim, intermediate_size, tile_size))
+             self._modules[f"layers.{i}"] = self.layers[-1]
+        
         self.norm = RMSNorm(hidden_size)
-        # Logit head (often tied to embeddings in Gemma)
+        print("Initializing language modeling head...")
         self.lm_head = MatFormerLinear(hidden_size, vocab_size, bias=False, tile_size=tile_size)
 
     def forward(self, input_ids: Tensor, cos: Tensor, sin: Tensor, 
-                caches=None, pos_offset=0, sub_model_size=None) -> Tensor:
+                caches=None, pos_offset=0) -> Tensor:
         x = self.embed_tokens(input_ids)
+        
+        # Gemma-specific: scale embeddings by sqrt(hidden_size)
+        embed_scale = float(np.sqrt(self.hidden_size))
+        k_scale(x.arr, embed_scale, x.total_size)
+        
         for i, layer in enumerate(self.layers):
             k_cache = caches[i][0] if caches else None
             v_cache = caches[i][1] if caches else None
-            x = layer(x, cos, sin, k_cache, v_cache, pos_offset, sub_features=sub_model_size)
+            x = layer(x, cos, sin, k_cache, v_cache, pos_offset)
         x = self.norm(x)
-        logits = self.lm_head(x, sub_out_features=sub_model_size)
+        logits = self.lm_head(x)
         return logits
 
 def get_cos_sin(seq_len, head_dim, base=10000):
@@ -688,6 +762,7 @@ class nn:
     Softmax = Softmax
     RMSNorm = RMSNorm
     Embedding = Embedding
+    TiledEmbedding = TiledEmbedding
     MaxPool2d = MaxPool2d
     Upsample = Upsample
     Sequential = Sequential

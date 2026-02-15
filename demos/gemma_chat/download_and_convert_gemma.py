@@ -34,19 +34,30 @@ def download_gemma_3n():
         print(f"Download complete: {tar_path}")
     
     # 2. Extract
-    print(f"Extracting {tar_path}...")
-    with tarfile.open(tar_path, "r:gz") as tar:
-        tar.extractall(path=model_dir)
-    print(f"Extraction complete to {model_dir}")
+    # Check if any .safetensors or .bin files already exist to skip extraction
+    has_weights = any(f.endswith(".safetensors") or f.endswith(".bin") for f in os.listdir(model_dir)) if os.path.exists(model_dir) else False
+
+    if has_weights:
+        print(f"Weights already found in {model_dir}, skipping extraction.")
+    else:
+        print(f"Extracting {tar_path}...")
+        with tarfile.open(tar_path, "r:gz") as tar:
+            tar.extractall(path=model_dir)
+        print(f"Extraction complete to {model_dir}")
     
     # 3. Convert to VulkanNN format (Raw Binaries)
     print(f"--- Converting Weights to VulkanNN format ---")
     vulkan_weights_dir = "vulkan_nn_lib/weights/gemma_3n"
     os.makedirs(vulkan_weights_dir, exist_ok=True)
     
-    # Check if we have bin or safetensors
-    potential_files = [f for f in os.listdir(model_dir) if f.endswith(".bin") or f.endswith(".safetensors") or f.endswith(".pt")]
-    print(f"Found weight files: {potential_files}")
+    # Filter specifically for model shards to avoid unpickling other files (like gate_proj.bin artifacts)
+    potential_files = [f for f in os.listdir(model_dir) if (f.startswith("model") and f.endswith(".safetensors")) or (f.startswith("pytorch_model") and f.endswith(".bin"))]
+    
+    # If no specific shards found, fallback to anything with .bin or .safetensors but skip known non-weight files
+    if not potential_files:
+        potential_files = [f for f in os.listdir(model_dir) if f.endswith(".bin") or f.endswith(".safetensors")]
+    
+    print(f"Found weight shards to convert: {potential_files}")
     
     for weight_file in potential_files:
         full_path = os.path.join(model_dir, weight_file)

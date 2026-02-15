@@ -1,57 +1,56 @@
 # 🌌 Tensor Forever (VulkanNN)
 
-**Tensor Forever** is a universal, lightweight neural network engine built on **Taichi Vulkan**. It enables high-performance AI inference on virtually any GPU—from modern high-end cards to legacy hardware like AMD GCN 2—by bypassing CUDA and leveraging cross-platform SPIR-V kernels.
+**Tensor Forever** is a universal neural engine that brings modern AI (LLMs) to hardware that was previously "too old" or "too weak". 
 
-## 🚀 Key Features
-- **Virtual VRAM (Weight Paging)**: Run models larger than your GPU's physical memory by streaming weights in real-time.
-- **PyTorch Compatibility**: A seamless shim (`torch_shim.py`) allows you to run existing PyTorch-style code on Vulkan with zero modifications.
-- **Vendor Agnostic**: Works on Linux/Windows across AMD, Intel, and NVIDIA GPUs.
-- **Pure Python/Taichi**: Easy to modify, hack, and integrate without complex C++ build chains.
+By using **Taichi Vulkan**, we bypass the need for expensive NVIDIA GPUs and CUDA. If your computer has a graphics card (even an old one from 2013 like an AMD R7 260X), **Tensor Forever** can "reanimate" it to run Large Language Models like Gemma 3.
+
+---
+
+## 🚀 Beginner's Guide: Start Chatting in 5 Minutes
+
+If you just want to talk to an AI on your legacy hardware, follow these steps:
+
+### 1. Requirements
+You need **Linux** (e.g., Ubuntu, Mint) and **Python 3.10+**.
+Open your terminal and run:
+```bash
+sudo apt update && sudo apt install python3-venv python3-tk
+pip install taichi numpy transformers huggingface_hub tqdm safetensors
+```
+
+### 2. Setup Kaggle (For Model Weights)
+We use weights from Google's Gemma 3. To download them automatically:
+1. Go to [Kaggle.com](https://www.kaggle.com), log in, and click on your profile picture -> **Settings**.
+2. Click **Create New Token** to download a `kaggle.json` file.
+3. Create a folder named `vulkan_nn_lib` in this project and put `kaggle.json` inside it.
+
+### 3. Run the Chat
+Simply run this in your terminal:
+```bash
+# This will download the model, convert it, and start the chat!
+python3 demos/gemma_chat/chat_gemma.py
+```
+*Note: The first run will take some time to download and convert the weights (approx. 8-16GB).*
 
 ---
 
 ## 🏗 Project Structure
 
 ### 🛠 [Core Library (vulkan_nn_lib)](vulkan_nn_lib/)
-The heart of the engine. Contains the `Tensor` abstraction, GPU kernels (Attention, RoPE, MatMul), and the PyTorch compatibility layer.
+The heart of the engine. A standalone library you can import into your own Python projects to get GPU acceleration on any Vulkan card.
 
 ### 🎨 [Demo: Splat Studio](demos/splat_studio/)
 **Graphics Demonstrator**.
-A unified GUI for Gaussian Splatting and 3D reconstruction. It uses Tensor Forever to accelerate depth refinement and point cloud processing.
+Turn videos into 3D scenes (Gaussian Splatting) using Vulkan-accelerated depth processing.
 
 ### 🗨 [Demo: Gemma Chat](demos/gemma_chat/)
 **LLM Demonstrator**.
-An interactive chat interface for the **Gemma 3 Nano** model. Showcases the engine's ability to handle complex Transformers, KV-Caching, and Matryoshka (MatFormer) weight slicing.
+The interactive chat interface for **Gemma 3 Nano**. It uses our unique "Weight Paging" to run a 4B parameter model on cards with very low VRAM (e.g., 2GB).
 
 ---
 
-## ⚙️ Quick Start
-
-### 1. Requirements
-- Python 3.10+
-- Vulkan-capable drivers (e.g., Mesa/RADV on Linux)
-- A working Python Virtual Environment
-
-### 2. Install Dependencies
-```bash
-pip install taichi numpy
-```
-
-### 3. Usage Example (PyTorch Hijacking)
-```python
-import vulkan_nn_lib.torch_shim as torch
-
-# This now uses the Vulkan GPU backend!
-x = torch.randn(1, 128)
-linear = torch.nn.Linear(128, 64)
-output = linear(x)
-print(output.to_numpy())
-```
-
----
-
-## 📜 Documentation
-For detailed API references, kernel specifications, and advanced usage, see the [Library README](vulkan_nn_lib/README.md).
+## 💡 Why 'Tensor Forever'?
+Modern AI often requires buying new hardware every 2 years. We believe in sustainability and accessibility. **Tensor Forever** aims to make AI run on the hardware you already own, for as long as possible.
 
 ---
 *Created with 💙 for legacy hardware and the open AI ecosystem.*
