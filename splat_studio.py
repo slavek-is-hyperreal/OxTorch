@@ -74,9 +74,11 @@ class SplatEditor:
         tk.Radiobutton(research_frame, text="Method A: Orbital Field", variable=self.reconstruct_mode, value="orbital").grid(row=0, column=0, sticky="w")
         tk.Radiobutton(research_frame, text="Method B: Statistical Graph", variable=self.reconstruct_mode, value="graph").grid(row=0, column=1, sticky="w")
         tk.Radiobutton(research_frame, text="Method C: Impresjonista", variable=self.reconstruct_mode, value="impressionist").grid(row=0, column=2, sticky="w")
+        tk.Radiobutton(research_frame, text="Method D: Crystal Growth", variable=self.reconstruct_mode, value="crystal").grid(row=0, column=3, sticky="w")
+        tk.Radiobutton(research_frame, text="Method E: Crystal Nebula", variable=self.reconstruct_mode, value="nebula").grid(row=0, column=4, sticky="w")
         
         reconstruct_btn = tk.Button(research_frame, text="RUN RESEARCH RECONSTRUCTION", command=self.run_reconstruction_manual, bg="#FF9800", fg="white", font=("Helvetica", 9, "bold"))
-        reconstruct_btn.grid(row=1, column=0, columnspan=3, pady=5, sticky="ew")
+        reconstruct_btn.grid(row=1, column=0, columnspan=5, pady=5, sticky="ew")
 
         # Controls
         ctrl_frame = tk.Frame(self.root)
