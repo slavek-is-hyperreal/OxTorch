@@ -1,6 +1,6 @@
-# VulkanNN Library (`vulkan_nn_lib`)
+# Tensor Forever Library (`vulkan_nn_lib`)
 
-A lightweight, high-performance neural network abstraction layer built on **Taichi Vulkan**. It provides PyTorch-like API with GPU acceleration on any Vulkan-capable hardware.
+A lightweight, high-performance neural network abstraction layer built on **Taichi Vulkan**.
 
 ---
 

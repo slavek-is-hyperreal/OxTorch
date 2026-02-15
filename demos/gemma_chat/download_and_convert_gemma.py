@@ -17,19 +17,21 @@ def download_gemma_3n():
     model_dir = "weights_gemma_3n"
     os.makedirs(model_dir, exist_ok=True)
     tar_path = "gemma_3n_raw.tar.gz"
-    
-    print(f"--- Downloading Gemma 3n from Kaggle ---")
-    url = "https://www.kaggle.com/api/v1/models/google/gemma-3n/transformers/gemma-3n-e4b-it/2/download"
-    
-    # Use curl as per user's prompt
-    cmd = [
-        "curl", "-L", "-u", f"{username}:{key}",
-        "-o", tar_path,
-        url
-    ]
-    
-    subprocess.run(cmd, check=True)
-    print(f"Download complete: {tar_path}")
+    if os.path.exists(tar_path):
+        print(f"Tarball {tar_path} already exists, skipping download.")
+    else:
+        print(f"--- Downloading Gemma 3n from Kaggle ---")
+        url = "https://www.kaggle.com/api/v1/models/google/gemma-3n/transformers/gemma-3n-e4b-it/2/download"
+        
+        # Use curl as per user's prompt
+        cmd = [
+            "curl", "-L", "-u", f"{username}:{key}",
+            "-o", tar_path,
+            url
+        ]
+        
+        subprocess.run(cmd, check=True)
+        print(f"Download complete: {tar_path}")
     
     # 2. Extract
     print(f"Extracting {tar_path}...")
@@ -55,7 +57,9 @@ def download_gemma_3n():
              from safetensors.torch import load_file
              state_dict = load_file(full_path)
         else:
-             state_dict = torch.load(full_path, map_location="cpu")
+             # PyTorch 2.6 defaults to weights_only=True, but these old/custom weights need False
+             # It is safe because we just downloaded them.
+             state_dict = torch.load(full_path, map_location="cpu", weights_only=False)
              
         # Extract individual tensors
         for key, tensor in tqdm(state_dict.items(), desc=f"Converting {weight_file}"):

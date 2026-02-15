@@ -48,7 +48,7 @@ def download_gemma_3n_e2b():
              from safetensors.torch import load_file
              state_dict = load_file(full_path)
         else:
-             state_dict = torch.load(full_path, map_location="cpu")
+             state_dict = torch.load(full_path, map_location="cpu", weights_only=False)
              
         for key, tensor in tqdm(state_dict.items(), desc=f"Converting {weight_file}"):
             clean_name = key.replace(".", "_")

@@ -1,4 +1,8 @@
 import os
+import sys
+# Add project root to path so we can import vulkan_nn_lib
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+
 import time
 import numpy as np
 from transformers import AutoTokenizer
