@@ -8,167 +8,297 @@ import queue
 import json
 from datetime import datetime
 
+import zipfile
+import shutil
+import tempfile
+import hashlib
+
+class ProjectManager:
+    """Manages the .splatproj container (ZIP) and its temporary working directory."""
+    def __init__(self, log_callback):
+        self.log = log_callback
+        self.project_path = None # Path to .splatproj file
+        self.work_dir = None # Path to temp working folder
+        self.data = self._get_empty_data()
+        self._temp_dir_obj = None
+
+    def _get_empty_data(self):
+        return {
+            "name": "Untitled Project",
+            "videos": [], # list of { "path": ..., "name": ..., "size": ..., "mtime": ... }
+            "fps_caches": {}, # fps: { "stage": "done/dirty" }
+            "completed_stages": [],
+            "iterations": 2000,
+            "ai_enabled": False,
+            "research_mode": "classic",
+            "last_updated": ""
+        }
+
+    def new_project(self, save_path):
+        """Initializes a new project at the given path."""
+        self.project_path = save_path
+        self._temp_dir_obj = tempfile.TemporaryDirectory(prefix="splat_")
+        self.work_dir = self._temp_dir_obj.name
+        self.data = self._get_empty_data()
+        self.data["name"] = os.path.basename(save_path).replace(".splatproj", "")
+        
+        # Create folder structure in work_dir
+        os.makedirs(os.path.join(self.work_dir, "source"), exist_ok=True)
+        os.makedirs(os.path.join(self.work_dir, "cache/frames"), exist_ok=True)
+        os.makedirs(os.path.join(self.work_dir, "output"), exist_ok=True)
+        
+        self.save()
+        self.log(f"New project created: {save_path}")
+
+    def load_project(self, splatproj_path):
+        """Opens an existing .splatproj container."""
+        if not zipfile.is_zipfile(splatproj_path):
+            raise Exception("Selected file is not a valid .splatproj (ZIP) container.")
+            
+        self.project_path = splatproj_path
+        self._temp_dir_obj = tempfile.TemporaryDirectory(prefix="splat_")
+        self.work_dir = self._temp_dir_obj.name
+        
+        with zipfile.ZipFile(splatproj_path, 'r') as zip_ref:
+            zip_ref.extractall(self.work_dir)
+            
+        # Load metadata
+        proj_json = os.path.join(self.work_dir, "project.json")
+        if os.path.exists(proj_json):
+            with open(proj_json, "r") as f:
+                self.data = json.load(f)
+        
+        self.log(f"Project loaded: {os.path.basename(splatproj_path)}")
+        return self.data
+
+    def save(self):
+        """Syncs all data from work_dir back into the .splatproj ZIP container."""
+        if not self.work_dir or not self.project_path: return
+        
+        self.data["last_updated"] = datetime.now().isoformat()
+        with open(os.path.join(self.work_dir, "project.json"), "w") as f:
+            json.dump(self.data, f, indent=4)
+            
+        # Create ZIP from work_dir
+        with zipfile.ZipFile(self.project_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
+            for root, dirs, files in os.walk(self.work_dir):
+                for file in files:
+                    abs_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(abs_path, self.work_dir)
+                    zip_ref.write(abs_path, rel_path)
+        self.log("Project changes synced to container.")
+
+    def add_video(self, video_path, src_fps=30.0):
+        """Copies a video into the project and updates metadata."""
+        vid_name = os.path.basename(video_path)
+        dest = os.path.join(self.work_dir, "source", vid_name)
+        
+        # Check if already exists in project
+        stat = os.stat(video_path)
+        meta = {
+            "name": vid_name,
+            "path": video_path,
+            "size": stat.st_size,
+            "mtime": stat.st_mtime,
+            "src_fps": src_fps
+        }
+        
+        # Copy to internal source if not already there or changed
+        shutil.copy2(video_path, dest)
+        
+        if meta not in self.data["videos"]:
+            self.data["videos"].append(meta)
+            # invalidate frames/colmap if input changed
+            self.data["fps_caches"] = {} 
+            self.data["completed_stages"] = []
+            
+        self.save()
+
+    def get_frames_dir(self, fps):
+        """Returns the specific directory for the requested FPS cache."""
+        path = os.path.join(self.work_dir, "cache/frames", str(fps))
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def get_video_fps(self, video_path):
+        """Uses ffprobe to get the source FPS of a video."""
+        cmd = [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=r_frame_rate", "-of", "json", video_path
+        ]
+        try:
+            result = subprocess.check_output(cmd).decode()
+            data = json.loads(result)
+            rate_str = data["streams"][0]["r_frame_rate"]
+            num, den = map(int, rate_str.split('/'))
+            return num / den
+        except:
+            return 30.0 # Fallback
+
 class SplatEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("Splat Editor - 3D Gaussian Splatting Pipeline")
-        self.root.geometry("800x650")
+        self.root.title("Splat Studio Professional")
+        self.root.geometry("850x700")
         
         self.queue = queue.Queue()
         self.process = None
         self.is_running = False
-        self.project_data = {
-            "videos": [],
-            "fps": 24,
-            "iterations": 2000,
-            "ai_enabled": True,
-            "completed_stages": []
-        }
-        self.project_file = "output/project.json"
+        
+        self.pm = ProjectManager(self.log)
         
         self.setup_ui()
         self.check_queue()
-        self.load_project_auto()
-
+        
     def setup_ui(self):
         # Header
-        header = tk.Label(self.root, text="Splat Editor", font=("Helvetica", 24, "bold"))
+        header = tk.Label(self.root, text="SPLAT STUDIO", font=("Helvetica", 28, "bold"), fg="#2196F3")
         header.pack(pady=10)
 
+        # FILE OPS
+        file_frame = tk.Frame(self.root)
+        file_frame.pack(fill="x", padx=20)
+        tk.Button(file_frame, text="New Project", command=self.new_project).pack(side="left", padx=5)
+        tk.Button(file_frame, text="Open Project", command=self.load_project_manual).pack(side="left", padx=5)
+        self.proj_label = tk.Label(file_frame, text="No Project Loaded", fg="grey")
+        self.proj_label.pack(side="left", padx=20)
+
         # Input Section
-        input_frame = tk.LabelFrame(self.root, text="Input Videos", padx=10, pady=10)
+        input_frame = tk.LabelFrame(self.root, text="Project Videos (Stored inside .splatproj)", padx=10, pady=10)
         input_frame.pack(fill="x", padx=20, pady=5)
 
-        self.video_paths = []
-        self.video_listbox = tk.Listbox(input_frame, height=5)
+        self.video_listbox = tk.Listbox(input_frame, height=4)
         self.video_listbox.pack(side="left", fill="both", expand=True)
 
         btn_frame = tk.Frame(input_frame)
         btn_frame.pack(side="right", fill="y", padx=5)
 
-        tk.Button(btn_frame, text="Add Videos", command=self.add_videos).pack(fill="x")
-        tk.Button(btn_frame, text="Clear", command=self.clear_videos).pack(fill="x")
-        tk.Button(btn_frame, text="Load Project", command=self.load_project_manual, bg="#2196F3", fg="white").pack(fill="x", pady=5)
+        tk.Button(btn_frame, text="Add Video", command=self.add_videos).pack(fill="x")
+        tk.Button(btn_frame, text="Clear Project", command=self.clear_videos, fg="red").pack(fill="x", pady=2)
 
         # Config Section
-        config_frame = tk.LabelFrame(self.root, text="Configuration", padx=10, pady=10)
+        config_frame = tk.LabelFrame(self.root, text="Pipeline Configuration", padx=10, pady=10)
         config_frame.pack(fill="x", padx=20, pady=5)
 
-        tk.Label(config_frame, text="Frames per second:").grid(row=0, column=0, sticky="w")
+        tk.Label(config_frame, text="Target FPS (Multi-Cached):").grid(row=0, column=0, sticky="w")
         self.fps_var = tk.IntVar(value=24)
-        tk.Scale(config_frame, from_=1, to=60, orient="horizontal", variable=self.fps_var).grid(row=0, column=1, sticky="ew")
+        self.fps_slider = tk.Scale(config_frame, from_=1, to=60, orient="horizontal", variable=self.fps_var, state="disabled")
+        self.fps_slider.grid(row=0, column=1, sticky="ew")
 
         tk.Label(config_frame, text="Training Iterations:").grid(row=1, column=0, sticky="w")
         self.iter_var = tk.IntVar(value=2000)
         tk.Entry(config_frame, textvariable=self.iter_var).grid(row=1, column=1, sticky="w")
 
-        # AI Enhancement Toggle
-        self.ai_var = tk.BooleanVar(value=False) # Default to off as per user request
-        tk.Checkbutton(config_frame, text="Enable AI Depth Auto-Density (CPU)", variable=self.ai_var, font=("Helvetica", 10, "bold")).grid(row=2, column=0, columnspan=2, sticky="w", pady=5)
+        self.ai_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(config_frame, text="Enable AI Depth Auto-Density", variable=self.ai_var).grid(row=2, column=0, columnspan=2, sticky="w")
 
         # Research Section
-        research_frame = tk.LabelFrame(self.root, text="Impressionistic Research (Experimental)", padx=10, pady=10)
+        research_frame = tk.LabelFrame(self.root, text="Research Reconstruction (Level 10.1 Crystal Nebula Enabled)", padx=10, pady=10)
         research_frame.pack(fill="x", padx=20, pady=5)
         
-        self.reconstruct_mode = tk.StringVar(value="orbital")
-        tk.Radiobutton(research_frame, text="Method A: Orbital Field", variable=self.reconstruct_mode, value="orbital").grid(row=0, column=0, sticky="w")
-        tk.Radiobutton(research_frame, text="Method B: Statistical Graph", variable=self.reconstruct_mode, value="graph").grid(row=0, column=1, sticky="w")
-        tk.Radiobutton(research_frame, text="Method C: Impresjonista", variable=self.reconstruct_mode, value="impressionist").grid(row=0, column=2, sticky="w")
-        tk.Radiobutton(research_frame, text="Method D: Crystal Growth", variable=self.reconstruct_mode, value="crystal").grid(row=0, column=3, sticky="w")
-        tk.Radiobutton(research_frame, text="Method E: Crystal Nebula", variable=self.reconstruct_mode, value="nebula").grid(row=0, column=4, sticky="w")
+        self.reconstruct_mode = tk.StringVar(value="nebula")
+        modes = [
+            ("Method 0: Classic Gaussian", "classic"),
+            ("Method A: Orbital Field", "orbital"), 
+            ("Method B: Statistical Graph", "graph"), 
+            ("Method C: Impresjonista", "impressionist"), 
+            ("Method D: Crystal Growth", "crystal"), 
+            ("Method E: Crystal Nebula", "nebula")
+        ]
+        for i, (name, val) in enumerate(modes):
+            row = i // 3
+            col = i % 3
+            tk.Radiobutton(research_frame, text=name, variable=self.reconstruct_mode, value=val).grid(row=row, column=col, sticky="w")
         
-        reconstruct_btn = tk.Button(research_frame, text="RUN RESEARCH RECONSTRUCTION", command=self.run_reconstruction_manual, bg="#FF9800", fg="white", font=("Helvetica", 9, "bold"))
-        reconstruct_btn.grid(row=1, column=0, columnspan=5, pady=5, sticky="ew")
+        reconstruct_btn = tk.Button(research_frame, text="RUN RESEARCH ON CURRENT SPLATS", command=self.run_reconstruction_manual, bg="#FF9800", fg="white", font=("Helvetica", 9, "bold"))
+        reconstruct_btn.grid(row=3, column=0, columnspan=3, pady=5, sticky="ew")
 
         # Controls
         ctrl_frame = tk.Frame(self.root)
         ctrl_frame.pack(pady=10)
 
-        self.start_btn = tk.Button(ctrl_frame, text="START PIPELINE", font=("Helvetica", 12, "bold"), 
-                                   bg="#4CAF50", fg="white", padx=20, pady=10, command=self.start_pipeline)
+        self.start_btn = tk.Button(ctrl_frame, text="START PIPELINE", font=("Helvetica", 12, "bold"), bg="#4CAF50", fg="white", width=20, command=self.start_pipeline)
         self.start_btn.pack(side="left", padx=10)
 
-        self.stop_btn = tk.Button(ctrl_frame, text="STOP", font=("Helvetica", 12, "bold"), 
-                                  bg="#f44336", fg="white", padx=20, pady=10, command=self.stop_pipeline, state="disabled")
+        self.stop_btn = tk.Button(ctrl_frame, text="STOP", font=("Helvetica", 12, "bold"), bg="#f44336", fg="white", width=10, command=self.stop_pipeline, state="disabled")
         self.stop_btn.pack(side="left", padx=10)
 
         # Progress Section
-        progress_frame = tk.LabelFrame(self.root, text="Progress & Logs", padx=10, pady=10)
+        progress_frame = tk.LabelFrame(self.root, text="Terminal Output & Progress", padx=10, pady=10)
         progress_frame.pack(fill="both", expand=True, padx=20, pady=5)
 
-        self.status_label = tk.Label(progress_frame, text="Ready", font=("Helvetica", 10, "italic"))
+        self.status_label = tk.Label(progress_frame, text="No Project Active", font=("Helvetica", 10, "italic"))
         self.status_label.pack(anchor="w")
 
         self.progress = ttk.Progressbar(progress_frame, orient="horizontal", length=100, mode="determinate")
         self.progress.pack(fill="x", pady=5)
 
-        # Log with Scrollbar
         log_frame = tk.Frame(progress_frame)
         log_frame.pack(fill="both", expand=True)
-        
-        self.log_text = tk.Text(log_frame, height=8, state="disabled", bg="#1e1e1e", fg="#d4d4d4")
+        self.log_text = tk.Text(log_frame, height=10, state="disabled", bg="#1e1e1e", fg="#d4d4d4", font=("Courier", 9))
         scrollbar = tk.Scrollbar(log_frame, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
-        
         self.log_text.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+    def new_project(self):
+        path = filedialog.asksaveasfilename(defaultextension=".splatproj", filetypes=[("Splat Project", "*.splatproj")])
+        if path:
+            self.pm.new_project(path)
+            self.proj_label.config(text=os.path.basename(path), fg="green")
+            self.refresh_ui()
+
     def add_videos(self):
-        files = filedialog.askopenfilenames(filetypes=[("Video files", "*.mp4 *.avi *.mov *.mkv"), ("All files", "*.*")])
-        if files:
-            for f in files:
-                if f not in self.video_paths:
-                    self.video_paths.append(f)
-                    self.video_listbox.insert(tk.END, os.path.basename(f))
+        if not self.pm.work_dir:
+            messagebox.showwarning("Warning", "Create or open a project first.")
+            return
+        files = filedialog.askopenfilenames(filetypes=[("Video", "*.mp4 *.mov *.avi")])
+        for f in files:
+            # We fetch FPS before adding to project
+            fps = self.pm.get_video_fps(f)
+            self.pm.add_video(f, src_fps=fps)
+        self.refresh_ui()
 
     def clear_videos(self):
-        self.video_paths = []
-        self.video_listbox.delete(0, tk.END)
-
-    def save_project(self):
-        self.project_data.update({
-            "videos": self.video_paths,
-            "fps": self.fps_var.get(),
-            "iterations": self.iter_var.get(),
-            "ai_enabled": self.ai_var.get(),
-            "last_updated": datetime.now().isoformat()
-        })
-        os.makedirs("output", exist_ok=True)
-        with open(self.project_file, "w") as f:
-            json.dump(self.project_data, f, indent=4)
-        self.log(f"Project state saved to {self.project_file}")
-
-    def load_project_auto(self):
-        if os.path.exists(self.project_file):
-            try:
-                with open(self.project_file, "r") as f:
-                    data = json.load(f)
-                self.apply_project_data(data)
-                self.log("Automatic Recovery: Previous project session loaded.")
-            except Exception as e:
-                self.log(f"Failed to auto-load project: {e}")
+        if messagebox.askyesno("Confirm", "Clear all videos and reset project progress?"):
+            self.pm.data["videos"] = []
+            self.pm.data["completed_stages"] = []
+            self.pm.data["fps_caches"] = {}
+            self.pm.save()
+            self.refresh_ui()
 
     def load_project_manual(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Project JSON", "*.json")])
-        if file_path:
-            try:
-                with open(file_path, "r") as f:
-                    data = json.load(f)
-                self.apply_project_data(data)
-                self.project_file = file_path
-                self.log(f"Project loaded from {file_path}")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to load project: {e}")
+        path = filedialog.askopenfilename(filetypes=[("Splat Project", "*.splatproj")])
+        if path:
+            data = self.pm.load_project(path)
+            self.proj_label.config(text=os.path.basename(path), fg="green")
+            self.refresh_ui()
 
-    def apply_project_data(self, data):
-        self.project_data = data
-        self.video_paths = data.get("videos", [])
+    def refresh_ui(self):
+        data = self.pm.data
         self.video_listbox.delete(0, tk.END)
-        for v in self.video_paths:
-            self.video_listbox.insert(tk.END, os.path.basename(v))
-        self.fps_var.set(data.get("fps", 24))
+        max_fps = 1
+        
+        videos = data.get("videos", [])
+        if not videos:
+            self.fps_slider.config(state="disabled")
+        else:
+            self.fps_slider.config(state="normal")
+            for v in videos:
+                self.video_listbox.insert(tk.END, v["name"])
+                # Get max FPS from video metadata
+                v_fps = v.get("src_fps", 30.0)
+                if v_fps > max_fps: max_fps = int(v_fps)
+            
+            # Update slider limit
+            self.fps_slider.config(to=max_fps)
+            if self.fps_var.get() > max_fps:
+                self.fps_var.set(max_fps)
+
+        self.fps_var.set(data.get("fps", min(24, max_fps)))
         self.iter_var.set(data.get("iterations", 2000))
-        self.ai_var.set(data.get("ai_enabled", True))
+        self.ai_var.set(data.get("ai_enabled", False))
+        self.reconstruct_mode.set(data.get("research_mode", "nebula"))
 
     def log(self, message):
         self.queue.put(("log", message + "\n"))
@@ -196,13 +326,14 @@ class SplatEditor:
             pass
         self.root.after(100, self.check_queue)
 
-    def run_command(self, cmd, status_prefix, progress_start, progress_end):
+    def run_command(self, cmd, status_prefix, progress_start, progress_end, cwd=None):
         self.log(f"Running: {' '.join(cmd)}")
-        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                        text=True, bufsize=1, cwd=cwd or self.pm.work_dir)
         
         for line in self.process.stdout:
             self.log(line.strip())
-            # Simple progress heuristics for each stage
+            # Progress heuristics
             if "Iteration" in line:
                 try:
                     parts = line.split("/")
@@ -223,53 +354,56 @@ class SplatEditor:
         self.start_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
         self.set_status("Pipeline Completed!", 100)
+        self.pm.save()
         
-        if messagebox.askyesno("Success", "Processing finished! Export model and launch viewer?"):
+        if messagebox.askyesno("Success", "Processing finished! Export results?"):
             save_path = filedialog.asksaveasfilename(defaultextension=".ply", filetypes=[("PLY files", "*.ply")])
             if save_path:
-                if os.path.exists("output/trained_splats.ply"):
-                    import shutil
-                    shutil.copy("output/trained_splats.ply", save_path)
-                    self.log(f"Model saved to {save_path}")
+                src = os.path.join(self.pm.work_dir, "output/trained_splats.ply")
+                if os.path.exists(src):
+                    shutil.copy(src, save_path)
+                    self.log(f"Model exported to {save_path}")
                 
-            # Launch viewer
-            subprocess.Popen([sys.executable, "train_gs.py", "--view"])
+            subprocess.Popen([sys.executable, "train_gs.py", "--view"], cwd=self.pm.work_dir)
             
     def run_reconstruction_manual(self):
+        if not self.pm.work_dir: return
         mode = self.reconstruct_mode.get()
-        if not os.path.exists("output/trained_splats.ply"):
-            messagebox.showwarning("Incomplete", "Please run Phase 4 (Training) first to get the .ply model.")
+        splat_path = os.path.join(self.pm.work_dir, "output/trained_splats.ply")
+        if not os.path.exists(splat_path):
+            messagebox.showwarning("Incomplete", "Run Training phase first.")
             return
         
-        self.log(f"Starting {mode} reconstruction research...")
+        self.log(f"Starting {mode} research reconstruction...")
         threading.Thread(target=self.run_reconstruction_thread, args=(mode,), daemon=True).start()
 
     def run_reconstruction_thread(self, mode):
         try:
-            self.set_status(f"Stage 5/5: Researching {mode}...", 0)
-            cmd = [sys.executable, "gs_to_mesh.py", "--input", "output/trained_splats.ply", "--mode", mode, "--output", f"output/research_{mode}.ply", "--live"]
+            self.set_status(f"Researching {mode}...", 0)
+            out_file = f"output/research_{mode}.ply"
+            cmd = [sys.executable, "gs_to_mesh.py", "--input", "output/trained_splats.ply", "--mode", mode, "--output", out_file, "--live"]
             self.run_command(cmd, f"Reconstructing ({mode})", 0, 100)
-            self.log(f"Success! Result saved to output/research_{mode}.ply")
+            self.pm.save()
+            self.log(f"Success! Result synced to .splatproj")
             self.set_status("Reconstruction Done!", 100)
             
-            if messagebox.askyesno("Complete", f"Research model '{mode}' generated. Open Research Viewer?"):
-                subprocess.Popen([sys.executable, "view_mesh.py", "--input", f"output/research_{mode}.ply"])
+            if messagebox.askyesno("Complete", f"Generated. Open Viewer?"):
+                subprocess.Popen([sys.executable, "view_mesh.py", "--input", out_file], cwd=self.pm.work_dir)
         except Exception as e:
-            self.log(f"Reconstruction failed: {e}")
-            self.set_status("Error in Stage 5", 0)
+            self.log(f"Failed: {e}")
 
     def stop_pipeline(self):
         if self.process:
             self.process.terminate()
-            self.log("\n!!! Pipeline stopped by user !!!")
+            self.log("\n!!! Stopped by user !!!")
             self.set_status("Stopped", 0)
         self.is_running = False
         self.start_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
 
     def start_pipeline(self):
-        if not self.video_paths:
-            messagebox.showwarning("Warning", "Please add at least one video.")
+        if not self.pm.work_dir or not self.pm.data["videos"]:
+            messagebox.showwarning("Warning", "Project is empty.")
             return
         
         self.is_running = True
@@ -279,64 +413,78 @@ class SplatEditor:
         self.log_text.delete(1.0, tk.END)
         self.log_text.config(state="disabled")
         
-        self.save_project()
+        # Save current config to project meta
+        self.pm.data.update({
+            "fps": self.fps_var.get(),
+            "iterations": self.iter_var.get(),
+            "ai_enabled": self.ai_var.get(),
+            "research_mode": self.reconstruct_mode.get()
+        })
+        self.pm.save()
         threading.Thread(target=self.run_pipeline_thread, daemon=True).start()
 
     def run_pipeline_thread(self):
         try:
-            # Check for completed stages
-            colmap_done = os.path.exists("output/colmap/sparse/0/points3D.bin")
-            frames_done = os.path.exists("output/frames") and len(os.listdir("output/frames")) > 0
-            ai_done = os.path.exists("output/colmap/sparse/0/ai_points.ply")
-
-            # 1. Extraction
-            if frames_done and messagebox.askyesno("Resume", "Frames already exist. Skip extraction?"):
-                self.log("Skipping Stage 1: Frames already present.")
-            else:
-                self.set_status("Stage 1/4: Extracting Frames...", 0)
-                os.makedirs("output/frames", exist_ok=True)
-                for i, vid in enumerate(self.video_paths):
-                    cmd = [sys.executable, "extract_frames.py", "--video", vid, "--output", "output/frames", "--fps", str(self.fps_var.get()), "--prefix", f"v{i}"]
-                    self.run_command(cmd, f"Extracting {os.path.basename(vid)}", (i/len(self.video_paths))*20, ((i+1)/len(self.video_paths))*20)
+            w = self.pm.work_dir
+            fps = self.fps_var.get()
+            frames_dir = self.pm.get_frames_dir(fps)
             
-            self.project_data.setdefault("completed_stages", []).append("extraction")
-            self.save_project()
+            # Check for existing work
+            has_frames = len(os.listdir(frames_dir)) > 0
+            has_colmap = os.path.exists(os.path.join(w, "cache/colmap/sparse/0/points3D.bin"))
+            has_training = os.path.exists(os.path.join(w, "output/trained_splats.ply"))
+
+            # 1. Extraction (Multi-FPS aware)
+            if has_frames:
+                self.log(f"Cache hit: Found existing extraction for {fps} FPS. Skipping Stage 1.")
+            else:
+                self.set_status("Stage 1/4: Extracting (New FPS Cache)...", 0)
+                # Use internal source videos
+                src_vids = [os.path.join(w, "source", v["name"]) for v in self.pm.data["videos"]]
+                for i, vid in enumerate(src_vids):
+                    cmd = [sys.executable, os.path.abspath("extract_frames.py"), "--video", vid, "--output", frames_dir, "--fps", str(fps), "--prefix", f"v{i}"]
+                    self.run_command(cmd, f"Extracting {os.path.basename(vid)}", (i/len(src_vids))*20, ((i+1)/len(src_vids))*20)
+                self.pm.data["fps_caches"][str(fps)] = "frames_done"
+                self.pm.save()
 
             # 2. COLMAP
-            if colmap_done and messagebox.askyesno("Resume", "COLMAP reconstruction already exists. Skip Stage 2?"):
-                self.log("Skipping Stage 2: COLMAP data found.")
+            colmap_path = os.path.join(w, "cache/colmap")
+            if has_colmap:
+                self.log("Cache hit: COLMAP already exists. Skipping Stage 2.")
             else:
-                self.set_status("Stage 2/4: COLMAP Reconstruction (SfM)...", 20)
-                cmd = [sys.executable, "run_colmap.py", "--images", "output/frames", "--output", "output/colmap"]
-                self.run_command(cmd, "COLMAP Reconstruction", 20, 45)
-            
-            self.project_data["completed_stages"].append("colmap")
-            self.save_project()
+                self.set_status("Stage 2/4: SfM Reconstruction...", 20)
+                os.makedirs(colmap_path, exist_ok=True)
+                cmd = [sys.executable, os.path.abspath("run_colmap.py"), "--images", frames_dir, "--output", colmap_path]
+                self.run_command(cmd, "COLMAP", 20, 45)
+                self.pm.save()
 
-            # 3. AI Depth Enhancement (Optional)
+            # 3. AI (If enabled)
             if self.ai_var.get():
-                if ai_done and messagebox.askyesno("Resume", "AI enhanced points already exist. Skip Stage 3?"):
-                    self.log("Skipping Stage 3: AI points found.")
+                ai_out = os.path.join(colmap_path, "sparse/0/ai_points.ply")
+                if os.path.exists(ai_out):
+                    self.log("Cache hit: AI points found. Skipping Stage 3.")
                 else:
-                    self.set_status("Stage 3/4: AI Depth Enhancement (CPU)...", 45)
-                    cmd = [sys.executable, "align_depth.py", "--colmap_path", "output/colmap/sparse/0", "--img_path", "output/frames"]
-                    self.run_command(cmd, "AI Depth Processing", 45, 75)
-                
-                self.project_data["completed_stages"].append("ai_depth")
-                self.save_project()
+                    self.set_status("Stage 3/4: AI Depth Enhancement...", 45)
+                    cmd = [sys.executable, os.path.abspath("align_depth.py"), "--colmap_path", f"cache/colmap/sparse/0", "--img_path", f"cache/frames/{fps}"]
+                    self.run_command(cmd, "AI Depth", 45, 75)
+                    self.pm.save()
 
             # 4. Training
-            self.set_status("Stage 4/4: Gaussian Splatting Training...", 75)
-            cmd = [sys.executable, "train_gs.py", "--colmap_path", "output/colmap/sparse/0", "--iterations", str(self.iter_var.get())]
-            self.run_command(cmd, "Training GS", 75, 100)
-
-            self.project_data["completed_stages"].append("training")
-            self.save_project()
+            if has_training:
+                self.log("Note: Training result exists. Re-training with current iterations...")
+            
+            self.set_status("Stage 4/4: GS Training...", 75)
+            # train_gs.py writes to output/
+            cmd = [sys.executable, os.path.abspath("train_gs.py"), "--colmap_path", "cache/colmap/sparse/0", "--iterations", str(self.iter_var.get())]
+            self.run_command(cmd, "Training", 75, 100)
+            
+            self.pm.data["completed_stages"].append("training")
+            self.pm.save()
             self.queue.put(("done", None))
+            
         except Exception as e:
             self.log(f"\nERROR: {str(e)}")
-            self.set_status(f"Error: {str(e)}", 0)
-            self.queue.put(("error", str(e)))
+            self.set_status(f"Error: {e}", 0)
 
 if __name__ == "__main__":
     root = tk.Tk()

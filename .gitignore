@@ -29,3 +29,11 @@ video/
 
 # Project Checkpoints
 *.splatproj
+
+# Weights and Large Archives
+*.bin
+*.tar.gz
+weights_gemma_3n*/
+vulkan_nn_lib/weights/
+vulkan_nn_lib/.env
+vulkan_nn_lib/kaggle.json

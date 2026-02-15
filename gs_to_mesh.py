@@ -50,6 +50,16 @@ def check_edge_stability_gpu(
             if dot1 < planar_penalty and dot2 < planar_penalty:
                 ti.atomic_add(counts[j], 1)
 
+def load_points(file_path):
+    """Loads a point cloud from PLY, handling common GS property names."""
+    pcd = o3d.io.read_point_cloud(file_path)
+    if not pcd.has_points():
+        return None
+    
+    # If it has intensities or other props but no colors, we might need manual mapping
+    # but for now o3d.io.read_point_cloud is usually sufficient if props are standard.
+    return pcd
+
 def estimate_normals(points, k=30):
     """Local normal estimation via PCA on k-nearest neighbors."""
     if len(points) < 5:
@@ -427,7 +437,7 @@ def adaptive_octree_march(points, colors, mode, bounds, depth=0, max_pts=20000, 
 def main():
     parser = argparse.ArgumentParser(description="Level 9 Nebula Reconstruction")
     parser.add_argument("--input", type=str, default="output/trained_splats.ply")
-    parser.add_argument("--mode", type=str, choices=["orbital", "graph", "impressionist", "crystal", "nebula"], default="orbital")
+    parser.add_argument("--mode", type=str, choices=["classic", "orbital", "graph", "impressionist", "crystal", "nebula"], default="orbital")
     parser.add_argument("--output", type=str, default="output/reconstruction.ply")
     parser.add_argument("--radius", type=float, default=0.04, help="Small radius (0.02-0.08)")
     parser.add_argument("--planar", type=float, default=0.15, help="Planar penalty (lower=stricter)")
@@ -437,7 +447,16 @@ def main():
     args = parser.parse_args()
 
     if not os.path.exists(args.input): return
-    pcd = o3d.io.read_point_cloud(args.input)
+    pcd = load_points(args.input)
+    if pcd is None: return
+
+    # Check for Classic Gaussian (Method 0)
+    if args.mode == "classic":
+        print("Method 0: Passthrough Classic Gaussian...")
+        o3d.io.write_point_cloud(args.output, pcd)
+        print(f"Success! Baseline saved to {args.output}")
+        return
+
     points = np.asarray(pcd.points)
     colors = np.asarray(pcd.colors)
     
