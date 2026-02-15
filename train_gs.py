@@ -315,7 +315,8 @@ def main():
             window.show()
 
     else:
-        print(f"Starting Training on {len(images)} images...")
+        print(f"Starting Training on {len(images)} images...", flush=True)
+        print("Note: The first few iterations may take time to start due to JIT compilation (Vulkan).", flush=True)
         img_list = list(images.values())
         for i in range(args.iterations):
             img_data = random.choice(img_list)
@@ -330,8 +331,8 @@ def main():
                 model.train_step(img_data["R"], img_data["T"], cam["f"], cam["w"], cam["h"], target)
             model.update_params(0.1) # Higher LR for point-based loss
             
-            if i % 100 == 0:
-                print(f"Iteration {i}/{args.iterations} - Loss: {model.loss[None]:.10f}")
+            if i % 10 == 0:
+                print(f"Iteration {i}/{args.iterations} - Loss: {model.loss[None]:.10f}", flush=True)
 
     model.export_ply("output/trained_splats.ply")
     print("Optimization finished. Final model saved to output/trained_splats.ply")

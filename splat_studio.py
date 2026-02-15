@@ -245,7 +245,7 @@ class SplatEditor:
     def run_reconstruction_thread(self, mode):
         try:
             self.set_status(f"Stage 5/5: Researching {mode}...", 0)
-            cmd = [sys.executable, "gs_to_mesh.py", "--input", "output/trained_splats.ply", "--mode", mode, "--output", f"output/research_{mode}.ply"]
+            cmd = [sys.executable, "gs_to_mesh.py", "--input", "output/trained_splats.ply", "--mode", mode, "--output", f"output/research_{mode}.ply", "--live"]
             self.run_command(cmd, f"Reconstructing ({mode})", 0, 100)
             self.log(f"Success! Result saved to output/research_{mode}.ply")
             self.set_status("Reconstruction Done!", 100)
