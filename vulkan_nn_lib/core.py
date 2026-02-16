@@ -20,6 +20,21 @@ def k_copy(Src: ti.types.ndarray(), Dst: ti.types.ndarray(), Total: int):
     for i in range(Total):
         Dst[i] = Src[i]
 
+@ti.kernel
+def k_gelu_tanh(X: ti.types.ndarray(), Total: int):
+    # GELU with tanh approximation: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+    for i in range(Total):
+        x = X[i]
+        X[i] = 0.5 * x * (1.0 + ti.tanh(0.79788456 * (x + 0.044715 * x**3)))
+
+@ti.kernel
+def k_repeat_kv(Src: ti.types.ndarray(), Dst: ti.types.ndarray(), B: int, L: int, H_kv: int, D: int, factor: int):
+    # Expand KV heads directly on GPU: factor = H_q // H_kv
+    for b, l, h_kv, i, f in ti.ndrange(B, L, H_kv, D, factor):
+        src_idx = ((b * L + l) * H_kv + h_kv) * D + i
+        dst_idx = ((b * L + l) * (H_kv * factor) + (h_kv * factor + f)) * D + i
+        Dst[dst_idx] = Src[src_idx]
+
 
 @ti.kernel
 def k_rope(X: ti.types.ndarray(), cos: ti.types.ndarray(), sin: ti.types.ndarray(), 
@@ -181,17 +196,23 @@ def k_kv_cache_update(K_cache: ti.types.ndarray(), V_cache: ti.types.ndarray(),
 
 @ti.kernel
 def k_attention(Q: ti.types.ndarray(), K: ti.types.ndarray(), V: ti.types.ndarray(), Out: ti.types.ndarray(),
-                B: int, L_q: int, L_k: int, H: int, D: int, scale: float, pos_offset: int):
-    # Causal Scaled Dot-Product Attention
+                B: int, L_q: int, L_k: int, H: int, D: int, scale: float, pos_offset: int, window: int):
+    # Causal Scaled Dot-Product Attention with Sliding Window support
     for b, h, i in ti.ndrange(B, H, L_q):
-        # Causal: query at position (pos_offset + i) can attend to keys at positions 0..pos_offset+i
-        causal_limit = pos_offset + i + 1
+        # i is current token index relative to start of Q
+        i_abs = pos_offset + i
+        
+        # Causal: query at position i_abs can attend to keys at positions 0..i_abs
+        causal_limit = i_abs + 1
         if causal_limit > L_k:
             causal_limit = L_k
         
         # 1. Calculate Max for Softmax stability
         max_score = -1e30
         for j in range(causal_limit):
+            # Sliding Window Mask: i_abs - j must be < window (window <= 0 means full attention)
+            if window > 0 and (i_abs - j) >= window: continue
+            
             attn_score = 0.0
             for d in range(D):
                 idx_q = (((b * L_q + i) * H + h) * D + d)
@@ -203,6 +224,8 @@ def k_attention(Q: ti.types.ndarray(), K: ti.types.ndarray(), V: ti.types.ndarra
         # 2. Calculate Softmax Denominator (ExpSum)
         expsum = 0.0
         for j in range(causal_limit):
+            if window > 0 and (i_abs - j) >= window: continue
+            
             score = 0.0
             for d in range(D):
                 score += Q[(((b * L_q + i) * H + h) * D + d)] * K[(((b * L_k + j) * H + h) * D + d)]
@@ -210,12 +233,14 @@ def k_attention(Q: ti.types.ndarray(), K: ti.types.ndarray(), V: ti.types.ndarra
             
         # 3. Weighted Sum of Values
         for j in range(causal_limit):
+            if window > 0 and (i_abs - j) >= window: continue
+            
             score = 0.0
             for d2 in range(D):
                 score += Q[(((b * L_q + i) * H + h) * D + d2)] * K[(((b * L_k + j) * H + h) * D + d2)]
             
             softmax_score = ti.exp(score * scale - max_score) / expsum
-            
+
             for d3 in range(D):
                 out_idx = (((b * L_q + i) * H + h) * D + d3)
                 v_idx = (((b * L_k + j) * H + h) * D + d3)
@@ -323,11 +348,47 @@ class Module:
     def state_dict(self):
         sd = {}
         for name, param in self._parameters.items():
-            sd[name] = param.to_numpy()
-        for m_name, module in self._modules.items():
-            for name, p in module.state_dict().items():
-                sd[f"{m_name}.{name}"] = p
+            sd[name] = param
+        for name, module in self._modules.items():
+            sub_sd = module.state_dict()
+            for sub_name, sub_param in sub_sd.items():
+                sd[f"{name}.{sub_name}"] = sub_param
         return sd
+
+    def load_state_dict(self, state_dict):
+        for name, param in self._parameters.items():
+            if name in state_dict:
+                param.arr.from_numpy(state_dict[name].astype(np.float32))
+        for m_name, module in self._modules.items():
+            child_sd = {k[len(m_name)+1:]: v for k, v in state_dict.items() if k.startswith(f"{m_name}.")}
+            module.load_state_dict(child_sd)
+
+    def to(self, device):
+        # We assume Vulkan for now, this is a shim
+        return self
+
+class ModuleList(Module):
+    """A list-like module wrapper for sequential/repeated layers."""
+    def __init__(self, modules=None):
+        super().__init__()
+        self._layers = []
+        if modules:
+            for m in modules:
+                self.append(m)
+
+    def append(self, module):
+        idx = len(self._layers)
+        self._layers.append(module)
+        self._modules[str(idx)] = module
+
+    def __getitem__(self, idx):
+        return self._layers[idx]
+
+    def __len__(self):
+        return len(self._layers)
+
+    def __iter__(self):
+        return iter(self._layers)
 
     def load_state_dict(self, state_dict):
         for name, param in self._parameters.items():
@@ -478,9 +539,9 @@ class RMSNorm(Module):
         k_rmsnorm_1d(x.arr, self.weight.arr, M, N, self.eps)
         return x
 
-class SiLU(Module):
+class GELUTanh(Module):
     def forward(self, x: Tensor) -> Tensor:
-        k_silu_1d(x.arr, x.total_size)
+        k_gelu_tanh(x.arr, x.total_size)
         return x
 
 class Embedding(Module):
@@ -602,21 +663,23 @@ class RoPE(Module):
         return x
 
 class Gemma3Block(Module):
-    """A real Gemma 3 Transformer Block with GQA support."""
-    def __init__(self, hidden_size=2048, num_heads=8, num_kv_heads=2, head_dim=256, intermediate_size=8192, tile_size=1024):
+    """A real Gemma 3 Transformer Block with GQA and Sliding Window support."""
+    def __init__(self, hidden_size=2048, num_heads=8, num_kv_heads=2, head_dim=256, 
+                 intermediate_size=8192, tile_size=1024, layer_type="full_attention", window=512):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
         self.num_groups = num_heads // num_kv_heads  # GQA group ratio
-        
+        self.window = window if layer_type == "sliding_attention" else 0
+
         # Attention Projections (GQA: K/V are smaller)
         self.q_proj = MatFormerLinear(hidden_size, num_heads * head_dim, bias=False, tile_size=tile_size)
         self.k_proj = MatFormerLinear(hidden_size, num_kv_heads * head_dim, bias=False, tile_size=tile_size)
         self.v_proj = MatFormerLinear(hidden_size, num_kv_heads * head_dim, bias=False, tile_size=tile_size)
         self.o_proj = MatFormerLinear(num_heads * head_dim, hidden_size, bias=False, tile_size=tile_size)
-        
+
         # MatFormer FFN (Gated MLP)
         self.gate_proj = MatFormerLinear(hidden_size, intermediate_size, bias=False, tile_size=tile_size)
         self.up_proj   = MatFormerLinear(hidden_size, intermediate_size, bias=False, tile_size=tile_size)
@@ -625,6 +688,7 @@ class Gemma3Block(Module):
         self.input_layernorm = RMSNorm(hidden_size)
         self.post_attention_layernorm = RMSNorm(hidden_size)
         self.rope = RoPE()
+        self.activation = GELUTanh()
 
     def forward(self, x: Tensor, cos: Tensor, sin: Tensor, 
                 k_cache: Tensor = None, v_cache: Tensor = None, 
@@ -649,15 +713,13 @@ class Gemma3Block(Module):
         self.rope(q, cos, sin, pos_offset)
         self.rope(k, cos, sin, pos_offset)
         
-        # GQA: Repeat KV heads to match Q heads
-        # Each KV head is shared by (num_groups) Q heads
+        # GQA: Repeat KV heads to match Q heads (GPU Optimized)
         if H_kv < H_q:
-            k_np = k.to_numpy().reshape(B, L_new, H_kv, D)
-            v_np = v.to_numpy().reshape(B, L_new, H_kv, D)
-            k_expanded = np.repeat(k_np, self.num_groups, axis=2)  # (B, L, H_q, D)
-            v_expanded = np.repeat(v_np, self.num_groups, axis=2)
-            k = Tensor(k_expanded)
-            v = Tensor(v_expanded)
+            k_exp = Tensor(None, shape=(B, L_new, H_q, D))
+            v_exp = Tensor(None, shape=(B, L_new, H_q, D))
+            k_repeat_kv(k.arr, k_exp.arr, B, L_new, H_kv, D, self.num_groups)
+            k_repeat_kv(v.arr, v_exp.arr, B, L_new, H_kv, D, self.num_groups)
+            k, v = k_exp, v_exp
         
         # KV-Cache Update
         L_total = L_new
@@ -675,7 +737,7 @@ class Gemma3Block(Module):
         attn_out = Tensor(None, shape=(B, L_new, H_q, D))
         k_zero(attn_out.arr, attn_out.total_size)  # Critical: zero before += accumulation
         scale = 1.0 / ti.sqrt(float(D))
-        k_attention(q.arr, k_full.arr, v_full.arr, attn_out.arr, B, L_new, L_total, H_q, D, scale, pos_offset)
+        k_attention(q.arr, k_full.arr, v_full.arr, attn_out.arr, B, L_new, L_total, H_q, D, scale, pos_offset, self.window)
         
         x = attn_out.reshape(B, L_new, H_q * D)
         x = self.o_proj(x)
@@ -689,7 +751,7 @@ class Gemma3Block(Module):
         gate = self.gate_proj(x)
         up = self.up_proj(x)
         
-        SiLU()(gate)
+        self.activation(gate)
         k_mul(gate.arr, up.arr, gate.total_size)
         
         x = self.down_proj(gate)
@@ -698,17 +760,31 @@ class Gemma3Block(Module):
         return x
 
 class Gemma3Model(Module):
-    """The full Gemma 3 Transformer Model with GQA."""
-    def __init__(self, num_layers=30, hidden_size=2048, num_heads=8, num_kv_heads=2, head_dim=256, intermediate_size=8192, vocab_size=262400, tile_size=1024):
+    """A real Gemma 3 Transformer Model."""
+    def __init__(self, num_layers=30, hidden_size=2048, num_heads=8, num_kv_heads=2, 
+                 head_dim=256, intermediate_size=8192, vocab_size=262400, tile_size=1024,
+                 layer_types=None, sliding_window=512):
         super().__init__()
+        self.num_layers = num_layers
         self.hidden_size = hidden_size
+        
         self.embed_tokens = TiledEmbedding(vocab_size, hidden_size)
+        
+        self.layers = ModuleList()
         print("Initializing Transformer layers...")
-        self.layers = []
         for i in range(num_layers):
-             if i % 5 == 0: print(f"Building layer {i}/{num_layers}...")
-             self.layers.append(Gemma3Block(hidden_size, num_heads, num_kv_heads, head_dim, intermediate_size, tile_size))
-             self._modules[f"layers.{i}"] = self.layers[-1]
+            if i % 5 == 0: print(f"Building layer {i}/{num_layers}...")
+            l_type = layer_types[i] if layer_types else "full_attention"
+            self.layers.append(Gemma3Block(
+                hidden_size=hidden_size, 
+                num_heads=num_heads, 
+                num_kv_heads=num_kv_heads, 
+                head_dim=head_dim, 
+                intermediate_size=intermediate_size,
+                tile_size=tile_size,
+                layer_type=l_type,
+                window=sliding_window
+            ))
         
         self.norm = RMSNorm(hidden_size)
         print("Initializing language modeling head...")
@@ -758,7 +834,7 @@ class nn:
     Conv2d = Conv2d
     ReLU = ReLU
     LeakyReLU = LeakyReLU
-    SiLU = SiLU
+    GELUTanh = GELUTanh
     Softmax = Softmax
     RMSNorm = RMSNorm
     Embedding = Embedding

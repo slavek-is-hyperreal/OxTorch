@@ -12,7 +12,7 @@ functional = types.ModuleType("torch.nn.functional")
 functional.relu = vnn.F.relu
 functional.leaky_relu = vnn.F.leaky_relu
 functional.max_pool2d = vnn.F.max_pool2d
-functional.silu = lambda x: vnn.SiLU()(x)
+functional.gelu = lambda x: vnn.GELUTanh()(x)
 functional.softmax = lambda x, dim=-1: vnn.Softmax(dim)(x)
 
 # 3. Populate nn (torch.nn)
@@ -22,7 +22,7 @@ nn.TiledLinear = vnn.TiledLinear
 nn.Conv2d = vnn.Conv2d
 nn.ReLU = vnn.ReLU
 nn.LeakyReLU = vnn.LeakyReLU
-nn.SiLU = vnn.SiLU
+nn.GELUTanh = vnn.GELUTanh
 nn.Softmax = vnn.Softmax
 nn.RMSNorm = vnn.RMSNorm
 nn.Embedding = vnn.Embedding

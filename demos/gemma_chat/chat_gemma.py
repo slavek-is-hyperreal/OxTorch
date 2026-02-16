@@ -23,18 +23,23 @@ class GemmaChat:
         # Gemma 3n Params (from text_config in config.json)
         num_kv_heads = 2
         head_dim = 256
+        sliding_window = 512
+        layer_types = None
         if model_type == "e2b":
             hidden_size = 2048
             num_heads = 8
             num_layers = 30
             intermediate_size = 8192
             vocab_size = 262400
+            # E2B pattern: [sliding, sliding, sliding, sliding, full] x 6
+            layer_types = ["sliding_attention", "sliding_attention", "sliding_attention", "sliding_attention", "full_attention"] * 6
         else: # e4b
             hidden_size = 2048
             num_heads = 8
             num_layers = 35
             intermediate_size = 16384
             vocab_size = 262400
+            # E4B often has different patterns, defaulting to full if unsure
         
         # 1. Build Model
         print("Building model architecture...")
@@ -46,7 +51,9 @@ class GemmaChat:
             head_dim=head_dim,
             intermediate_size=intermediate_size,
             vocab_size=vocab_size,
-            tile_size=tile_size
+            tile_size=tile_size,
+            layer_types=layer_types,
+            sliding_window=sliding_window
         )
         print("Model architecture built.")
         
