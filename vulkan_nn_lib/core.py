@@ -5,7 +5,7 @@ from .modules.layers import Linear, ReLU, SiLU, RMSNorm, Softmax, Embedding, Lea
 from .modules.tiled import TiledLinear, MatFormerLinear, TiledEmbedding
 from .modules.models import Gemma3Block, Gemma3Model, Gemma3ForMultimodalLM, get_cos_sin
 from .functional import F, GELUTanh
-from .optimizers import SGD, Adam
+from .optimizers import SGD, Adam, HybridAdam
 from .kernels import warmup, ti, np
 
 # Re-expose namespaces
@@ -36,5 +36,5 @@ __all__ = [
     'Linear', 'ReLU', 'SiLU', 'RMSNorm', 'Softmax', 'Embedding',
     'TiledLinear', 'MatFormerLinear', 'TiledEmbedding',
     'Gemma3Block', 'Gemma3Model', 'Gemma3ForMultimodalLM', 'get_cos_sin',
-    'F', 'GELUTanh', 'SGD', 'Adam', 'warmup', 'nn'
+    'F', 'GELUTanh', 'SGD', 'Adam', 'HybridAdam', 'warmup', 'nn'
 ]

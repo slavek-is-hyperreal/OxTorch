@@ -18,9 +18,8 @@ def test_tiled_linear_vs_linear():
     # 2. Setup standard Vulkan Linear
     vx = to_vnn(x, requires_grad=True)
     vlinear = vnn.Linear(in_features, out_features)
-    vlinear.weight.arr.from_numpy(layer.weight.detach().numpy().T.flatten())
-    vlinear.bias.arr.from_numpy(layer.bias.detach().numpy().flatten())
-    vnn.ti.sync()
+    vlinear.weight.load_from_numpy(layer.weight.detach().numpy().T)
+    vlinear.bias.load_from_numpy(layer.bias.detach().numpy())
     
     vy = vlinear(vx)
     vy.backward(vnn.Tensor(np.ones((batch_size, out_features)), shape=(batch_size, out_features)))
@@ -30,8 +29,7 @@ def test_tiled_linear_vs_linear():
     vtiled = vnn.TiledLinear(in_features, out_features, tile_size=tile_size)
     # Copy weights to TiledLinear weight_ram (which is now vtiled.weight.arr if device='cpu')
     vtiled.weight.arr[:] = layer.weight.detach().numpy().T.flatten()
-    vtiled.bias.arr.from_numpy(layer.bias.detach().numpy().flatten())
-    vnn.ti.sync()
+    vtiled.bias.load_from_numpy(layer.bias.detach().numpy())
     
     vy_tiled = vtiled(vx_tiled)
     vy_tiled.backward(vnn.Tensor(np.ones((batch_size, out_features)), shape=(batch_size, out_features)))
@@ -44,7 +42,7 @@ def test_tiled_linear_vs_linear():
     check_grads(vtiled.bias, layer.bias, "Grad Bias")
     
     print("\nComparing TiledLinear vs Standard Linear (Vulkan)...")
-    check_close(vy_tiled, vy, "Tiled vs Standard Output")
+    check_close(vy_tiled, vy.to_numpy(), "Tiled vs Standard Output")
     # check_grads(vx_tiled, vx, "Tiled vs Standard Grad X") # check_grads expects torch tensor as 2nd arg
     np.testing.assert_allclose(vx_tiled.grad.to_numpy(), vx.grad.to_numpy(), atol=1e-5)
     print("✓ Grad X (VNN vs VNN) matches")

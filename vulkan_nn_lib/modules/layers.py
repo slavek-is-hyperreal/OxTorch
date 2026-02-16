@@ -86,9 +86,9 @@ class Softmax(Module):
         return res
 
 class LeakyReLU(Module):
-    def __init__(self, alpha=0.01):
+    def __init__(self, negative_slope=0.01):
         super().__init__()
-        self.alpha = alpha
+        self.alpha = negative_slope
     def forward(self, x: Tensor) -> Tensor:
         res = x.clone()
         K.k_leaky_relu_1d(res.arr, res.total_size, self.alpha)

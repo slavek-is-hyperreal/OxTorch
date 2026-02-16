@@ -1,56 +1,75 @@
 # 🌌 Tensor Forever (VulkanNN)
 
-**Tensor Forever** is a universal neural engine that brings modern AI (LLMs) to hardware that was previously "too old" or "too weak". 
+**"Run Modern AI on Legacy Hardware"**
 
-By using **Taichi Vulkan**, we bypass the need for expensive NVIDIA GPUs and CUDA. If your computer has a graphics card (even an old one from 2013 like an AMD R7 260X), **Tensor Forever** can "reanimate" it to run Large Language Models like Gemma 3.
+**Tensor Forever** is a magic engine that lets you run powerful AI models (like Google's Gemma 3) on old or weak computers. If you have *any* graphics card from the last ~10 years (even generic integrated Intel graphics), you can run this.
 
 ---
 
-## 🚀 Beginner's Guide: Start Chatting in 5 Minutes
+## 🚀 TL;DR: Quick Start Guide
 
-If you just want to talk to an AI on your legacy hardware, follow these steps:
+**Goal:** Chat with Gemma 3 AI on your Linux computer in 5 minutes.
 
 ### 1. Requirements
-You need **Linux** (e.g., Ubuntu, Mint) and **Python 3.10+**.
-Open your terminal and run:
+-   **OS**: Linux (Ubuntu, Mint, etc.)
+-   **Python**: Version 3.10 or newer.
+-   **GPU**: Any card with Vulkan support (Intel HD 6xx, AMD R7/RX, NVIDIA GTX 6xx+).
+
+### 2. Setup
+Open your terminal and paste these commands:
+
 ```bash
+# Install system tools
 sudo apt update && sudo apt install python3-venv python3-tk
+
+# Install python libraries
 pip install taichi numpy transformers huggingface_hub tqdm safetensors
 ```
 
-### 2. Setup Kaggle (For Model Weights)
-We use weights from Google's Gemma 3. To download them automatically:
-1. Go to [Kaggle.com](https://www.kaggle.com), log in, and click on your profile picture -> **Settings**.
-2. Click **Create New Token** to download a `kaggle.json` file.
-3. Create a folder named `vulkan_nn_lib` in this project and put `kaggle.json` inside it.
+### 3. Get Model Access (One-time)
+1.  Go to [Kaggle.com](https://www.kaggle.com), log in, and click your profile picture -> **Settings**.
+2.  Scroll down to "API" and click **Create New Token**.
+3.  A file named `kaggle.json` will download.
+4.  Copy this file into a folder named `vulkan_nn_lib` inside this project directory.
 
-### 3. Run the Chat
-Simply run this in your terminal:
+### 4. Run the Chat!
 ```bash
-# This will download the model, convert it, and start the chat!
 python3 demos/gemma_chat/chat_gemma.py
 ```
-*Note: The first run will take some time to download and convert the weights (approx. 8-16GB).*
+*(The first time you run this, it will download the model weights automatically. This may take 10-20 minutes depending on your internet speed.)*
 
 ---
 
-## 🏗 Project Structure
+## ⚙️ Hardware Tuning (The "Sweet Spot")
 
-### 🛠 [Core Library (vulkan_nn_lib)](vulkan_nn_lib/)
-The heart of the engine. A standalone library you can import into your own Python projects to get GPU acceleration on any Vulkan card.
+Because **Tensor Forever** uses VRAM as a cache, you can tune it to your specific card:
+-   **Low VRAM (2GB)**: Keep `tile_size` around 64MB to avoid stuttering.
+-   **High RAM (32GB+)**: You can increase the system's "patience" to load huge models without GPU crashes.
 
-### 🎨 [Demo: Splat Studio](demos/splat_studio/)
-**Graphics Demonstrator**.
-Turn videos into 3D scenes (Gaussian Splatting) using Vulkan-accelerated depth processing.
-
-### 🗨 [Demo: Gemma Chat](demos/gemma_chat/)
-**LLM Demonstrator**.
-The interactive chat interface for **Gemma 3 Nano**. It uses our unique "Weight Paging" to run a 4B parameter model on cards with very low VRAM (e.g., 2GB).
+Check the **[Calibration Guide](docs/ARCHITECTURE.md#7-hardware-calibration--tuning)** for pro-tips on VRAM BAR optimization.
 
 ---
 
-## 💡 Why 'Tensor Forever'?
-Modern AI often requires buying new hardware every 2 years. We believe in sustainability and accessibility. **Tensor Forever** aims to make AI run on the hardware you already own, for as long as possible.
+## 🧠 For Developers & Geeks
+
+Want to know how we fit a 4 Billion Parameter model into 2GB VRAM? Curious about our custom Autograd engine built on Vulkan compute shaders?
+
+👉 **[Read the Deep Dive Architecture & Internals Guide](docs/ARCHITECTURE.md)**
+
+There you will find details on:
+-   **TiledLinear**: Our unique RAM-VRAM paging system.
+-   **The `Tensor` Class**: How we wrap raw GPU memory.
+-   **Autograd**: How we implemented backpropagation from scratch.
 
 ---
-*Created with 💙 for legacy hardware and the open AI ecosystem.*
+
+## 🎨 Other Demos
+
+### Splat Studio (3D Graphics)
+Turn videos into 3D scenes using Gaussian Splatting.
+```bash
+python3 demos/splat_studio/splat_studio.py
+```
+
+---
+*Created with 💙 for the open AI ecosystem.*

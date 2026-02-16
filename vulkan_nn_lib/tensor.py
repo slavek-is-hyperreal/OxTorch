@@ -37,7 +37,8 @@ class Tensor:
                 self._shape = (1,) if shape is None else shape
             
             if self.device == 'vulkan':
-                self.arr = ti.ndarray(dtype=ti.f32, shape=(self.total_size,))
+                if not hasattr(self, 'arr'):
+                    self.arr = ti.ndarray(dtype=ti.f32, shape=(self.total_size,))
                 if hasattr(self, 'np_arr'):
                     self.arr.from_numpy(self.np_arr)
                     ti.sync()
@@ -48,7 +49,8 @@ class Tensor:
                 else: self.arr = np.zeros(self.total_size, dtype=np.float32)
         else:
             if self.device == 'vulkan':
-                self.arr = ti.ndarray(dtype=ti.f32, shape=(self.total_size,))
+                if not hasattr(self, 'arr'):
+                    self.arr = ti.ndarray(dtype=ti.f32, shape=(self.total_size,))
             else:
                 self.arr = np.zeros(self.total_size, dtype=np.float32)
 
@@ -67,6 +69,7 @@ class Tensor:
             self.grad = Tensor(None, shape=self.shape, device=self.device)
         if self.device == 'vulkan':
             K.k_zero(self.grad.arr, self.total_size)
+            ti.sync()
         else:
             self.grad.arr.fill(0.0)
 
@@ -79,7 +82,9 @@ class Tensor:
             grad = Tensor(grad, shape=self.shape)
         
         if self.grad is None: self.grad = grad
-        else: K.k_add(self.grad.arr, grad.arr, self.total_size, grad.total_size)
+        else:
+            K.k_add(self.grad.arr, grad.arr, self.total_size, grad.total_size)
+            if self.device == 'vulkan': ti.sync()
 
         topo = []
         visited = set()
@@ -101,6 +106,15 @@ class Tensor:
             return self.arr.to_numpy().reshape(self.shape)
         return self.arr.reshape(self.shape)
 
+    def load_from_numpy(self, np_arr):
+        if self.device == 'vulkan':
+            self.arr.from_numpy(np_arr.flatten())
+            ti.sync()
+            _ = self.arr.to_numpy() # Force sync
+        else:
+            self.arr = np_arr.astype(np.float32).flatten()
+            if hasattr(self, 'np_arr'): self.np_arr = self.arr
+
     @property
     def total_size(self):
         sz = 1
@@ -115,6 +129,7 @@ class Tensor:
     def clone(self):
         new_t = Tensor(None, shape=self.shape)
         K.k_copy(self.arr, new_t.arr, self.total_size)
+        if self.device == 'vulkan': ti.sync()
         return new_t
 
     def reshape(self, *shape):
@@ -132,6 +147,7 @@ class Tensor:
             if self.requires_grad:
                 if self.grad is None: self.zero_grad()
                 K.k_add(self.grad.arr, res.grad.arr, self.total_size, res.total_size)
+                if self.device == 'vulkan': ti.sync()
         res._backward_fn = _backward
         return res
 
@@ -139,12 +155,14 @@ class Tensor:
         res = Tensor(None, shape=self.shape)
         K.k_copy(self.arr, res.arr, self.total_size)
         K.k_relu_1d(res.arr, self.total_size)
+        if self.device == 'vulkan': ti.sync()
         res._prev = {self}
         res.requires_grad = self.requires_grad
         def _backward():
             if self.requires_grad:
                 if self.grad is None: self.zero_grad()
                 K.k_relu_backward(self.arr, res.grad.arr, self.grad.arr, self.total_size)
+                if self.device == 'vulkan': ti.sync()
         res._backward_fn = _backward
         return res
 
@@ -153,6 +171,7 @@ class Tensor:
         K2, N = other.shape
         res = Tensor(None, shape=(M, N))
         K.k_matmul(self.arr, other.arr, res.arr, M, N, K_dim)
+        if self.device == 'vulkan': ti.sync()
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
         def _backward():
@@ -164,6 +183,7 @@ class Tensor:
             grad_b = other.grad.arr if other.requires_grad else Tensor(None, shape=other.shape).arr
             if self.requires_grad or other.requires_grad:
                 K.k_matmul_backward(res.grad.arr, self.arr, other.arr, grad_a, grad_b, M, N, K_dim)
+                if self.device == 'vulkan': ti.sync()
         res._backward_fn = _backward
         return res
 
@@ -172,6 +192,7 @@ class Tensor:
         res = Tensor(None, shape=self.shape)
         K.k_copy(self.arr, res.arr, self.total_size)
         K.k_add(res.arr, other.arr, res.total_size, other.total_size)
+        if self.device == 'vulkan': ti.sync()
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
         def _backward():
@@ -186,6 +207,7 @@ class Tensor:
             elif other.requires_grad:
                 dummy = Tensor(None, shape=self.shape)
                 K.k_add_backward(res.grad.arr, dummy.arr, other.grad.arr, res.total_size, other.total_size)
+            if self.device == 'vulkan': ti.sync()
             # print(f"DEBUG: va.grad sum after kernel: {self.grad.to_numpy().sum()}")
         res._backward_fn = _backward
         return res
@@ -195,6 +217,7 @@ class Tensor:
         res = Tensor(None, shape=self.shape)
         K.k_copy(self.arr, res.arr, self.total_size)
         K.k_sub(res.arr, other.arr, res.total_size, other.total_size)
+        if self.device == 'vulkan': ti.sync()
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
         def _backward():
@@ -209,6 +232,7 @@ class Tensor:
             elif other.requires_grad:
                 dummy = Tensor(None, shape=self.shape)
                 K.k_sub_backward(res.grad.arr, dummy.arr, other.grad.arr, res.total_size, other.total_size)
+            if self.device == 'vulkan': ti.sync()
         res._backward_fn = _backward
         return res
 
@@ -217,15 +241,18 @@ class Tensor:
             val = float(other)
             res = self.clone()
             K.k_scale(res.arr, val, res.total_size)
+            if self.device == 'vulkan': ti.sync()
             res._prev = {self}
             res.requires_grad = self.requires_grad
             def _backward():
                 if self.requires_grad:
                     K.k_scale_backward(res.grad.arr, val, self.grad.arr, self.total_size)
+                    if self.device == 'vulkan': ti.sync()
             res._backward_fn = _backward
             return res
         res = self.clone()
         K.k_mul(res.arr, other.arr, res.total_size, other.total_size)
+        if self.device == 'vulkan': ti.sync()
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
         def _backward():
@@ -241,6 +268,7 @@ class Tensor:
             elif other.requires_grad:
                 dummy_grad = Tensor(None, shape=self.shape)
                 K.k_mul_backward(res.grad.arr, self.arr, other.arr, dummy_grad.arr, other.grad.arr, res.total_size, other.total_size)
+            if self.device == 'vulkan': ti.sync()
         res._backward_fn = _backward
         return res
 
@@ -249,15 +277,18 @@ class Tensor:
             val = float(other)
             res = self.clone()
             K.k_scale(res.arr, 1.0 / val, res.total_size)
+            if self.device == 'vulkan': ti.sync()
             res._prev = {self}
             res.requires_grad = self.requires_grad
             def _backward():
                 if self.requires_grad:
                     K.k_scale_backward(res.grad.arr, 1.0 / val, self.grad.arr, self.total_size)
+                    if self.device == 'vulkan': ti.sync()
             res._backward_fn = _backward
             return res
         res = self.clone()
         K.k_div(res.arr, other.arr, res.total_size, other.total_size)
+        if self.device == 'vulkan': ti.sync()
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
         def _backward():
@@ -273,6 +304,7 @@ class Tensor:
                 K.k_scale(temp.arr, -1.0, temp.total_size)
                 K.k_div(temp.arr, other.arr, res.total_size, other.total_size)
                 K.k_add(other.grad.arr, temp.arr, res.total_size, other.total_size)
+            if self.device == 'vulkan': ti.sync()
         res._backward_fn = _backward
         return res
 
@@ -286,17 +318,20 @@ class Tensor:
             M = self.total_size // N
             out = Tensor(None, shape=self.shape[:-1] + (1,) if keepdim else self.shape[:-1])
             K.k_mean_last_dim(self.arr, out.arr, M, N)
+            if self.device == 'vulkan': ti.sync()
             return out
         return Tensor(float(np.mean(self.to_numpy())))
 
     def sqrt(self):
         res = self.clone()
         K.k_sqrt(res.arr, res.total_size)
+        if self.device == 'vulkan': ti.sync()
         return res
 
     def tanh(self):
         res = self.clone()
         K.k_tanh(res.arr, res.total_size)
+        if self.device == 'vulkan': ti.sync()
         return res
 
     def t(self):
@@ -304,4 +339,27 @@ class Tensor:
         H, W = self.shape
         res = Tensor(None, shape=(W, H))
         K.k_transpose_2d(self.arr, res.arr, H, W)
+        if self.device == 'vulkan': ti.sync()
         return res
+    def sum(self):
+        # Result is a scalar tensor
+        res = Tensor(float(np.sum(self.to_numpy())), shape=(1,))
+        res._prev = {self}
+        res.requires_grad = self.requires_grad
+        def _backward():
+            if self.requires_grad:
+                if self.grad is None: self.zero_grad()
+                # Gradient of sum is 1.0 everywhere (multiplied by incoming gradient)
+                # We use a kernel to add the scalar value to all elements of the gradient
+                if res.grad is not None:
+                    # Incoming grad is scalar (1,). We broadcast it to self.shape
+                    K.k_add(self.grad.arr, res.grad.arr, self.total_size, 1)
+                    if self.device == 'vulkan': ti.sync()
+        res._backward_fn = _backward
+        return res
+
+    def unsqueeze(self, dim):
+        new_shape = list(self.shape)
+        if dim < 0: dim += len(new_shape) + 1
+        new_shape.insert(dim, 1)
+        return self.reshape(*new_shape)

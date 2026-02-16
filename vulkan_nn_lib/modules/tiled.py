@@ -6,7 +6,7 @@ from .. import kernels as K
 
 class TiledLinear(Module):
     """A Linear layer that pages weights from RAM to VRAM in tiles."""
-    def __init__(self, in_features, out_features, bias=True, tile_size=1024):
+    def __init__(self, in_features, out_features, bias=True, tile_size=2048):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -29,6 +29,7 @@ class TiledLinear(Module):
         x_flat = x.reshape(M, K_A)
         out = Tensor(None, shape=(M, N_out))
         K.k_zero(out.arr, out.total_size)
+        ti.sync()
         
         for n_offset in range(0, N_out, self.tile_size):
             n_tile = min(self.tile_size, N_out - n_offset)
@@ -36,7 +37,9 @@ class TiledLinear(Module):
             full_tile[:, :n_tile] = self.weight.to_numpy()[:K_active, n_offset : n_offset + n_tile]
             self.weight_tile_vram.from_numpy(full_tile.flatten())
             ti.sync()
+            _ = self.weight_tile_vram.to_numpy() # Force sync
             K.k_matmul_tiled(x_flat.arr, self.weight_tile_vram, out.arr, M, N_out, K_A, K_active, n_offset, n_tile, self.tile_size)
+            ti.sync()
             
         if self.has_bias: out = out + self.bias
         res = out.reshape(*(list(orig_shape[:-1]) + [N_out]))
@@ -50,11 +53,14 @@ class TiledLinear(Module):
                 for n_offset in range(0, N_out, self.tile_size):
                     n_tile = min(self.tile_size, N_out - n_offset)
                     K.k_zero(self.grad_tile_vram, self.in_features * self.tile_size)
+                    ti.sync()
                     grad_out_tile_np = grad_out_flat.to_numpy()[:, n_offset : n_offset + n_tile]
                     grad_out_tile_vram = ti.ndarray(ti.f32, shape=(M * n_tile,))
                     grad_out_tile_vram.from_numpy(grad_out_tile_np.flatten())
                     ti.sync()
+                    _ = grad_out_tile_vram.to_numpy() # Force sync
                     K.k_matmul_tiled_grad_w(x_flat.arr, grad_out_tile_vram, self.grad_tile_vram, M, K_A, n_tile, self.tile_size)
+                    ti.sync()
                     grad_w_tile_ram = self.grad_tile_vram.to_numpy().reshape(self.in_features, self.tile_size)
                     self.weight.grad.arr.reshape(self.in_features, N_out)[:K_active, n_offset : n_offset + n_tile] += grad_w_tile_ram[:K_active, :n_tile]
             
@@ -69,11 +75,16 @@ class TiledLinear(Module):
                     grad_out_tile_vram = ti.ndarray(ti.f32, shape=(M * n_tile,))
                     grad_out_tile_vram.from_numpy(grad_out_tile_np.flatten())
                     ti.sync()
+                    _ = self.weight_tile_vram.to_numpy() # Force sync
+                    _ = grad_out_tile_vram.to_numpy() # Force sync
                     K.k_matmul_tiled_grad_x(grad_out_tile_vram, self.weight_tile_vram, x.grad.arr, M, K_A, n_tile, self.tile_size)
+                    ti.sync()
 
             if self.has_bias and self.bias.requires_grad:
                 if self.bias.grad is None: self.bias.zero_grad()
-                self.bias.grad.arr += grad_out_flat.to_numpy().sum(axis=0)
+                current_grad = self.bias.grad.to_numpy()
+                new_grad_sum = grad_out_flat.to_numpy().sum(axis=0)
+                self.bias.grad.load_from_numpy(current_grad + new_grad_sum)
         res._backward_fn = _backward
         return res
 

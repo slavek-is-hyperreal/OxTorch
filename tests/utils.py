@@ -7,7 +7,8 @@ def to_vnn(t: torch.Tensor, requires_grad=False):
 
 def check_close(v_t: vnn.Tensor, t_t: torch.Tensor, name="Tensor", atol=1e-5):
     v_np = v_t.to_numpy()
-    t_np = t_t.detach().numpy()
+    if hasattr(t_t, 'detach'): t_np = t_t.detach().numpy()
+    else: t_np = t_t
     try:
         np.testing.assert_allclose(v_np, t_np, atol=atol)
         print(f"✓ {name} matches")

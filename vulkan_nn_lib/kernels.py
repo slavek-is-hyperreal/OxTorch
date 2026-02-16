@@ -15,9 +15,26 @@ def k_zero(X: ti.types.ndarray(), Total: int):
         X[i] = 0.0
 
 @ti.kernel
-def k_add(A: ti.types.ndarray(), B: ti.types.ndarray(), Total: int, B_Total: int):
-    for i in range(Total):
-        A[i] += B[i % B_Total]
+def k_add(A: ti.types.ndarray(), B: ti.types.ndarray(), size: int, size_b: int):
+    for i in range(size):
+        A[i] += B[i % size_b]
+
+@ti.kernel
+def k_sgd_step(p: ti.types.ndarray(), g: ti.types.ndarray(), lr: float, size: int):
+    for i in range(size):
+        p[i] -= lr * g[i]
+
+@ti.kernel
+def k_adam_step(p: ti.types.ndarray(), g: ti.types.ndarray(), m: ti.types.ndarray(), v: ti.types.ndarray(),
+                lr: float, b1: float, b2: float, eps: float, t: int, size: int):
+    b1_t = 1.0 - pow(b1, float(t))
+    b2_t = 1.0 - pow(b2, float(t))
+    alpha = lr * ti.sqrt(b2_t) / b1_t
+    
+    for i in range(size):
+        m[i] = b1 * m[i] + (1.0 - b1) * g[i]
+        v[i] = b2 * v[i] + (1.0 - b2) * g[i] * g[i]
+        p[i] -= alpha * m[i] / (ti.sqrt(v[i]) + eps)
 
 @ti.kernel
 def k_sub(A: ti.types.ndarray(), B: ti.types.ndarray(), Total: int, B_Total: int):
@@ -238,22 +255,20 @@ def k_matmul_tiled(A: ti.types.ndarray(), B_tile: ti.types.ndarray(), C: ti.type
         C[i * N_total + (n_offset + j_local)] += acc
 
 @ti.kernel
-def k_matmul_tiled_grad_x(Grad_Out_tile: ti.types.ndarray(), W_tile: ti.types.ndarray(), Grad_X: ti.types.ndarray(), 
-                          M: int, K: int, n_tile: int, tile_size: int):
-    for i, k in ti.ndrange(M, K):
-        acc = 0.0
-        for j in range(n_tile):
-            acc += Grad_Out_tile[i * n_tile + j] * W_tile[k * tile_size + j]
-        Grad_X[i * K + k] += acc
+def k_matmul_tiled_grad_x(Grad_Out_Tile: ti.types.ndarray(), W_tile: ti.types.ndarray(), Grad_X: ti.types.ndarray(), M: int, K: int, n_tile: int, tile_size: int):
+    for m, k in ti.ndrange(M, K):
+        sum_val = 0.0
+        for n in range(n_tile):
+            sum_val += Grad_Out_Tile[m * n_tile + n] * W_tile[k * tile_size + n]
+        Grad_X[m * K + k] += sum_val
 
 @ti.kernel
-def k_matmul_tiled_grad_w(X: ti.types.ndarray(), Grad_Out_tile: ti.types.ndarray(), Grad_W_tile: ti.types.ndarray(),
-                          M: int, K: int, n_tile: int, tile_size: int):
-    for k, j in ti.ndrange(K, n_tile):
-        acc = 0.0
-        for i in range(M):
-            acc += X[i * K + k] * Grad_Out_tile[i * n_tile + j]
-        Grad_W_tile[k * tile_size + j] += acc
+def k_matmul_tiled_grad_w(X: ti.types.ndarray(), Grad_Out_Tile: ti.types.ndarray(), Grad_W_Tile: ti.types.ndarray(), M: int, K: int, n_tile: int, tile_size: int):
+    for k, n in ti.ndrange(K, n_tile):
+        sum_val = 0.0
+        for m in range(M):
+            sum_val += X[m * K + k] * Grad_Out_Tile[m * n_tile + n]
+        Grad_W_Tile[k * tile_size + n] += sum_val
 
 @ti.kernel
 def k_transpose_2d(In: ti.types.ndarray(), Out: ti.types.ndarray(), H: int, W: int):
