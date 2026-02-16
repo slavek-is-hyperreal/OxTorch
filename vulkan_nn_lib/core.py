@@ -35,6 +35,81 @@ def k_repeat_kv(Src: ti.types.ndarray(), Dst: ti.types.ndarray(), B: int, L: int
         dst_idx = ((b * L + l) * (H_kv * factor) + (h_kv * factor + f)) * D + i
         Dst[dst_idx] = Src[src_idx]
 
+@ti.kernel
+def k_altup_predict(H: ti.types.ndarray(), Coefs: ti.types.ndarray(), Out: ti.types.ndarray(),
+                    S: int, B: int, L: int, D: int):
+    # Coefs is [B, L, S, S]. Out[s, b, l, d] = H[s, b, l, d] + sum_{s2} H[s2, b, l, d] * clamp(Coefs[b, l, s, s2], -120, 120)
+    for s, b, l, d in ti.ndrange(S, B, L, D):
+        acc = 0.0
+        for s2 in range(S):
+            src_val = H[((s2 * B + b) * L + l) * D + d]
+            c_val = Coefs[((b * L + l) * S + s) * S + s2]
+            if c_val > 120.0: c_val = 120.0
+            if c_val < -120.0: c_val = -120.0
+            acc += src_val * c_val
+        Out[((s * B + b) * L + l) * D + d] = H[((s * B + b) * L + l) * D + d] + acc
+
+@ti.kernel
+def k_altup_correct(P: ti.types.ndarray(), Activated: ti.types.ndarray(), Coefs: ti.types.ndarray(),
+                    S: int, B: int, L: int, D: int, active_idx: int):
+    # Coefs is [B, L, S]. P[s, b, l, d] += (Activated[b, l, d] - P[active_idx, b, l, d]) * clamp(Coefs[b, l, s], -120, 120)
+    for s, b, l, d in ti.ndrange(S, B, L, D):
+        act_val = Activated[(b * L + l) * D + d]
+        pred_active_val = P[((active_idx * B + b) * L + l) * D + d]
+        innovation = act_val - pred_active_val
+        c_val = Coefs[(b * L + l) * S + s]
+        if c_val > 120.0: c_val = 120.0
+        if c_val < -120.0: c_val = -120.0
+        P[((s * B + b) * L + l) * D + d] += innovation * c_val
+
+@ti.kernel
+def k_magnitude_norm(X: ti.types.ndarray(), TargetX: ti.types.ndarray(), S_idx: int, T_idx: int, 
+                     B: int, L: int, D: int, eps: float):
+    # Scale slice S_idx of X such that its mean squared magnitude matches slice T_idx of TargetX
+    for b, l in ti.ndrange(B, L):
+        target_sum_sq = 0.0
+        for d in range(D):
+            val = TargetX[((T_idx * B + b) * L + l) * D + d]
+            target_sum_sq += val * val
+        target_mag = ti.sqrt(target_sum_sq / D + eps)
+        
+        curr_sum_sq = 0.0
+        for d in range(D):
+            val = X[((S_idx * B + b) * L + l) * D + d]
+            curr_sum_sq += val * val
+        curr_mag = ti.sqrt(curr_sum_sq / D + eps)
+        
+        factor = target_mag / curr_mag
+        for d in range(D):
+            X[((S_idx * B + b) * L + l) * D + d] *= factor
+
+@ti.kernel
+def k_gaussian_topk(X: ti.types.ndarray(), Total: int, N: int, std_multiplier: float):
+    # X_i = relu(X_i - (mean + std * multiplier)) per segment N
+    for i in range(Total // N):
+        mean = 0.0
+        sq_mean = 0.0
+        for j in range(N):
+            val = X[i * N + j]
+            mean += val
+            sq_mean += val * val
+        mean /= N
+        std = ti.sqrt(ti.max(0.0, sq_mean / N - mean * mean))
+        cutoff = mean + std * std_multiplier
+        for j in range(N):
+            val = X[i * N + j] - cutoff
+            if val < 0.0: val = 0.0
+            X[i * N + j] = val
+
+@ti.kernel
+def k_extract_slice(Src: ti.types.ndarray(), Dst: ti.types.ndarray(), S_idx: int, B: int, L: int, D: int):
+    for b, l, d in ti.ndrange(B, L, D):
+        Dst[(b * L + l) * D + d] = Src[((S_idx * B + b) * L + l) * D + d]
+
+@ti.kernel
+def k_add_to_slices(Src: ti.types.ndarray(), Dst: ti.types.ndarray(), start_s: int, end_s: int, B: int, L: int, D: int):
+    for s, b, l, d in ti.ndrange(ti.range(start_s, end_s), B, L, D):
+        Dst[((s * B + b) * L + l) * D + d] += Src[(b * L + l) * D + d]
 
 @ti.kernel
 def k_rope(X: ti.types.ndarray(), cos: ti.types.ndarray(), sin: ti.types.ndarray(), 
@@ -196,50 +271,54 @@ def k_kv_cache_update(K_cache: ti.types.ndarray(), V_cache: ti.types.ndarray(),
 
 @ti.kernel
 def k_attention(Q: ti.types.ndarray(), K: ti.types.ndarray(), V: ti.types.ndarray(), Out: ti.types.ndarray(),
-                B: int, L_q: int, L_k: int, H: int, D: int, scale: float, pos_offset: int, window: int):
+                B: int, L_q: int, L_k: int, H: int, D: int, scale: float, pos_offset: int, window: int, softcap: float):
     # Causal Scaled Dot-Product Attention with Sliding Window support
     for b, h, i in ti.ndrange(B, H, L_q):
-        # i is current token index relative to start of Q
         i_abs = pos_offset + i
-        
-        # Causal: query at position i_abs can attend to keys at positions 0..i_abs
         causal_limit = i_abs + 1
-        if causal_limit > L_k:
-            causal_limit = L_k
+        if causal_limit > L_k: causal_limit = L_k
         
         # 1. Calculate Max for Softmax stability
         max_score = -1e30
         for j in range(causal_limit):
-            # Sliding Window Mask: i_abs - j must be < window (window <= 0 means full attention)
             if window > 0 and (i_abs - j) >= window: continue
             
-            attn_score = 0.0
+            score = 0.0
             for d in range(D):
                 idx_q = (((b * L_q + i) * H + h) * D + d)
                 idx_k = (((b * L_k + j) * H + h) * D + d)
-                attn_score += Q[idx_q] * K[idx_k]
-            attn_score *= scale
-            if attn_score > max_score: max_score = attn_score
+                score += Q[idx_q] * K[idx_k]
+            score *= scale
+            if softcap > 0:
+                score = ti.tanh(score / softcap) * softcap
+            if score > max_score: max_score = score
             
         # 2. Calculate Softmax Denominator (ExpSum)
         expsum = 0.0
         for j in range(causal_limit):
             if window > 0 and (i_abs - j) >= window: continue
-            
             score = 0.0
             for d in range(D):
                 score += Q[(((b * L_q + i) * H + h) * D + d)] * K[(((b * L_k + j) * H + h) * D + d)]
-            expsum += ti.exp(score * scale - max_score)
+            score *= scale
+            if softcap > 0:
+                score = ti.tanh(score / softcap) * softcap
+            expsum += ti.exp(score - max_score)
             
         # 3. Weighted Sum of Values
         for j in range(causal_limit):
             if window > 0 and (i_abs - j) >= window: continue
             
-            score = 0.0
-            for d2 in range(D):
-                score += Q[(((b * L_q + i) * H + h) * D + d2)] * K[(((b * L_k + j) * H + h) * D + d2)]
+            dot = 0.0
+            for d in range(D):
+                idx_q = (((b * L_q + i) * H + h) * D + d)
+                idx_k = (((b * L_k + j) * H + h) * D + d)
+                dot += Q[idx_q] * K[idx_k]
+            dot *= scale
+            if softcap > 0:
+                dot = ti.tanh(dot / softcap) * softcap
             
-            softmax_score = ti.exp(score * scale - max_score) / expsum
+            softmax_score = ti.exp(dot - max_score) / expsum
 
             for d3 in range(D):
                 out_idx = (((b * L_q + i) * H + h) * D + d3)
@@ -613,13 +692,110 @@ class ReLU(Module):
         return x
 
 class LeakyReLU(Module):
-    def __init__(self, negative_slope=0.01):
+    def __init__(self, alpha=0.01):
         super().__init__()
-        self.negative_slope = negative_slope
-
+        self.alpha = alpha
     def forward(self, x: Tensor) -> Tensor:
-        k_leaky_relu_1d(x.arr, x.total_size, self.negative_slope)
+        k_leaky_relu_1d(x.arr, x.total_size, self.alpha)
         return x
+
+class GaussianTopK(Module):
+    def __init__(self, sparsity=0.0):
+        super().__init__()
+        self.sparsity = sparsity
+        # Precompute std_multiplier (Normal distribution icdf)
+        # For simplicity, we use a lookup or common value since we only have 0.95 or 0.0
+        if sparsity >= 0.95:
+            self.std_multiplier = 1.64485362695  # icdf(0.95)
+        elif sparsity > 0.0:
+            import scipy.stats
+            self.std_multiplier = float(scipy.stats.norm.ppf(sparsity))
+        else:
+            self.std_multiplier = -1e10 # Effectively no cutoff
+            
+    def forward(self, x: Tensor) -> Tensor:
+        if self.sparsity > 0.0:
+            shape = x.shape
+            N = shape[-1]
+            k_gaussian_topk(x.arr, x.total_size, N, self.std_multiplier)
+        return x
+
+class Gemma3nLaurelBlock(Module):
+    def __init__(self, hidden_size, laurel_rank, eps=1e-6):
+        super().__init__()
+        self.linear_left = Linear(hidden_size, laurel_rank, bias=False)
+        self.linear_right = Linear(laurel_rank, hidden_size, bias=False)
+        self.post_laurel_norm = RMSNorm(hidden_size, eps=eps)
+        
+    def forward(self, hidden_states: Tensor) -> Tensor:
+        # Bottleneck residual
+        res = self.linear_left(hidden_states)
+        res = self.linear_right(res)
+        res = self.post_laurel_norm(res)
+        return res # We return just the part to be added
+
+class Gemma3nAltUp(Module):
+    def __init__(self, hidden_size, num_inputs, active_idx=0, eps=1e-6):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_inputs = num_inputs
+        self.active_idx = active_idx
+        
+        self.modality_router = Linear(hidden_size, num_inputs, bias=False)
+        self.router_norm = RMSNorm(hidden_size, eps=eps)
+        self.router_input_scale = hidden_size**-1.0
+        
+        self.prediction_coefs = Linear(num_inputs, num_inputs**2, bias=False)
+        self.correction_coefs = Linear(num_inputs, num_inputs, bias=False)
+        
+        self.correct_output_scale = Tensor(np.zeros(hidden_size, dtype=np.float32))
+
+    def compute_router_modalities(self, x: Tensor) -> Tensor:
+        # We need a copy of x as RMSNorm is in-place
+        router_inputs = x.clone()
+        self.router_norm(router_inputs)
+        k_scale(router_inputs.arr, self.router_input_scale, router_inputs.total_size)
+        routed = self.modality_router(router_inputs)
+        # Apply tanh in-place on routed
+        for i in range(routed.total_size):
+            routed.arr[i] = ti.tanh(routed.arr[i])
+        return routed
+
+    def predict(self, hidden_states: Tensor) -> Tensor:
+        # hidden_states is 4D [S, B, L, D]
+        # 1. Get modality for active slice
+        B, L, D = hidden_states.shape[1], hidden_states.shape[2], hidden_states.shape[3]
+        active_slice = Tensor(None, shape=(B, L, D))
+        # Logic to extract active_slice from 4D tensor... 
+        # For efficiency, we can pass the whole 4D to a kernel
+        
+        # Actually, let's just use the router on the active slice data
+        modalities = self.compute_router_modalities(Tensor(hidden_states.arr, shape=(B, L, D), offset=self.active_idx * B * L * D))
+        
+        all_coefs = self.prediction_coefs(modalities) # [B, L, S*S]
+        
+        out = Tensor(None, shape=hidden_states.shape)
+        k_altup_predict(hidden_states.arr, all_coefs.arr, out.arr, self.num_inputs, B, L, D)
+        return out
+
+    def correct(self, predictions: Tensor, activated: Tensor) -> Tensor:
+        # predictions is [S, B, L, D], activated is [B, L, D]
+        modalities = self.compute_router_modalities(activated)
+        all_coefs = self.correction_coefs(modalities) # [B, L, S]
+        # In modeling_gemma3n.py: all_coefs = correction_coefs(modalities) + 1.0
+        for i in range(all_coefs.total_size):
+            all_coefs.arr[i] += 1.0
+            
+        k_altup_correct(predictions.arr, activated.arr, all_coefs.arr, self.num_inputs, activated.shape[0], activated.shape[1], activated.shape[2], self.active_idx)
+        return predictions
+
+    def scale_corrected_output(self, corrected: Tensor) -> Tensor:
+        # Apply correct_output_scale (per-dim scale)
+        # corrected is [B, L, D]
+        for b, l, d in ti.ndrange(corrected.shape[0], corrected.shape[1], corrected.shape[2]):
+            idx = (b * corrected.shape[1] + l) * corrected.shape[2] + d
+            corrected.arr[idx] *= self.correct_output_scale.arr[d]
+        return corrected
 
 class MaxPool2d(Module):
     def __init__(self, kernel_size=2, stride=None):
@@ -662,46 +838,92 @@ class RoPE(Module):
         k_rope(x.arr, cos.arr, sin.arr, B, L, H, D, pos_offset)
         return x
 
+class Gemma3nPLE(Module):
+    def __init__(self, hidden_size, ple_dim, eps=1e-6):
+        super().__init__()
+        self.per_layer_input_gate = Linear(hidden_size, ple_dim, bias=False)
+        self.per_layer_projection = Linear(ple_dim, hidden_size, bias=False)
+        self.post_per_layer_input_norm = RMSNorm(hidden_size, eps=eps)
+        self.activation = GELUTanh() # Standard for Gemma 3n
+        
+    def forward(self, active_state: Tensor, per_layer_input: Tensor, full_state: Tensor):
+        # active_state: [B, L, D], per_layer_input: [B, L, ple_dim], full_state: [S, B, L, D]
+        # 1. Gate calculation
+        gate = self.per_layer_input_gate(active_state)
+        self.activation(gate)
+        # 2. Add PLE info
+        k_mul(gate.arr, per_layer_input.arr, gate.total_size)
+        # 3. Projection
+        proj = self.per_layer_projection(gate)
+        self.post_per_layer_input_norm(proj)
+        # 4. Add to sparse slices (usually 1:end)
+        S, B, L, D = full_state.shape
+        k_add_to_slices(proj.arr, full_state.arr, 1, S, B, L, D)
+
 class Gemma3Block(Module):
-    """A real Gemma 3 Transformer Block with GQA and Sliding Window support."""
+    """A real Gemma 3 Transformer Block with AltUP, Laurel, and PLE support."""
     def __init__(self, hidden_size=2048, num_heads=8, num_kv_heads=2, head_dim=256, 
-                 intermediate_size=8192, tile_size=1024, layer_type="full_attention", window=512):
+                 intermediate_size=8192, tile_size=1024, layer_type="full_attention", window=512,
+                 altup_num_inputs=4, laurel_rank=64, ple_dim=256, sparsity=0.0):
         super().__init__()
         self.hidden_size = hidden_size
+        self.intermediate_size = intermediate_size
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
-        self.num_groups = num_heads // num_kv_heads  # GQA group ratio
+        self.num_groups = num_heads // num_kv_heads
         self.window = window if layer_type == "sliding_attention" else 0
+        self.active_idx = 0 # Default for AltUP
+        self.altup_correct_scale = True # Enabled for 3n
 
-        # Attention Projections (GQA: K/V are smaller)
+        # Specialized 3n components
+        self.altup = Gemma3nAltUp(hidden_size, altup_num_inputs, active_idx=self.active_idx)
+        self.laurel = Gemma3nLaurelBlock(hidden_size, laurel_rank)
+        self.ple = Gemma3nPLE(hidden_size, ple_dim)
+        self.sparsity_gate = GaussianTopK(sparsity)
+
+        # Attention Projections
         self.q_proj = MatFormerLinear(hidden_size, num_heads * head_dim, bias=False, tile_size=tile_size)
         self.k_proj = MatFormerLinear(hidden_size, num_kv_heads * head_dim, bias=False, tile_size=tile_size)
         self.v_proj = MatFormerLinear(hidden_size, num_kv_heads * head_dim, bias=False, tile_size=tile_size)
         self.o_proj = MatFormerLinear(num_heads * head_dim, hidden_size, bias=False, tile_size=tile_size)
 
-        # MatFormer FFN (Gated MLP)
+        self.q_norm = RMSNorm(head_dim)
+        self.k_norm = RMSNorm(head_dim)
+
+        # FFN
         self.gate_proj = MatFormerLinear(hidden_size, intermediate_size, bias=False, tile_size=tile_size)
         self.up_proj   = MatFormerLinear(hidden_size, intermediate_size, bias=False, tile_size=tile_size)
         self.down_proj = MatFormerLinear(intermediate_size, hidden_size, bias=False, tile_size=tile_size)
         
         self.input_layernorm = RMSNorm(hidden_size)
         self.post_attention_layernorm = RMSNorm(hidden_size)
+        self.pre_feedforward_layernorm = RMSNorm(hidden_size)
+        self.post_feedforward_layernorm = RMSNorm(hidden_size)
+
         self.rope = RoPE()
         self.activation = GELUTanh()
 
-    def forward(self, x: Tensor, cos: Tensor, sin: Tensor, 
-                k_cache: Tensor = None, v_cache: Tensor = None, 
-                pos_offset: int = 0, sub_features=None) -> Tensor:
-        # Pre-LN Attention
-        residual = x.clone()  # Deep copy: RMSNorm modifies x in-place
-        x = self.input_layernorm(x)
+    def forward(self, hidden_states: Tensor, cos: Tensor, sin: Tensor, 
+                ple_input: Tensor, k_cache: Tensor = None, v_cache: Tensor = None, 
+                pos_offset: int = 0, active_intermediate_size=None) -> Tensor:
+        # hidden_states is 4D [S, B, L, D]
+        # 1. AltUP Predict
+        predictions = self.altup.predict(hidden_states)
         
-        q = self.q_proj(x)
-        k = self.k_proj(x)
-        v = self.v_proj(x)
+        # 2. Extract Active Slice
+        S, B, L_new, D_hidden = predictions.shape
+        active_prediction = Tensor(None, shape=(B, L_new, D_hidden))
+        k_extract_slice(predictions.arr, active_prediction.arr, self.active_idx, B, L_new, D_hidden)
         
-        B, L_new, _ = q.shape
+        # 3. Attention Path
+        active_prediction_normed = self.input_layernorm(active_prediction.clone())
+        laurel_output = self.laurel(active_prediction_normed) # Bottle-neck residual part
+        
+        q = self.q_proj(active_prediction_normed)
+        k = self.k_proj(active_prediction_normed)
+        v = self.v_proj(active_prediction_normed)
+        
         H_q = self.num_heads
         H_kv = self.num_kv_heads
         D = self.head_dim
@@ -709,11 +931,13 @@ class Gemma3Block(Module):
         q.reshape(B, L_new, H_q, D)
         k.reshape(B, L_new, H_kv, D)
         v.reshape(B, L_new, H_kv, D)
+
+        self.q_norm(q)
+        self.k_norm(k)
         
         self.rope(q, cos, sin, pos_offset)
         self.rope(k, cos, sin, pos_offset)
         
-        # GQA: Repeat KV heads to match Q heads (GPU Optimized)
         if H_kv < H_q:
             k_exp = Tensor(None, shape=(B, L_new, H_q, D))
             v_exp = Tensor(None, shape=(B, L_new, H_q, D))
@@ -721,7 +945,6 @@ class Gemma3Block(Module):
             k_repeat_kv(v.arr, v_exp.arr, B, L_new, H_kv, D, self.num_groups)
             k, v = k_exp, v_exp
         
-        # KV-Cache Update
         L_total = L_new
         if k_cache is not None:
              max_len = k_cache.shape[1]
@@ -733,48 +956,83 @@ class Gemma3Block(Module):
              k_full = k
              v_full = v
 
-        # Real Scaled Dot-Product Attention
-        attn_out = Tensor(None, shape=(B, L_new, H_q, D))
-        k_zero(attn_out.arr, attn_out.total_size)  # Critical: zero before += accumulation
-        scale = 1.0 / ti.sqrt(float(D))
-        k_attention(q.arr, k_full.arr, v_full.arr, attn_out.arr, B, L_new, L_total, H_q, D, scale, pos_offset, self.window)
+        attn_out_res = Tensor(None, shape=(B, L_new, H_q, D))
+        k_zero(attn_out_res.arr, attn_out_res.total_size)
+        attn_scale = 1.0 / ti.sqrt(float(D))
+        attn_softcap = 50.0 # From gemma3n_introduction.md
+        k_attention(q.arr, k_full.arr, v_full.arr, attn_out_res.arr, B, L_new, L_total, H_q, D, attn_scale, pos_offset, self.window, attn_softcap)
         
-        x = attn_out.reshape(B, L_new, H_q * D)
-        x = self.o_proj(x)
+        attn_out = attn_out_res.reshape(B, L_new, H_q * D)
+        attn_out = self.o_proj(attn_out)
+        attn_out = self.post_attention_layernorm(attn_out)
         
-        k_add(x.arr, residual.arr, x.total_size)
+        # 4. Attention Residual & Laurel Gating
+        # attn_gated = active_prediction + attn_out
+        k_add(active_prediction.arr, attn_out.arr, active_prediction.total_size)
+        # attn_laurel = (attn_gated + laurel_output) / sqrt(2)
+        k_add(active_prediction.arr, laurel_output.arr, active_prediction.total_size)
+        k_scale(active_prediction.arr, 0.70710678, active_prediction.total_size) # 1/sqrt(2)
         
-        # Pre-LN FFN
-        residual = x.clone()  # Deep copy: RMSNorm modifies x in-place
-        x = self.post_attention_layernorm(x)
+        # 5. FFN Path
+        ffn_in = self.pre_feedforward_layernorm(active_prediction.clone())
         
-        gate = self.gate_proj(x)
-        up = self.up_proj(x)
+        # MatFormer Slicing for intermediate size (Selective activation per request)
+        i_size = active_intermediate_size if active_intermediate_size else self.intermediate_size
+        gate = self.gate_proj(ffn_in, sub_out_features=i_size)
+        up = self.up_proj(ffn_in, sub_out_features=i_size)
         
+        self.sparsity_gate(gate)
         self.activation(gate)
         k_mul(gate.arr, up.arr, gate.total_size)
         
-        x = self.down_proj(gate)
-        k_add(x.arr, residual.arr, x.total_size)
+        ffn_out = self.down_proj(gate) # Automatically handles slicing internally
+        ffn_out = self.post_feedforward_layernorm(ffn_out)
         
-        return x
+        # 6. FFN Residual
+        # ffw_laurel_gated = attn_laurel + ffw_out
+        k_add(active_prediction.arr, ffn_out.arr, active_prediction.total_size)
+        
+        # 7. AltUP Correct
+        self.altup.correct(predictions, active_prediction)
+        
+        # 8. Correction Scaling (Source L1396-L1398)
+        if self.altup_correct_scale:
+            self.altup.scale_corrected_output(active_prediction)
+
+        # 9. PLE Gating & Accumulation
+        self.ple(active_prediction, ple_input, predictions)
+        
+        return predictions
 
 class Gemma3Model(Module):
-    """A real Gemma 3 Transformer Model."""
+    """A real Gemma 3 Transformer Model with 4D AltUP state management."""
     def __init__(self, num_layers=30, hidden_size=2048, num_heads=8, num_kv_heads=2, 
                  head_dim=256, intermediate_size=8192, vocab_size=262400, tile_size=1024,
-                 layer_types=None, sliding_window=512):
+                 layer_types=None, sliding_window=512,
+                 altup_num_inputs=4, laurel_rank=64, ple_dim=256, sparsity_pattern=None):
         super().__init__()
         self.num_layers = num_layers
         self.hidden_size = hidden_size
+        self.altup_num_inputs = altup_num_inputs
+        self.active_idx = 0
         
         self.embed_tokens = TiledEmbedding(vocab_size, hidden_size)
-        
+        # 3n specialized: projections to expand 2D embeddings to 4D stack
+        self.altup_projections = ModuleList()
+        for i in range(1, altup_num_inputs):
+            self.altup_projections.append(Linear(hidden_size, hidden_size, bias=False))
+            
+        # 3n specialized: projections to collapse 4D stack back to 2D
+        self.altup_unembed_projections = ModuleList()
+        for i in range(1, altup_num_inputs):
+            self.altup_unembed_projections.append(Linear(hidden_size, hidden_size, bias=False))
+
         self.layers = ModuleList()
         print("Initializing Transformer layers...")
         for i in range(num_layers):
             if i % 5 == 0: print(f"Building layer {i}/{num_layers}...")
             l_type = layer_types[i] if layer_types else "full_attention"
+            sparsity = sparsity_pattern[i] if sparsity_pattern else 0.0
             self.layers.append(Gemma3Block(
                 hidden_size=hidden_size, 
                 num_heads=num_heads, 
@@ -783,7 +1041,11 @@ class Gemma3Model(Module):
                 intermediate_size=intermediate_size,
                 tile_size=tile_size,
                 layer_type=l_type,
-                window=sliding_window
+                window=sliding_window,
+                altup_num_inputs=altup_num_inputs,
+                laurel_rank=laurel_rank,
+                ple_dim=ple_dim,
+                sparsity=sparsity
             ))
         
         self.norm = RMSNorm(hidden_size)
@@ -791,20 +1053,90 @@ class Gemma3Model(Module):
         self.lm_head = MatFormerLinear(hidden_size, vocab_size, bias=False, tile_size=tile_size)
 
     def forward(self, input_ids: Tensor, cos: Tensor, sin: Tensor, 
-                caches=None, pos_offset=0) -> Tensor:
-        x = self.embed_tokens(input_ids)
-        
-        # Gemma-specific: scale embeddings by sqrt(hidden_size)
+                ple_inputs: Tensor, caches=None, pos_offset=0, active_intermediate_size=None) -> Tensor:
+        # 1. Base Embedding
+        x0 = self.embed_tokens(input_ids)
         embed_scale = float(np.sqrt(self.hidden_size))
-        k_scale(x.arr, embed_scale, x.total_size)
+        k_scale(x0.arr, embed_scale, x0.total_size)
         
+        # 2. Initialization of 4D AltUP State
+        B, L, D = x0.shape
+        S = self.altup_num_inputs
+        h_state = Tensor(None, shape=(S, B, L, D))
+        
+        # Copy active slice directly
+        k_copy(x0.arr, Tensor(h_state.arr, shape=(B, L, D), offset=self.active_idx * B * L * D).arr, x0.total_size)
+        
+        # Project other slices and apply magnitude norm
+        for i in range(1, S):
+            proj_out = self.altup_projections[i-1](x0)
+            target_slice = Tensor(h_state.arr, shape=(B, L, D), offset=i * B * L * D)
+            k_copy(proj_out.arr, target_slice.arr, proj_out.total_size)
+            # Magnitude Norm (Source L1706-L1708)
+            k_magnitude_norm(h_state.arr, h_state.arr, i, self.active_idx, B, L, D, 1e-5)
+            
+        # 3. Transformer Layers Loop
         for i, layer in enumerate(self.layers):
             k_cache = caches[i][0] if caches else None
             v_cache = caches[i][1] if caches else None
-            x = layer(x, cos, sin, k_cache, v_cache, pos_offset)
-        x = self.norm(x)
-        logits = self.lm_head(x)
+            # ple_inputs is [B, L, num_layers, PLE_DIM]
+            layer_ple = Tensor(ple_inputs.arr, shape=(B, L, ple_inputs.shape[3]), offset=i * B * L * ple_inputs.shape[3])
+            h_state = layer(h_state, cos, sin, layer_ple, k_cache, v_cache, pos_offset, 
+                            active_intermediate_size=active_intermediate_size)
+            
+        # 4. Collapse 4D State to 2D
+        # unembed projections and average
+        temp_sum = h_state.clone() # We'll reuse this to sum
+        # Slice 0 stays same
+        for i in range(1, S):
+            slice_i = Tensor(h_state.arr, shape=(B, L, D), offset=i * B * L * D)
+            unemb_proj = self.altup_unembed_projections[i-1](slice_i)
+            # Magnitude Norm before combining
+            target_slice = Tensor(temp_sum.arr, shape=(B, L, D), offset=0) # Index 0 is target
+            dest_slice = Tensor(temp_sum.arr, shape=(B, L, D), offset=i * B * L * D)
+            k_copy(unemb_proj.arr, dest_slice.arr, unemb_proj.total_size)
+            k_magnitude_norm(temp_sum.arr, temp_sum.arr, i, 0, B, L, D, 1e-5)
+            
+        # Average all slices into [B, L, D]
+        x_out = Tensor(None, shape=(B, L, D))
+        k_zero(x_out.arr, x_out.total_size)
+        for i in range(S):
+            slice_i = Tensor(temp_sum.arr, shape=(B, L, D), offset=i * B * L * D)
+            k_add(x_out.arr, slice_i.arr, x_out.total_size)
+        k_scale(x_out.arr, 1.0/S, x_out.total_size)
+        
+        # 5. Output Norm and Heads
+        x_out = self.norm(x_out)
+        logits = self.lm_head(x_out)
         return logits
+
+class Gemma3ForMultimodalLM(Module):
+    """Official wrapper structure from PyTorch Gemma 3 Implementation."""
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.language_model = Gemma3Model(
+            num_layers=config.num_hidden_layers,
+            hidden_size=config.hidden_size,
+            num_heads=config.num_attention_heads,
+            num_kv_heads=config.num_key_value_heads,
+            head_dim=config.head_dim,
+            intermediate_size=config.intermediate_size[0] if isinstance(config.intermediate_size, list) else config.intermediate_size,
+            vocab_size=config.vocab_size,
+            layer_types=config.layer_types,
+            sliding_window=config.sliding_window,
+            altup_num_inputs=config.altup_num_inputs,
+            laurel_rank=config.laurel_rank,
+            ple_dim=config.hidden_size_per_layer_input
+        )
+        # Placeholders for multimodal encoders (Conditional loading support)
+        self.vision_encoder = None
+        self.audio_encoder = None
+
+    def forward(self, input_ids: Tensor, cos: Tensor, sin: Tensor, 
+                ple_inputs: Tensor, caches=None, pos_offset=0) -> Tensor:
+        # Text only for now, matching conditional loading logic
+        return self.language_model(input_ids, cos, sin, ple_inputs, caches, pos_offset)
 
 def get_cos_sin(seq_len, head_dim, base=10000):
     """Generate RoPE cos/sin cache."""

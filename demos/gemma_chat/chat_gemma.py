@@ -24,37 +24,50 @@ class GemmaChat:
         num_kv_heads = 2
         head_dim = 256
         sliding_window = 512
+        altup_num_inputs = 4
+        laurel_rank = 64
+        ple_dim = 256
         layer_types = None
+        sparsity_pattern = None
+        
         if model_type == "e2b":
             hidden_size = 2048
             num_heads = 8
             num_layers = 30
             intermediate_size = 8192
-            vocab_size = 262400
+            vocab_size = 262400 # Real Gemma 3n vocab size
             # E2B pattern: [sliding, sliding, sliding, sliding, full] x 6
             layer_types = ["sliding_attention", "sliding_attention", "sliding_attention", "sliding_attention", "full_attention"] * 6
+            # Early layers have sparsity
+            sparsity_pattern = [0.95] * 10 + [0.0] * 20
         else: # e4b
             hidden_size = 2048
             num_heads = 8
             num_layers = 35
             intermediate_size = 16384
             vocab_size = 262400
-            # E4B often has different patterns, defaulting to full if unsure
+            layer_types = ["full_attention"] * num_layers
+            sparsity_pattern = [0.95] * 12 + [0.0] * 23
         
         # 1. Build Model
         print("Building model architecture...")
-        self.model = vnn.Gemma3Model(
-            num_layers=num_layers,
-            hidden_size=hidden_size,
-            num_heads=num_heads,
-            num_kv_heads=num_kv_heads,
-            head_dim=head_dim,
-            intermediate_size=intermediate_size,
-            vocab_size=vocab_size,
-            tile_size=tile_size,
-            layer_types=layer_types,
-            sliding_window=sliding_window
-        )
+        class Config: pass
+        config = Config()
+        config.num_hidden_layers = num_layers
+        config.hidden_size = hidden_size
+        config.num_attention_heads = num_heads
+        config.num_key_value_heads = num_kv_heads
+        config.head_dim = head_dim
+        config.intermediate_size = intermediate_size
+        config.vocab_size = vocab_size
+        config.layer_types = layer_types
+        config.sliding_window = sliding_window
+        config.altup_num_inputs = altup_num_inputs
+        config.laurel_rank = laurel_rank
+        config.hidden_size_per_layer_input = ple_dim
+        
+        self.model_wrapper = vnn.Gemma3ForMultimodalLM(config)
+        self.model = self.model_wrapper.language_model
         print("Model architecture built.")
         
         # 2. Load Weights from Binaries
@@ -92,11 +105,22 @@ class GemmaChat:
             w = np.fromfile(path, dtype=np.float32).reshape(out_feat, in_feat)
             return w.T.copy()  # (in, out) for x @ W
         
-        # 1. Base components (embedding is (vocab, dim) — already correct orientation)
+        # 1. Base components
         self.model.embed_tokens.weight_ram = np.fromfile(os.path.join(weights_dir, f"{prefix_base}embed_tokens_weight.bin"), dtype=np.float32).reshape(self.model.embed_tokens.num_embeddings, self.model.embed_tokens.embedding_dim)
         self.model.norm.weight.from_disk(os.path.join(weights_dir, f"{prefix_base}norm_weight.bin"), self.model.norm.weight.shape)
         
-        # 2. Layers — all Linear weights need transpose
+        # 3n specialized global components
+        for i in range(len(self.model.altup_projections)):
+            self.model.altup_projections[i].weight_ram = load_linear_weight(os.path.join(weights_dir, f"{prefix_base}altup_projections_{i}_weight.bin"), self.model.hidden_size, self.model.hidden_size)
+            self.model.altup_unembed_projections[i].weight_ram = load_linear_weight(os.path.join(weights_dir, f"{prefix_base}altup_unembed_projections_{i}_weight.bin"), self.model.hidden_size, self.model.hidden_size)
+
+        # PLE Table (Large! Load to RAM, not VRAM)
+        ple_path = os.path.join(weights_dir, f"{prefix_base}embed_tokens_per_layer_weight.bin")
+        print(f"Mapping PLE Table from {ple_path}...")
+        self.ple_vocab_size = 262144
+        self.ple_table = np.memmap(ple_path, dtype='float32', mode='r', shape=(self.ple_vocab_size, len(self.model.layers), self.model.ple_dim))
+        
+        # 2. Layers
         for i in range(len(self.model.layers)):
             layer = self.model.layers[i]
             layer_prefix = f"{prefix_base}layers_{i}_"
@@ -112,20 +136,37 @@ class GemmaChat:
             
             layer.input_layernorm.weight.from_disk(os.path.join(weights_dir, f"{layer_prefix}input_layernorm_weight.bin"), layer.input_layernorm.weight.shape)
             layer.post_attention_layernorm.weight.from_disk(os.path.join(weights_dir, f"{layer_prefix}post_attention_layernorm_weight.bin"), layer.post_attention_layernorm.weight.shape)
+            layer.pre_feedforward_layernorm.weight.from_disk(os.path.join(weights_dir, f"{layer_prefix}pre_feedforward_layernorm_weight.bin"), layer.pre_feedforward_layernorm.weight.shape)
+            layer.post_feedforward_layernorm.weight.from_disk(os.path.join(weights_dir, f"{layer_prefix}post_feedforward_layernorm_weight.bin"), layer.post_feedforward_layernorm.weight.shape)
 
-        # Head: tied to embedding or separate
+            layer.q_norm.weight.from_disk(os.path.join(weights_dir, f"{layer_prefix}self_attn_q_norm_weight.bin"), layer.q_norm.weight.shape)
+            layer.k_norm.weight.from_disk(os.path.join(weights_dir, f"{layer_prefix}self_attn_k_norm_weight.bin"), layer.k_norm.weight.shape)
+
+            # 3n Layer components
+            layer.altup.modality_router.weight_ram = load_linear_weight(os.path.join(weights_dir, f"{layer_prefix}altup_modality_router_weight.bin"), layer.altup.num_inputs, layer.hidden_size)
+            layer.altup.prediction_coefs.weight_ram = load_linear_weight(os.path.join(weights_dir, f"{layer_prefix}altup_prediction_coefs_weight.bin"), layer.altup.num_inputs**2, layer.altup.num_inputs)
+            layer.altup.correction_coefs.weight_ram = load_linear_weight(os.path.join(weights_dir, f"{layer_prefix}altup_correction_coefs_weight.bin"), layer.altup.num_inputs, layer.altup.num_inputs)
+            layer.altup.router_norm.weight.from_disk(os.path.join(weights_dir, f"{layer_prefix}altup_router_norm_weight.bin"), layer.altup.router_norm.weight.shape)
+            layer.altup.correct_output_scale.from_disk(os.path.join(weights_dir, f"{layer_prefix}altup_correct_output_scale.bin"), layer.altup.correct_output_scale.shape)
+
+            layer.laurel.linear_left.weight_ram = load_linear_weight(os.path.join(weights_dir, f"{layer_prefix}laurel_linear_left_weight.bin"), layer.laurel.linear_left.out_features, layer.laurel.linear_left.in_features)
+            layer.laurel.linear_right.weight_ram = load_linear_weight(os.path.join(weights_dir, f"{layer_prefix}laurel_linear_right_weight.bin"), layer.laurel.linear_right.out_features, layer.laurel.linear_right.in_features)
+            layer.laurel.post_laurel_norm.weight.from_disk(os.path.join(weights_dir, f"{layer_prefix}laurel_post_laurel_norm_weight.bin"), layer.laurel.post_laurel_norm.weight.shape)
+
+            layer.ple.per_layer_input_gate.weight_ram = load_linear_weight(os.path.join(weights_dir, f"{layer_prefix}per_layer_input_gate_weight.bin"), layer.ple.per_layer_input_gate.out_features, layer.ple.per_layer_input_gate.in_features)
+            layer.ple.per_layer_projection.weight_ram = load_linear_weight(os.path.join(weights_dir, f"{layer_prefix}per_layer_projection_weight.bin"), layer.ple.per_layer_projection.out_features, layer.ple.per_layer_projection.in_features)
+            layer.ple.post_per_layer_input_norm.weight.from_disk(os.path.join(weights_dir, f"{layer_prefix}post_per_layer_input_norm_weight.bin"), layer.ple.post_per_layer_input_norm.weight.shape)
+
         lm_head_path = os.path.join(weights_dir, f"{prefix_base}lm_head_weight.bin")
         if os.path.exists(lm_head_path):
             self.model.lm_head.weight_ram = load_linear_weight(lm_head_path, self.model.lm_head.out_features, self.model.lm_head.in_features)
         else:
             print("lm_head not found, tying to embed_tokens (weight sharing).")
-            # embed is (vocab, hidden). lm_head needs (hidden, vocab) for x @ W.
-            # embed is already stored as (vocab, hidden) = PT's (out=vocab, in=hidden).
-            # So embed.T = (hidden, vocab) which IS what we need for x @ W.
             self.model.lm_head.weight_ram = self.model.embed_tokens.weight_ram.T.copy()
         print("All internal language model weights mapped.")
-
-    def softcap_logits(self, logits_np):
+        
+        # 3. Vision/Audio (Conditional loading support as per gemma3n_introduction.md)
+        print("Conditional loading: Vision/Audio parameters bypassed.")
         """Gemma final_logit_softcapping: tanh(logits / cap) * cap"""
         cap = 30.0
         return np.tanh(logits_np / cap) * cap
@@ -152,8 +193,19 @@ class GemmaChat:
             
             # Prefill phase
             pos_offset = 0
-            seq_len = x.shape[1]
-            logits = self.model(x, self.cos, self.sin, caches=self.caches, pos_offset=pos_offset)
+            seq_len = input_ids.shape[1]
+            
+            # PLE Indexing: [B, L, num_layers, ple_dim]
+            # Handle vocab mismatch: tokens >= 262144 get zeros for PLE
+            ple_np = np.zeros((input_ids.shape[0], seq_len, len(self.model.layers), self.model.ple_dim), dtype=np.float32)
+            flat_ids = input_ids.flatten()
+            for i, tid in enumerate(flat_ids):
+                if tid < self.ple_vocab_size:
+                    ple_np.reshape(-1, len(self.model.layers), self.model.ple_dim)[i] = self.ple_table[tid]
+            
+            ple_torch = vtorch.from_numpy(ple_np)
+            
+            logits = self.model_wrapper(x, self.cos, self.sin, ple_inputs=ple_torch, caches=self.caches, pos_offset=pos_offset)
             pos_offset += seq_len
             
             # Apply softcapping and get logits for last token
@@ -173,7 +225,12 @@ class GemmaChat:
                 
                 # Single token step
                 x = vtorch.from_numpy(np.array([[next_token]], dtype=np.int32))
-                logits = self.model(x, self.cos, self.sin, caches=self.caches, pos_offset=pos_offset)
+                ple_token_np = np.zeros((1, 1, len(self.model.layers), self.model.ple_dim), dtype=np.float32)
+                if next_token < self.ple_vocab_size:
+                    ple_token_np[0, 0] = self.ple_table[next_token]
+                ple_token_torch = vtorch.from_numpy(ple_token_np)
+                
+                logits = self.model_wrapper(x, self.cos, self.sin, ple_inputs=ple_token_torch, caches=self.caches, pos_offset=pos_offset)
                 
                 raw_logits = logits.to_numpy()[0, -1, :]
                 capped_logits = self.softcap_logits(raw_logits)
