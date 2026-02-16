@@ -20,6 +20,7 @@ def test_tiled_linear_vs_linear():
     vlinear = vnn.Linear(in_features, out_features)
     vlinear.weight.arr.from_numpy(layer.weight.detach().numpy().T.flatten())
     vlinear.bias.arr.from_numpy(layer.bias.detach().numpy().flatten())
+    vnn.ti.sync()
     
     vy = vlinear(vx)
     vy.backward(vnn.Tensor(np.ones((batch_size, out_features)), shape=(batch_size, out_features)))
@@ -30,6 +31,7 @@ def test_tiled_linear_vs_linear():
     # Copy weights to TiledLinear weight_ram (which is now vtiled.weight.arr if device='cpu')
     vtiled.weight.arr[:] = layer.weight.detach().numpy().T.flatten()
     vtiled.bias.arr.from_numpy(layer.bias.detach().numpy().flatten())
+    vnn.ti.sync()
     
     vy_tiled = vtiled(vx_tiled)
     vy_tiled.backward(vnn.Tensor(np.ones((batch_size, out_features)), shape=(batch_size, out_features)))

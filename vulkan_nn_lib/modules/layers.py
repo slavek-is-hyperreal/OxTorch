@@ -81,8 +81,7 @@ class Softmax(Module):
         def _backward():
             if x.requires_grad:
                 if x.grad is None: x.zero_grad()
-                # Placeholder for softmax backward
-                pass 
+                K.k_softmax_backward(res.arr, res.grad.arr, x.grad.arr, M, N)
         res._backward_fn = _backward
         return res
 
@@ -98,8 +97,7 @@ class LeakyReLU(Module):
         def _backward():
             if x.requires_grad:
                 if x.grad is None: x.zero_grad()
-                # Placeholder for leaky relu backward
-                pass
+                K.k_leaky_relu_backward(x.arr, res.grad.arr, x.grad.arr, x.total_size, self.alpha)
         res._backward_fn = _backward
         return res
 

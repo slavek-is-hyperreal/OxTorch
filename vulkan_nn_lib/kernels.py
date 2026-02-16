@@ -5,7 +5,7 @@ import os
 # Initialize Taichi
 ti.init(
     arch=ti.vulkan, 
-    offline_cache=False, # Temporarily disabled for troubleshooting
+    offline_cache=True,
     device_memory_GB=1.0 
 )
 
@@ -143,6 +143,21 @@ def k_gelu_tanh(X: ti.types.ndarray(), Total: int):
         X[i] = 0.5 * x * (1.0 + ti.tanh(0.7978845608 * (x + 0.044715 * x * x * x)))
 
 @ti.kernel
+def k_gelu_tanh_backward(X: ti.types.ndarray(), Grad_Out: ti.types.ndarray(), Grad_X: ti.types.ndarray(), Total: int):
+    for i in range(Total):
+        # Precise GELU derivative
+        x = X[i]
+        x3 = x * x * x
+        alpha = 0.7978845608
+        beta = 0.044715
+        z = alpha * (x + beta * x3)
+        tanh_z = ti.tanh(z)
+        sech2_z = 1.0 - tanh_z * tanh_z
+        phi = 0.5 * (1.0 + tanh_z)
+        term2 = 0.5 * x * sech2_z * alpha * (1.0 + 3.0 * beta * x * x)
+        Grad_X[i] += Grad_Out[i] * (phi + term2)
+
+@ti.kernel
 def k_softmax_1d(X: ti.types.ndarray(), Out: ti.types.ndarray(), M: int, N: int):
     for i in range(M):
         max_val = -1e10
@@ -155,6 +170,20 @@ def k_softmax_1d(X: ti.types.ndarray(), Out: ti.types.ndarray(), M: int, N: int)
             sum_exp += val
         for j in range(N):
             Out[i * N + j] /= sum_exp
+
+@ti.kernel
+def k_softmax_backward(Out: ti.types.ndarray(), Grad_Out: ti.types.ndarray(), Grad_X: ti.types.ndarray(), M: int, N: int):
+    for i in range(M):
+        sum_grad_y = 0.0
+        for j in range(N):
+            sum_grad_y += Grad_Out[i * N + j] * Out[i * N + j]
+        for j in range(N):
+            y = Out[i * N + j]
+            # dy_j / dx_k = y_j * (kron_jk - y_k)
+            # sum_k (dL/dy_k * dy_k/dx_j)
+            # = sum_k (dL/dy_k * y_k * (kron_kj - y_j))
+            # = (dL/dy_j * y_j) - y_j * sum_k (dL/dy_k * y_k)
+            Grad_X[i * N + j] += y * (Grad_Out[i * N + j] - sum_grad_y)
 
 @ti.kernel
 def k_rmsnorm_1d(X: ti.types.ndarray(), W: ti.types.ndarray(), Out: ti.types.ndarray(), M: int, N: int, eps: float, add_unit_offset: int):
@@ -283,6 +312,14 @@ def k_magnitude_norm(X: ti.types.ndarray(), Out: ti.types.ndarray(), slice_idx: 
 def k_leaky_relu_1d(X: ti.types.ndarray(), Total: int, alpha: float):
     for i in range(Total):
         if X[i] < 0: X[i] *= alpha
+
+@ti.kernel
+def k_leaky_relu_backward(X: ti.types.ndarray(), Grad_Out: ti.types.ndarray(), Grad_X: ti.types.ndarray(), Total: int, alpha: float):
+    for i in range(Total):
+        if X[i] > 0:
+            Grad_X[i] += Grad_Out[i]
+        else:
+            Grad_X[i] += Grad_Out[i] * alpha
 
 @ti.kernel
 def k_pool2d_1d(X: ti.types.ndarray(), Out: ti.types.ndarray(), b: int, c: int, h: int, w: int, s: int):

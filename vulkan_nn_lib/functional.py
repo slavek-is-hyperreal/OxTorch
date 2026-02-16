@@ -5,8 +5,16 @@ from . import kernels as K
 
 class GELUTanh(Module):
     def forward(self, x: Tensor) -> Tensor:
-        K.k_gelu_tanh(x.arr, x.total_size)
-        return x
+        res = x.clone()
+        K.k_gelu_tanh(res.arr, res.total_size)
+        res._prev = {x}
+        res.requires_grad = x.requires_grad
+        def _backward():
+            if x.requires_grad:
+                if x.grad is None: x.zero_grad()
+                K.k_gelu_tanh_backward(x.arr, res.grad.arr, x.grad.arr, x.total_size)
+        res._backward_fn = _backward
+        return res
 
 class F:
     @staticmethod

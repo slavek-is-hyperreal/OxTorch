@@ -38,7 +38,11 @@ class Tensor:
             
             if self.device == 'vulkan':
                 self.arr = ti.ndarray(dtype=ti.f32, shape=(self.total_size,))
-                if hasattr(self, 'np_arr'): self.arr.from_numpy(self.np_arr)
+                if hasattr(self, 'np_arr'):
+                    self.arr.from_numpy(self.np_arr)
+                    ti.sync()
+                    # Forced round-trip to guarantee synchronization
+                    _ = self.arr.to_numpy()
             else: # device == 'ram' or 'cpu'
                 if hasattr(self, 'np_arr'): self.arr = self.np_arr
                 else: self.arr = np.zeros(self.total_size, dtype=np.float32)

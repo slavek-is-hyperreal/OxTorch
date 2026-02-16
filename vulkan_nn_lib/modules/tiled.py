@@ -35,6 +35,7 @@ class TiledLinear(Module):
             full_tile = np.zeros((K_active, self.tile_size), dtype=np.float32)
             full_tile[:, :n_tile] = self.weight.to_numpy()[:K_active, n_offset : n_offset + n_tile]
             self.weight_tile_vram.from_numpy(full_tile.flatten())
+            ti.sync()
             K.k_matmul_tiled(x_flat.arr, self.weight_tile_vram, out.arr, M, N_out, K_A, K_active, n_offset, n_tile, self.tile_size)
             
         if self.has_bias: out = out + self.bias
@@ -52,6 +53,7 @@ class TiledLinear(Module):
                     grad_out_tile_np = grad_out_flat.to_numpy()[:, n_offset : n_offset + n_tile]
                     grad_out_tile_vram = ti.ndarray(ti.f32, shape=(M * n_tile,))
                     grad_out_tile_vram.from_numpy(grad_out_tile_np.flatten())
+                    ti.sync()
                     K.k_matmul_tiled_grad_w(x_flat.arr, grad_out_tile_vram, self.grad_tile_vram, M, K_A, n_tile, self.tile_size)
                     grad_w_tile_ram = self.grad_tile_vram.to_numpy().reshape(self.in_features, self.tile_size)
                     self.weight.grad.arr.reshape(self.in_features, N_out)[:K_active, n_offset : n_offset + n_tile] += grad_w_tile_ram[:K_active, :n_tile]
@@ -66,6 +68,7 @@ class TiledLinear(Module):
                     grad_out_tile_np = grad_out_flat.to_numpy()[:, n_offset : n_offset + n_tile]
                     grad_out_tile_vram = ti.ndarray(ti.f32, shape=(M * n_tile,))
                     grad_out_tile_vram.from_numpy(grad_out_tile_np.flatten())
+                    ti.sync()
                     K.k_matmul_tiled_grad_x(grad_out_tile_vram, self.weight_tile_vram, x.grad.arr, M, K_A, n_tile, self.tile_size)
 
             if self.has_bias and self.bias.requires_grad:

@@ -17,6 +17,7 @@ def test_linear_backward():
     # Load weights from torch to match
     vlayer.weight.arr.from_numpy(layer.weight.detach().numpy().T.flatten())
     vlayer.bias.arr.from_numpy(layer.bias.detach().numpy().flatten())
+    vnn.ti.sync()
     
     vy = vlayer(vx)
     vy.backward(vnn.Tensor(np.ones((batch_size, out_features)), shape=(batch_size, out_features)))
