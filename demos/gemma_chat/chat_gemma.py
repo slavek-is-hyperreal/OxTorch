@@ -167,7 +167,9 @@ class GemmaChat:
         
         # 3. Vision/Audio (Conditional loading support as per gemma3n_introduction.md)
         print("Conditional loading: Vision/Audio parameters bypassed.")
-        """Gemma final_logit_softcapping: tanh(logits / cap) * cap"""
+
+    def softcap_logits(self, logits_np):
+        """Gemma final_logit_softcapping: tanh(logits / cap) * cap."""
         cap = 30.0
         return np.tanh(logits_np / cap) * cap
 
