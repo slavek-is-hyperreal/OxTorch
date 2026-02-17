@@ -9,8 +9,8 @@ graph TD
     Tensor --> Decision{"Size & Device?"}
     
     Decision -- "< 128MB (FP32)" --> Vulkan["Taichi/Vulkan (GPU)"]
-    Decision -- "< RAM Budget" --> CPU["NumPy (RAM)"]
-    Decision -- "> RAM Budget" --> ARAS["ARAS Engine (SSD)"]
+    Decision -- "< 40% RAM Budget" --> Hybrid["PyTorch Fast-Path (CPU)"]
+    Decision -- "> 40% RAM Budget" --> ARAS["DRAS v4 Engine (SSD)"]
     
     ARAS --> Tiled["Tiled Math Engine"]
     Tiled --> SSD["SSD Binary Storage"]
@@ -24,15 +24,14 @@ VNN automatically routes every operation through the most efficient backend base
 *   **Benefit**: Extremely low latency, full GPU acceleration.
 *   **Limitation**: Limited by physical VRAM. 
 
-### B. NumPy (CPU/RAM)
-*   **Target**: General-purpose tensors that fit in available system memory.
-*   **Benefit**: High-speed CPU processing (AVX/SIMD), zero-copy indexing.
-*   **Limitation**: Limited by system RAM capacity.
+### B. PyTorch Hybrid (Fast Path)
+*   **Target**: Tensors that fit in RAM (<40% of safe budget).
+*   **Benefit**: Near-zero overhead (**1.04x vs Torch**). Uses PyTorch-native kernels on NumPy views.
+*   **Limitation**: Synchronous execution.
 
-### C. ARAS (SSD Streaming)
-*   **Target**: "Monster Scale" tensors (Gemma weights, enormous activations, gradients).
-*   **Benefit**: OOM-safety. Can process models of arbitrary size (100GB+) as long as there is disk space.
-*   **Innovation**: **Adaptive RAM-Aware Streaming**. Instead of simple memmap, it uses a "Greedy Factory" and "RAM-First Caching" to bypass OS bottlenecks (like ZFS ARC limits). Now supports **Tiled Reductions** (SSD-native `sum`/`mean`).
+### C. DRAS v4 (Adaptive SSD Streaming)
+*   **Target**: "Monster Scale" tensors (34GB+ on 17GB RAM).
+*   **Innovation**: **Adaptive Restart**. If system RAM usage crosses **21.5GB**, the operation voluntarily aborts, reduces its RAM allocation, and restarts to prevent a hard system OOM.
 
 ## 2. Autograd & Unified Gradient Accumulation
 VNN's reverse-mode differentiation engine is designed to be backend-agnostic. The core innovation is the `_acc_grad(grad)` method, which routes gradient accumulation based on the device:

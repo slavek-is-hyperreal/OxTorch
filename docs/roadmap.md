@@ -3,8 +3,9 @@
 This document serves as the primary technical guide for subsequent AI agents and developers working on the **VNN Legacy Edition**. It outlines the current state, technical debt, and prioritized phases for future development.
 
 ## 📍 Current State
-- **Phase 1-3**: Completed. Core tensor engine, ARAS (SSD) support, and PyTorch API parity are stable.
-- **Phase 4 (In Progress)**: Autograd matured and verified for 1GB SSD tensors. Reductions (`sum`/`mean`) are SSD-native.
+- **Phase 5**: Completed. Hybrid PyTorch backend and operator fusion verified.
+- **Phase 6**: Completed. **DRAS v4 (Adaptive Restart)** implemented. Cross-mode verification matrix confirms <1.5x slowdown vs Torch for RAM-resident ops and 140MB/s stable SSD streaming for 34GB tensors.
+- **Phase 7 (NEXT STEP)**: Comprehensive Layer & Optimizer maturity (Linear, Conv2d, Adam) for 100GB+ models.
 - **Critical Engine State**: Tensors are hashable by ID. `_acc_grad` is the universal entry point for gradients.
 
 ---
@@ -25,15 +26,10 @@ SSD bandwidth is our primary bottleneck.
 - [x] **Prefetcher v2**: Use look-ahead logic to overlap SSD reads with CPU computations.
 - [ ] **Prefetcher v2**: Implement a look-ahead prefetcher in `streaming_ops.py` that starts loading the next tile's data into RAM while the current tile is being processed by the CPU/GPU.
 
-## 📉 Phase 6: Precision & Quantization
-To fit even larger models on the same SSD space.
-
-- [ ] **INT8/FP8 SSD Storage**: Allow tensors to be stored in 8-bit formats on disk and de-quantized during the ARAS prefetch phase.
-- [ ] **Native FP16 Support**: Optimize Taichi kernels for half-precision to double the compute speed on supported Vulkan hardware.
-
-## 🦾 Phase 7: "Monster" Model Verification
-- [ ] **Llama-3 70B Execution**: Successfully load and run inference for a 70B model on a system with 8GB RAM using `from_binary`.
-- [ ] **Checkpointing**: Implement SSD-native checkpointing that writes only the "dirty" pages (modified weights) to disk.
+## 🚀 Phase 7: "Monster" Model Integration & Training
+- [ ] **Llama-3 70B Benchmark**: successfully run inference for a 70B model using `from_binary` on 8GB-16GB RAM systems.
+- [ ] **SSD-Native Training**: Optimize `Linear` and `Adam` for full SSD-to-SSD weight updates without loading full layers into RAM.
+- [ ] **Adaptive Calibration**: Auto-tune `MAX_THREADS` and `tile_len` based on disk I/O latency (ZFS vs NVMe).
 
 ---
 

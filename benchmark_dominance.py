@@ -37,13 +37,15 @@ def benchmark_dominance():
         
         # 3. Perform a huge operation
         print(f"\n[3] Performing VNN sum on {size_gb:.1f}GB tensor...")
+        # Ensure we use the fast SSD pool
+        Tensor.setup_ssd_storage("/vectorlegis_ssd_pool/vnn_cache")
+        
         t_op_start = time.perf_counter()
         s = a_vnn.sum().item()
         t_op_end = time.perf_counter()
         
-        print(f"    Sum Result: {s}")
-        print(f"    Operation Time: {t_op_end - t_op_start:.2f}s")
-        print(f"    Effective Throughput: {size_gb / (t_op_end - t_op_start):.1f} GB/s")
+        # Note: Speed is also reported inside a_vnn.sum()
+        print(f"    Benchmark Done.")
         
     except Exception as e:
         print(f"    VNN FAILED: {e}")

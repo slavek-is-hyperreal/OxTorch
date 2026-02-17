@@ -287,8 +287,15 @@ class Tensor:
     def to_numpy(self):
         """Unified data retrieval."""
         if self.device == 'vulkan':
+            if not hasattr(self.arr, 'to_numpy'):
+                # Fallback if device set to vulkan but data still on CPU
+                return self.arr.reshape(self.shape)
             ti.sync()
             return self.arr.to_numpy().reshape(self.shape)
+        
+        # CPU Mode: self.arr is already a numpy array
+        if isinstance(self.arr, np.ndarray):
+            return self.arr.reshape(self.shape)
         
         if self.dtype == 'int4':
             # Unpack bytes to f32
@@ -349,6 +356,14 @@ class Tensor:
         if self.device == 'vulkan': ti.sync()
         return new_t
     
+    @classmethod
+    def should_tile(cls, size_bytes):
+        """Returns True if the operation should be tiled even on CPU."""
+        budget = cls.get_safe_budget()
+        # High-performance threshold: 40% of safe budget (e.g. 6.4GB on 16GB budget)
+        # Allows most 'RAM-resident' operations to skip tiling overhead
+        return size_bytes > (budget * 0.4)
+
     def transpose(self, dim0, dim1):
         if len(self.shape) < 2: return self
         if self.device == 'vulkan':
@@ -472,6 +487,14 @@ class Tensor:
             other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
             
         from .memory import MemoryManager
+        size_bytes = self.total_size * self.item_size
+        
+        # FAST PATH: CPU & RAM-resident -> Use PT directly
+        if self.device == 'cpu' and other.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
+            torch = _get_torch()
+            res_t = torch.from_numpy(self.arr) + torch.from_numpy(other.arr)
+            return Tensor(res_t.numpy(), device='cpu', dtype=self.dtype)
+
         if self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'add')
@@ -774,6 +797,15 @@ class Tensor:
         return res
     def sum(self):
         from .memory import MemoryManager
+        size_bytes = self.total_size * self.item_size
+        
+        # FAST PATH: CPU & RAM-resident
+        if self.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
+            torch = _get_torch()
+            # Use f64 for sum precision parity
+            s = float(torch.sum(torch.from_numpy(self.arr).to(torch.float64)).item())
+            return Tensor([s], shape=(), device='cpu')
+
         if self.device == 'ssd' or MemoryManager.should_tile(self.total_size * self.item_size):
             from . import streaming_ops as SOE
             res = SOE.SOE.sum(self)

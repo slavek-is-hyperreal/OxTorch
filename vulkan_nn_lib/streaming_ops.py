@@ -5,7 +5,7 @@ import threading
 import time
 import queue
 import sys
-from .memory import MemoryManager
+from .memory import MemoryManager, SafetyViolationError
 
 def get_tensor_class():
     from .tensor import Tensor
@@ -22,15 +22,15 @@ class TilePrefetcher:
     """Producer-consumer prefetcher for SSD tensors.
     Maximizes throughput by issuing parallel sequential background reads.
     """
-    def __init__(self, tensor, tile_len, look_ahead=12, num_consumers=1):
+    def __init__(self, tensor, tile_len, look_ahead=None, num_consumers=1):
         self.tensor = tensor
         self.tile_len = tile_len
         self.n = tensor.total_size
-        self.look_ahead = look_ahead
+        # For Greedy Mode, look_ahead is effectively dynamic based on RAM
         self.num_consumers = num_consumers
-        self.queue = queue.Queue(maxsize=look_ahead)
+        self.queue = queue.Queue() # Unbounded for greedy prefetching
         self.stop_event = threading.Event()
-        self.executor = ThreadPoolExecutor(max_workers=min(look_ahead, 12))
+        self.executor = ThreadPoolExecutor(max_workers=12) # Saturate ZFS RAID-0
         self.thread = threading.Thread(target=self._orchestrator)
         self.thread.daemon = True
         self.thread.start()
@@ -39,24 +39,36 @@ class TilePrefetcher:
         """Orchestrates parallel read jobs."""
         futures = []
         try:
+            # Wait for RAM before starting prefetch loop
+            MemoryManager.wait_for_ram()
+
             for start in range(0, self.n, self.tile_len):
                 if self.stop_event.is_set(): break
                 end = min(start + self.tile_len, self.n)
                 
-                # DRAS: Wait if system RAM is critical before submitting NEW future
-                MemoryManager.wait_for_ram()
+                # DRAS v4: ADAPTIVE BACKOFF
+                # Measure current risk and available budget
+                budget = MemoryManager.get_safe_budget()
+                tile_size = (end - start) * self.tensor.item_size
+                # Limit outstanding I/O to 40% of currently safe budget
+                max_outstanding = int((budget * 0.4) // tile_size)
+                max_outstanding = max(2, min(50, max_outstanding))
                 
-                # Submit read job
+                # If we've hit dynamic limit, wait for the oldest future
+                while len(futures) >= max_outstanding:
+                    f = futures.pop(0)
+                    tile_data = f.result()
+                    if tile_data is not None:
+                        self.queue.put(tile_data)
+                
+                # Submit next read job
                 future = self.executor.submit(self._read_tile, start, end)
                 futures.append(future)
                 
-                # If we've hit look-ahead, wait for the oldest future
-                if len(futures) >= self.look_ahead:
-                    oldest = futures.pop(0)
-                    tile_data = oldest.result()
-                    if tile_data is not None:
-                        self.queue.put(tile_data)
-                        
+                # Slower submission if risk > 0.5 to let ZFS breathe
+                risk = MemoryManager.get_usage_risk()
+                if risk > 0.5: time.sleep(0.01 * (risk * 10))
+                       
             # Drain remaining
             for f in futures:
                 tile_data = f.result()
@@ -99,7 +111,7 @@ class TilePrefetcher:
 class SOE:
     """Streaming Operator Engine for tiled execution."""
     
-    MAX_THREADS = 8 
+    MAX_THREADS = 12 # Increased for ZFS RAID-0 saturation
 
     @staticmethod
     def mean(a):
@@ -171,7 +183,7 @@ class SOE:
             if isinstance(b, get_tensor_class()) and b.total_size > 1:
                 ti_b = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
 
-        prefetcher_a = TilePrefetcher(a, tile_len, look_ahead=look_ahead, num_consumers=(2 if use_hybrid else 1))
+        prefetcher_a = TilePrefetcher(a, tile_len, num_consumers=(2 if use_hybrid else 1))
 
         def process_tile_vulkan(start, end, a_ram):
             try:
@@ -256,6 +268,7 @@ class SOE:
                 with gpu_lock:
                     process_tile_vulkan(start, end, a_ram)
 
+        t_start = time.perf_counter()
         if use_hybrid:
             # 1 GPU thread + (MAX_THREADS - 1) CPU threads
             with ThreadPoolExecutor(max_workers=SOE.MAX_THREADS - 1) as cpu_executor:
@@ -285,6 +298,9 @@ class SOE:
                     start, end, a_ram = item
                     executor.submit(process_tile_cpu, start, end, a_ram)
             
+        t_end = time.perf_counter()
+        final_speed = (n * item_size / (t_end - t_start)) / 1e6
+        print(f"    Done in {t_end-t_start:.2f}s | Avg Speed: {final_speed:.1f} MB/s")
         return res
 
     @staticmethod
@@ -331,7 +347,7 @@ class SOE:
         elif eff_device == 'vulkan' or (eff_device == 'auto' and can_vulkan):
             use_vulkan = True
 
-        prefetcher_a = TilePrefetcher(a, tile_len, look_ahead=look_ahead, num_consumers=(2 if use_hybrid else 1))
+        prefetcher_a = TilePrefetcher(a, tile_len, num_consumers=(2 if use_hybrid else 1))
         torch = _get_torch()
 
         ti_a = None
@@ -339,6 +355,12 @@ class SOE:
         ti_res_scalar = None
         if use_vulkan or use_hybrid:
             import taichi as ti
+            @ti.kernel
+            def k_reduce_sum(X: ti.types.ndarray(), Out: ti.types.ndarray(), Total: ti.i32):
+                acc = 0.0 # Taichi f64 by default if initialized with float and no explicit cast
+                for i in range(Total):
+                    acc += ti.f64(X[i])
+                Out[0] = acc 
             ti_a = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
             ti_res_scalar = ti.ndarray(dtype=ti.f64, shape=(1,)) # HIGH PRECISION
             if isinstance(b, get_tensor_class()) and b.total_size > 1:
@@ -458,52 +480,63 @@ class SOE:
 
     @staticmethod
     def sum(a):
-        """OOM-safe tiled summation."""
-        n = a.total_size
-        item_size = a.item_size
-        safe_budget = MemoryManager.get_safe_budget()
-        tile_len = max(1000, min(n, (safe_budget // (SOE.MAX_THREADS * 2)) // item_size))
-        
-        prefetcher = TilePrefetcher(a, tile_len)
-        total_sum = 0.0
-        lock = threading.Lock()
-        
-        # Vulkan Acceleration for Sum
-        ti_data = None
-        ti_res_scalar = None
-        if a.device == 'vulkan':
-            import taichi as ti
-            ti_data = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
-            ti_res_scalar = ti.ndarray(dtype=ti.f32, shape=(1,))
-
-        def reduce_tile(tile_data):
-            nonlocal total_sum
-            if ti_data is not None:
-                ti_data.from_numpy(tile_data)
-                K.k_reduce_sum(ti_data, ti_res_scalar, len(tile_data))
-                tile_sum = float(ti_res_scalar.to_numpy()[0])
-            else:
-                torch = _get_torch()
-                if torch:
-                    t_tile = torch.from_numpy(tile_data)
-                    tile_sum = float(torch.sum(t_tile.to(torch.float64)).item())
-                else:
-                    tile_sum = np.sum(tile_data)
-            with lock:
-                total_sum += tile_sum
-
-        t0 = time.perf_counter()
-        print(f"  [ARAS] Tiled Sum on {n*item_size/1e6:.1f}MB tensor...")
-        with ThreadPoolExecutor(max_workers=SOE.MAX_THREADS) as executor:
-            while True:
-                item = prefetcher.get_tile()
-                if item is None: break
-                _, _, a_ram = item
-                executor.submit(reduce_tile, a_ram)
+        """OOM-safe tiled summation with Adaptive Restart."""
+        retry_count = 0
+        while True:
+            try:
+                n = a.total_size
+                item_size = a.item_size
+                safe_budget = MemoryManager.get_safe_budget()
+                tile_len = max(1000, min(n, (safe_budget // (SOE.MAX_THREADS * 3)) // item_size))
                 
-        print(f"    Done in {time.perf_counter()-t0:.2f}s | Sum: {total_sum}")
-        Tensor = get_tensor_class()
-        return Tensor([total_sum], shape=(), device='cpu')
+                prefetcher = TilePrefetcher(a, tile_len)
+                total_sum = 0.0
+                lock = threading.Lock()
+                
+                ti_data = None
+                ti_res_scalar = None
+                if a.device == 'vulkan':
+                    import taichi as ti
+                    ti_data = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
+                    ti_res_scalar = ti.ndarray(dtype=ti.f64, shape=(1,)) # MATCH KERNEL f64
+
+                def reduce_tile(tile_data):
+                    nonlocal total_sum
+                    if ti_data is not None:
+                        ti_data.from_numpy(tile_data)
+                        K.k_reduce_sum(ti_data, ti_res_scalar, len(tile_data))
+                        tile_sum = float(ti_res_scalar.to_numpy()[0])
+                    else:
+                        torch = _get_torch()
+                        if torch:
+                            t_tile = torch.from_numpy(tile_data)
+                            tile_sum = float(torch.sum(t_tile.to(torch.float64)).item())
+                        else:
+                            tile_sum = np.sum(tile_data)
+                    with lock:
+                        total_sum += tile_sum
+
+                t0 = time.perf_counter()
+                print(f"  [DRAS v4] Tiled Sum on {n*item_size/1e6:.1f}MB (MaxUsage: {MemoryManager.MAX_TOTAL_USAGE_PCT*100:.0f}%)")
+                with ThreadPoolExecutor(max_workers=SOE.MAX_THREADS) as executor:
+                    while True:
+                        item = prefetcher.get_tile()
+                        if item is None: break
+                        _, _, a_ram = item
+                        executor.submit(reduce_tile, a_ram)
+                
+                t_end = time.perf_counter()
+                final_speed = (n * item_size / (t_end - t0)) / 1e6
+                print(f"    Done in {t_end-t0:.2f}s | Avg Speed: {final_speed:.1f} MB/s | Sum: {total_sum}")
+                Tensor = get_tensor_class()
+                return Tensor([total_sum], shape=(), device='cpu')
+                
+            except SafetyViolationError as e:
+                prefetcher.stop()
+                retry_count += 1
+                MemoryManager.MAX_TOTAL_USAGE_PCT -= 0.05
+                print(f"  [!] {e} - Reducing budget to {MemoryManager.MAX_TOTAL_USAGE_PCT*100:.0f}% and RESTARTING (Attempt {retry_count+1})...")
+                time.sleep(1.0) # Let garbage collector breathe
 
     @staticmethod
     def matmul(a, b, out_device='auto'):
@@ -541,7 +574,9 @@ class SOE:
             futures = [executor.submit(process_block, sm, min(sm + block_rows, M)) for sm in m_offsets]
             for f in futures: f.result()
 
-        print(f"    Done in {time.perf_counter()-t0:.2f}s")
+        t_end = time.perf_counter()
+        final_speed = (M * K_dim * N * item_size / (t_end - t0)) / 1e6
+        print(f"    Done in {t_end-t0:.2f}s | Avg Speed: {final_speed:.1f} MB/s")
         return res
 
     @staticmethod

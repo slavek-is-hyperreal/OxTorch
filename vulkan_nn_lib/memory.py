@@ -1,12 +1,17 @@
 import os
 
+class SafetyViolationError(Exception):
+    """Triggered when system RAM usage nears critical limits."""
+    pass
+
 class MemoryManager:
     """Centralized RAM awareness for VNN."""
     
-    SYSTEM_RESERVE_BYTES = 1 * 1024 * 1024 * 1024 # Reduced to 1GB for higher utilization
-    MAX_TOTAL_USAGE_PCT = 0.90 # 90% of total RAM
-    HARD_FLOOR_BYTES = 1024 * 1024 * 1024 # 1.0GB Hard Floor for absolute safety
-
+    # User-specified hardware constraints: 20GB usable, 80% cap. 5GB ZFS fixed.
+    SYSTEM_RESERVE_BYTES = 5 * 1024 * 1024 * 1024 # 5GB Reserve (ZFS + Safety)
+    MAX_TOTAL_USAGE_PCT = 0.80 # 80% of usable RAM
+    HARD_FLOOR_BYTES = 3 * 1024 * 1024 * 1024 # Raised to 3GB for ZFS and DRAS v4 stability
+    CRITICAL_SYSTEM_USAGE_BYTES = 21 * 1024 * 1024 * 1024 # 21GB: Near user's 22GB limit
     @staticmethod
     def get_mem_info():
         info = {}
@@ -74,14 +79,15 @@ class MemoryManager:
         available = info.get('MemAvailable', total // 2)
         
         # Strategy:
-        # 1. Respect maximum physical safety (85% of total)
-        # 2. But don't starve the system (Available - 2GB)
-        usable_from_total = total * cls.MAX_TOTAL_USAGE_PCT
-        usable_from_avail = available - cls.SYSTEM_RESERVE_BYTES
+        # 1. We assume ~20GB are available for apps (after ZFS).
+        # 2. We take 80% of what's reported as available, BUT cap at 16GB.
+        usable_from_avail = available * cls.MAX_TOTAL_USAGE_PCT
         
-        # Budget is the stricter of the two, but at least some minimal amount
-        budget = max(256 * 1024 * 1024, min(usable_from_total, usable_from_avail))
-        return int(budget)
+        # Budget cap at 16GB per user spec
+        max_vnn_budget = 16 * 1024 * 1024 * 1024
+        budget = min(usable_from_avail, max_vnn_budget)
+        
+        return int(max(256 * 1024 * 1024, budget))
 
     @staticmethod
     def should_offload_to_ssd(size_bytes):
@@ -99,13 +105,35 @@ class MemoryManager:
         return size_bytes > (total * 0.1)
 
     @classmethod
+    def get_usage_risk(cls):
+        """Returns risk level: 0 (safe) to 1.0 (critical)."""
+        info = cls.get_mem_info()
+        # total used = Total - Available
+        mem_total = info.get('MemTotal', 20*1024**3)
+        mem_available = info.get('MemAvailable', 0)
+        used = mem_total - mem_available
+        
+        if used >= cls.CRITICAL_SYSTEM_USAGE_BYTES: return 1.0
+        # Start showing risk from 80% of critical
+        risk_base = cls.CRITICAL_SYSTEM_USAGE_BYTES * 0.8
+        if used < risk_base: return 0.0
+        
+        risk = (used - risk_base) / (cls.CRITICAL_SYSTEM_USAGE_BYTES - risk_base)
+        return max(0.0, min(1.0, risk))
+
+    @classmethod
     def wait_for_ram(cls, required_bytes=0):
-        """Active backoff if RAM is critical."""
+        """Active backoff if RAM is critical. Raises SafetyViolationError if usage is unsafe."""
         import time
         while True:
             info = cls.get_mem_info()
             avail = info.get('MemAvailable', 0)
-            if avail > cls.HARD_FLOOR_BYTES:
+            risk = cls.get_usage_risk()
+            
+            # 21.5GB+ approximately for 24GB total logic
+            if risk >= 0.98: 
+                raise SafetyViolationError(f"Adaptive Safety Trigger: Usage ({ (info.get('MemTotal',0)-avail)/1e9:.1f}GB) exceeds safety bounds.")
+                
+            if avail > cls.HARD_FLOOR_BYTES and risk < 0.9:
                 break
-            # print(f"  [DRAS] RAM CRITICAL ({avail/1e9:.1f}GB avail). Throttling...")
-            time.sleep(0.1)
+            time.sleep(0.05)

@@ -7,10 +7,10 @@ The `Tensor` class is the heart of VNN. It is designed to behave like a `torch.T
 ### `__init__(data=None, shape=None, device='auto', dtype=None, external_path=None)`
 - **`data`**: Initial data (NumPy array, list, or scalar).
 - **`device`**: 
-    - `'vulkan'`: GPU acceleration (Taichi).
-    - `'cpu'`: RAM-based (NumPy).
-    - `'ssd'`: Disk-native (Memmoped via `TensorStore`).
-    - `'auto'`: (Default) Automatically selects based on size and available RAM.
+    - `'vulkan'`: Taichi acceleration.
+    - `'cpu'`: PyTorch Hybrid Fast-Path (used if tensor < 40% of safe RAM).
+    - `'ssd'`: Disk-native storage via `TensorStore`.
+    - `'auto'`: (Default) Dynamically switches based on size, device availability, and global RAM budget.
 - **`external_path`**: If provided, the tensor mounts an existing binary file on disk (Zero-copy).
 
 ---
@@ -23,8 +23,8 @@ Forces the tensor into a NumPy array in RAM.
 > Calling this on a "Monster Scale" (e.g. 100GB) tensor will cause an OOM crash. Use slicing or `permute` instead.
 
 ### `backward(grad=None)`
-Triggers the Autograd engine. It builds a topological sort of the graph and computes gradients.
-- **SSD Support**: Fully mature. Handles multi-gigabyte gradient accumulation on SSD-resident parameters using the ARAS engine.
+Triggers the Autograd engine.
+- **SSD Support**: Fully mature with **Adaptive Restart**. If a backward pass causes a memory spike, DRAS v4 will automatically throttle prefetching or restart with a smaller tile size to guarantee stability.
 
 ### `zero_grad()`
 Clears the gradient buffer. 

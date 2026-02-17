@@ -1,0 +1,93 @@
+# 📖 VNN Technical Manual: Source Code Walkthrough
+
+This document provides a comprehensive, block-by-block (and often line-by-line) explanation of the VNN Legacy Edition codebase. It is designed to help developers understand the "Why" and "How" behind every critical function.
+
+---
+
+## 🏗️ Core Engine (`vulkan_nn_lib/`)
+
+### 1. [tensor.py](../vulkan_nn_lib/tensor.py) - The Universal Tensor
+This is the central object of VNN. It manages the state, device routing, and Autograd graph.
+
+*   **Lines 14-16**: `setup_ssd_storage` initializes the `TensorStore` globally.
+*   **Lines 30-70**: `__init__` constructor.
+    *   It handles **Auto-Device Selection**: decides whether a tensor should live in VRAM, RAM, or SSD based on its size and the `MemoryManager` budget.
+*   **Lines 75-103**: Memory allocation handles three tiers:
+    *   **SSD**: Uses `TensorStore` for zeros-copy/external binary mounting.
+    *   **Vulkan**: Allocates `ti.ndarray` (f32) for GPU speed.
+    *   **CPU**: Uses standard `numpy.ndarray`.
+*   **Lines 210-245**: `backward()` implementation.
+    *   It builds a **topological sort** of the computation graph using a depth-first search (DFS).
+    *   Iterates through nodes in reverse order and calls their `_backward_fn`.
+*   **Lines 253-275**: `_acc_grad()` - The most critical part for OOM-safety. 
+    *   It accumulates gradients on the **target device**. 
+    *   If a parameter is on SSD, its gradient is also on SSD, and they are summed using the streaming engine.
+*   **Lines 287-305**: `to_numpy()` - Standardized data retrieval with a safety fallback for Vulkan data currently on CPU.
+
+### 2. [streaming_ops.py](../vulkan_nn_lib/streaming_ops.py) - The ARAS Engine
+The "Heart" of VNN's OOM-safety. It implements tiled streaming for multi-gigabyte tensors.
+
+*   **Lines 22-65**: `TilePrefetcher` - An asynchronous producer-consumer queue.
+    *   **Lines 43-60**: **Adaptive Backoff**. It monitors RAM usage and limits the number of outstanding I/O futures to 40% of the safe budget.
+*   **Lines 180-250**: `SOE.sum()` (and other reductions).
+    *   Uses a **ThreadPoolExecutor** (12 threads) to overlap SSD reads with compute.
+    *   **Lines 240-250**: `SafetyViolationError` catch-all. If RAM spikes dangerously, it triggers an **Adaptive Restart**, reducing the budget and retrying the operation.
+*   **Lines 355-450**: `elementwise_op()`.
+    *   Implements **Heterogeneous Acceleration**. It can run in **Hybrid Mode**, where one GPU thread processes tiles in Vulkan while CPU threads handle other tiles in parallel.
+
+### 3. [kernels.py](../vulkan_nn_lib/kernels.py) - Taichi Compute Shaders
+JIT-compiled SPIR-V shaders for Vulkan.
+
+*   **Lines 10-15**: Taichi initialization forcing Vulkan backend.
+*   **Lines 30-50**: Adam/SGD kernels. These allow weight updates to happen entirely on the GPU.
+*   **Lines 150-180**: `k_reduce_sum`. 
+    *   Uses an **f64 accumulator** to prevent precision loss when summing billions of elements.
+*   **Lines 500-515**: `k_unpack_int4`. 
+    *   Performs bit-shifting and masking to decompress two 4-bit weights from one 8-bit byte on the fly.
+
+### 4. [memory.py](../vulkan_nn_lib/memory.py) - Hardware Oracle
+Manages the RAM/VRAM budgets and detects safety violations.
+
+*   **Line 13**: `HARD_FLOOR_BYTES` (3GB). Prevents the system from dipping into critical "Freeze Zone".
+*   **Lines 85-110**: `get_safe_budget()`. 
+    *   Calculates 80% of available RAM but caps at 16GB for this specific machine.
+*   **Lines 125-140**: `wait_for_ram()`. 
+    *   Blocking check used by factory functions. If RAM is too low, it pauses the requester until memory is released.
+
+---
+
+## 🧠 Brain & Interface
+
+### 5. [torch_shim.py](../vulkan_nn_lib/torch_shim.py) - The Compatibility Layer
+Provides the `torch.*` API.
+
+*   **Lines 46-60**: `zeros()`, `randn()` - These are "Smart Factories".
+    *   They check if the requested shape will exceed RAM *before* allocating anything.
+    *   If it exceeds RAM, they return an **SSD-resident tensor** immediately.
+*   **Lines 110-130**: `from_binary()`. 
+    *   Mounts a file as an SSD tensor without reading a single byte (Zero-copy).
+
+### 6. [optimizers.py](../vulkan_nn_lib/optimizers.py) - Training Core
+*   **Lines 160-250**: `AutoAdam`.
+    *   The most advanced optimizer. It segments parameters: some in VRAM, some in RAM, some on SSD. 
+    *   Updates are orchestrated to never overflow any bucket.
+
+---
+
+## 📦 Data Storage
+
+### 7. [tensor_store.py](../vulkan_nn_lib/tensor_store.py) - SSD Persistence
+*   **Lines 20-35**: Uses **numpy memmap** with `mode='r+'`.
+    *   Allows VNN to treat the SSD as virtual memory, delegating caching to the Linux kernel / ZFS ARC.
+
+---
+
+## 🎭 High-Level Modules ([vulkan_nn_lib/modules/](../vulkan_nn_lib/modules/))
+
+### 8. [layers.py](../vulkan_nn_lib/modules/layers.py)
+*   **Linear**: Detects if weights are too large for RAM and initializes them on SSD.
+*   **RMSNorm**: Optimized Taichi kernel for stable normalization.
+
+### 9. [models.py](../vulkan_nn_lib/modules/models.py)
+*   **Gemma3Block**: Implements the complex Gemma-3 architecture (AltUp, Laurel, PLE) while keeping activation buffers OOM-safe via the core engine.
+ bitumen

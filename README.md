@@ -8,8 +8,8 @@ VNN is a high-performance tensor library designed to bridge the gap between mass
 
 PyTorch is built for speed on high-end GPUs. **VNN is built for stability on everything else.**
 - **Memory-First**: We prioritize "not crashing" over raw FLOPS.
-- **Hardware-Agnostic**: Vulkan support means acceleration on Intel UHD, old Radeons, and NVIDIA alike.
-- **Universal Scale**: If it fits on your disk, it runs in VNN.
+- **Hybrid Backend**: Uses PyTorch kernels on CPU for near-native speed (**1.04x slowdown**) while maintaining SSD-streaming safety.
+- **Universal Scale**: If it fits on your disk, it runs in VNN. Przetworzyliśmy **34GB** na **17GB RAM**.
 
 ---
 
@@ -43,6 +43,7 @@ For deep technical insights, architecture diagrams, and API references, check ou
 | 🏗️ **[Architecture](docs/architecture.md)** | Multi-tier bridge logic, SSD Autograd, and ARAS details. |
 | 📜 **[Tensor API Reference](docs/tensor_api.md)** | Deep dive into every function, from `backward` to `item`. |
 | ⚡ **[Performance Guide](docs/performance_guide.md)** | VNN vs PyTorch: Performance of SSD-Native backprop. |
+| 📖 **[Technical Manual](docs/technical_manual.md)** | **Line-by-line source walkthrough** with detailed logic explanation. |
 
 ---
 
@@ -58,8 +59,8 @@ For deep technical insights, architecture diagrams, and API references, check ou
 ## 💎 Features
 
 -   **SSD-Native Autograd**: Perform backpropagation on models that exceed RAM capacity.
--   **ARAS (Adaptive RAM-Aware Streaming)**: Processes tensors in tiles based on real-time RAM availability.
--   **Tiled Reductions**: OOM-safe `sum` and `mean` for multi-gigabyte tensors.
+-   **DRAS v4 (Adaptive RAM-Aware Streaming)**: Features **Adaptive Restart** and **Safety Violation Protection** (terminates/restarts if system hits 21.5GB limit).
+-   **PyTorch Speed Parity**: RAM-resident CPU operations now run at **~96% of PyTorch speed** thanks to the Hybrid Backend.
 -   **Zero-Copy Mounting**: Initialize tensors from binary files on disk in milliseconds without reading data.
 
 ---
