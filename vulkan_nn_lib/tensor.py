@@ -73,9 +73,9 @@ class Tensor:
             elif self.dtype == np.float32 and size_bytes <= 128 * 1024 * 1024:
                 device = 'vulkan'
             else:
-                avail = self._get_available_ram()
-                # 90% of available as threshold
-                if size_bytes <= avail * 0.9: 
+                from .memory import MemoryManager
+                safe_budget = MemoryManager.get_safe_budget()
+                if size_bytes <= safe_budget: 
                     device = 'cpu'
                 else:
                     device = 'ssd'
@@ -288,6 +288,10 @@ class Tensor:
         return sz
 
     @property
+    def item_size(self):
+        return np.dtype(self.dtype).itemsize
+
+    @property
     def shape(self): return self._shape
     @shape.setter
     def shape(self, val): self._shape = val
@@ -428,17 +432,13 @@ class Tensor:
         if not isinstance(other, Tensor): 
             other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
             
-        if self.device == 'ssd' or other.device == 'ssd':
+        from .memory import MemoryManager
+        if self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'add')
         elif self.device == 'cpu' or self.device == 'ram':
             res_np = self.to_numpy() + other.to_numpy()
             res = Tensor(res_np, device=self.device, dtype=self.dtype)
-        else:
-            res = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
-            K.k_copy(self.arr, res.arr, self.total_size)
-            K.k_add(res.arr, other.arr, res.total_size, other.total_size)
-            if self.device == 'vulkan': ti.sync()
             
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
@@ -456,17 +456,13 @@ class Tensor:
         if not isinstance(other, Tensor): 
             other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
             
-        if self.device == 'ssd' or other.device == 'ssd':
+        from .memory import MemoryManager
+        if self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'sub')
         elif self.device == 'cpu' or self.device == 'ram':
             res_np = self.to_numpy() - other.to_numpy()
             res = Tensor(res_np, device=self.device, dtype=self.dtype)
-        else:
-            res = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
-            K.k_copy(self.arr, res.arr, self.total_size)
-            K.k_sub(res.arr, other.arr, res.total_size, other.total_size)
-            if self.device == 'vulkan': ti.sync()
             
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
@@ -484,7 +480,8 @@ class Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
             
-        if self.device == 'ssd' or other.device == 'ssd':
+        from .memory import MemoryManager
+        if self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'mul')
         elif self.device == 'cpu' or self.device == 'ram':
@@ -514,7 +511,8 @@ class Tensor:
         if not isinstance(other, Tensor):
             other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
             
-        if self.device == 'ssd' or other.device == 'ssd':
+        from .memory import MemoryManager
+        if self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'div')
         elif self.device == 'cpu' or self.device == 'ram':
@@ -724,7 +722,8 @@ class Tensor:
         if self.device == 'vulkan': ti.sync()
         return res
     def sum(self):
-        if self.device == 'ssd':
+        from .memory import MemoryManager
+        if self.device == 'ssd' or MemoryManager.should_tile(self.total_size * self.item_size):
             from . import streaming_ops as SOE
             res = SOE.SOE.sum(self)
         else:
@@ -742,12 +741,14 @@ class Tensor:
     def fused_sum(self, other=None, op='mul'):
         """SSD Optimization: Performs op + sum in a single pass to save I/O."""
         if self.device != 'ssd':
-            if other is None: return self.sum()
-            if op == 'mul': return (self * other).sum()
-            if op == 'add': return (self + other).sum()
-            if op == 'sub': return (self - other).sum()
-            if op == 'div': return (self / other).sum()
-            return self.sum() # fallback
+            from .memory import MemoryManager
+            if not MemoryManager.should_tile(self.total_size * self.item_size):
+                if other is None: return self.sum()
+                if op == 'mul': return (self * other).sum()
+                if op == 'add': return (self + other).sum()
+                if op == 'sub': return (self - other).sum()
+                if op == 'div': return (self / other).sum()
+                return self.sum() # fallback
         
         from . import streaming_ops as SOE
         return SOE.SOE.elementwise_reduce(self, other, op, 'sum')

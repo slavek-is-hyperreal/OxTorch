@@ -93,6 +93,26 @@ def k_scale(X: ti.types.ndarray(), Scale: float, Total: int):
         X[i] *= Scale
 
 @ti.kernel
+def k_add_scalar(A: ti.types.ndarray(), B: float, size: int):
+    for i in range(size):
+        A[i] += B
+
+@ti.kernel
+def k_exp(A: ti.types.ndarray(), size: int):
+    for i in range(size):
+        A[i] = ti.exp(A[i])
+
+@ti.kernel
+def k_log(A: ti.types.ndarray(), size: int):
+    for i in range(size):
+        A[i] = ti.log(A[i])
+
+@ti.kernel
+def k_sqrt(A: ti.types.ndarray(), size: int):
+    for i in range(size):
+        A[i] = ti.sqrt(A[i])
+
+@ti.kernel
 def k_copy(Src: ti.types.ndarray(), Dst: ti.types.ndarray(), Total: int):
     for i in range(Total):
         Dst[i] = Src[i]
@@ -475,3 +495,10 @@ def warmup():
     k_adam(dummy, dummy, dummy, dummy, 1.0, 0.9, 0.999, 1e-8, 1, 1)
     ti.sync()
     print("Kernels warmed up.")
+@ti.kernel
+def k_reduce_sum(X: ti.types.ndarray(), Out: ti.types.ndarray(), Total: int):
+    # Use f64 accumulator to prevent precision loss on massive tensors
+    acc = ti.f64(0.0)
+    for i in range(Total):
+        acc += ti.f64(X[i])
+    Out[0] = acc # Return f64 to host

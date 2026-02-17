@@ -52,12 +52,10 @@ def _should_stream(size, dtype, device):
         n = 1
         for s in size: n *= s
         item_size = np.dtype(dtype if dtype else np.float32).itemsize
-        # If > 512MB, check if we should go to SSD
-        if n * item_size > 512 * 1024 * 1024:
-            from .tensor import Tensor
-            # We don't want to import Tensor at top level due to circularity if not careful
-            # but here it's fine.
-            return True
+        size_bytes = n * item_size
+        
+        from .memory import MemoryManager
+        return MemoryManager.should_offload_to_ssd(size_bytes)
     return False
 
 def zeros(*size, dtype=None, device='auto', requires_grad=False):

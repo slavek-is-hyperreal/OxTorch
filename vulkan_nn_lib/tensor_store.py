@@ -24,11 +24,13 @@ class TensorStore:
         # Calculate total size in bytes
         size = int(np.prod(shape)) * np.dtype(dtype).itemsize
         
-        # Create empty file of required size if it doesn't exist
-        if not os.path.exists(path):
-            with open(path, "wb") as f:
+        # Always ensure file is fresh and correct size
+        with open(path, "wb") as f:
+            if size > 0:
                 f.seek(size - 1)
                 f.write(b"\0")
+            else:
+                f.truncate(0)
         
         # Open as memmap
         m = np.memmap(path, dtype=dtype, mode='r+', shape=shape)
