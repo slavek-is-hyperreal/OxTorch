@@ -1,4 +1,6 @@
 import os
+import time
+import subprocess
 
 class SafetyViolationError(Exception):
     """Triggered when system RAM usage nears critical limits."""
@@ -12,8 +14,18 @@ class MemoryManager:
     MAX_TOTAL_USAGE_PCT = 0.80 # 80% of usable RAM
     HARD_FLOOR_BYTES = 3 * 1024 * 1024 * 1024 # Raised to 3GB for ZFS and DRAS v4 stability
     CRITICAL_SYSTEM_USAGE_BYTES = 21 * 1024 * 1024 * 1024 # 21GB: Near user's 22GB limit
-    @staticmethod
-    def get_mem_info():
+    
+    _mem_info_cache = None
+    _mem_info_time = 0.0
+    _mem_total_cached = None
+    CACHE_TTL = 0.1 # 100ms
+    
+    @classmethod
+    def get_mem_info(cls):
+        now = time.time()
+        if cls._mem_info_cache and (now - cls._mem_info_time < cls.CACHE_TTL):
+            return cls._mem_info_cache
+            
         info = {}
         try:
             with open('/proc/meminfo', 'r') as f:
@@ -24,9 +36,13 @@ class MemoryManager:
                         value = int(parts[1].split()[0]) * 1024
                         info[name] = value
         except:
-            # Fallback if /proc/meminfo is unavailable
             info['MemTotal'] = 8 * 1024 * 1024 * 1024
             info['MemAvailable'] = 4 * 1024 * 1024 * 1024
+            
+        cls._mem_info_cache = info
+        cls._mem_info_time = now
+        if cls._mem_total_cached is None:
+            cls._mem_total_cached = info.get('MemTotal', 8 * 1024 * 1024 * 1024)
         return info
 
     @staticmethod
@@ -53,7 +69,6 @@ class MemoryManager:
     @classmethod
     def get_vram_budget(cls):
         """Dynamic VRAM budget estimate using nvidia-smi (OOM-Safe)."""
-        import subprocess
         try:
             # Query nvidia-smi for total and free memory in MB
             res = subprocess.check_output(
@@ -99,10 +114,10 @@ class MemoryManager:
     @classmethod
     def should_tile(cls, size_bytes):
         """Returns True if the operation should be tiled even on CPU."""
-        info = cls.get_mem_info()
-        total = info.get('MemTotal', 8 * 1024 * 1024 * 1024)
+        if cls._mem_total_cached is None:
+            cls.get_mem_info()
         # Threshold for tiling: 10% of total RAM
-        return size_bytes > (total * 0.1)
+        return size_bytes > (cls._mem_total_cached * 0.1)
 
     @classmethod
     def get_usage_risk(cls):
@@ -124,7 +139,6 @@ class MemoryManager:
     @classmethod
     def wait_for_ram(cls, required_bytes=0):
         """Active backoff if RAM is critical. Raises SafetyViolationError if usage is unsafe."""
-        import time
         while True:
             info = cls.get_mem_info()
             avail = info.get('MemAvailable', 0)

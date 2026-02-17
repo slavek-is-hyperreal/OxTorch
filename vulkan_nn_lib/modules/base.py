@@ -44,7 +44,12 @@ class Module:
         for name, param in self._parameters.items():
             if name in state_dict:
                 import numpy as np
-                param.arr.from_numpy(state_dict[name].astype(np.float32))
+                val = state_dict[name].astype(np.float32)
+                if param.device == 'vulkan':
+                    param.arr.from_numpy(val.flatten())
+                else:
+                    # CPU or SSD (memmap)
+                    param.arr.reshape(param.shape)[...] = val
         for m_name, module in self._modules.items():
             child_sd = {k[len(m_name)+1:]: v for k, v in state_dict.items() if k.startswith(f"{m_name}.")}
             module.load_state_dict(child_sd)

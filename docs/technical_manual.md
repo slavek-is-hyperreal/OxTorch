@@ -23,6 +23,8 @@ This is the central object of VNN. It manages the state, device routing, and Aut
     *   It accumulates gradients on the **target device**. 
     *   If a parameter is on SSD, its gradient is also on SSD, and they are summed using the streaming engine.
 *   **Lines 287-305**: `to_numpy()` - Standardized data retrieval with a safety fallback for Vulkan data currently on CPU.
+*   **Lines 480-500**: **Activation Methods**. Direct support for `relu`, `silu`, `leaky_relu`, `softmax`, and `gelu_tanh` on the `Tensor` object.
+*   **Lines 503-510**: **MatMul Fast-Path**. Detects CPU-resident data and uses PyTorch's optimized BLAS kernels via shared memory views.
 
 ### 2. [streaming_ops.py](../vulkan_nn_lib/streaming_ops.py) - The ARAS Engine
 The "Heart" of VNN's OOM-safety. It implements tiled streaming for multi-gigabyte tensors.
@@ -34,6 +36,8 @@ The "Heart" of VNN's OOM-safety. It implements tiled streaming for multi-gigabyt
     *   **Lines 240-250**: `SafetyViolationError` catch-all. If RAM spikes dangerously, it triggers an **Adaptive Restart**, reducing the budget and retrying the operation.
 *   **Lines 355-450**: `elementwise_op()`.
     *   Implements **Heterogeneous Acceleration**. It can run in **Hybrid Mode**, where one GPU thread processes tiles in Vulkan while CPU threads handle other tiles in parallel.
+    *   **Dtype Promotion**: Automatically promotes integer division to `float32` for PyTorch parity.
+    *   **Activation Integration**: Native support for streaming activation functions directly on disk.
 
 ### 3. [kernels.py](../vulkan_nn_lib/kernels.py) - Taichi Compute Shaders
 JIT-compiled SPIR-V shaders for Vulkan.
@@ -42,6 +46,7 @@ JIT-compiled SPIR-V shaders for Vulkan.
 *   **Lines 30-50**: Adam/SGD kernels. These allow weight updates to happen entirely on the GPU.
 *   **Lines 150-180**: `k_reduce_sum`. 
     *   Uses an **f64 accumulator** to prevent precision loss when summing billions of elements.
+*   **Kernel Signature Standards**: All math kernels now follow the `(Input, Output, Total)` out-of-place pattern to ensure thread-safety and avoid race conditions in tiled execution.
 *   **Lines 500-515**: `k_unpack_int4`. 
     *   Performs bit-shifting and masking to decompress two 4-bit weights from one 8-bit byte on the fly.
 

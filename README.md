@@ -8,8 +8,9 @@ VNN is a high-performance tensor library designed to bridge the gap between mass
 
 PyTorch is built for speed on high-end GPUs. **VNN is built for stability on everything else.**
 - **Memory-First**: We prioritize "not crashing" over raw FLOPS.
-- **Hybrid Backend**: Uses PyTorch kernels on CPU for near-native speed (**1.04x slowdown**) while maintaining SSD-streaming safety.
-- **Universal Scale**: If it fits on your disk, it runs in VNN. Przetworzyliśmy **34GB** na **17GB RAM**.
+- **Hybrid Backend**: Uses PyTorch kernels on CPU for near-native speed (**1.09x slowdown**) while maintaining SSD-streaming safety.
+- **Universal Scale**: If it fits on your disk, it runs in VNN. Przetworzyliśmy **34GB** na systemie z ograniczonym RAM.
+- **100% Parity**: Verified against PyTorch for all core operations across all dtypes (int8 to int64).
 
 ---
 
@@ -59,9 +60,10 @@ For deep technical insights, architecture diagrams, and API references, check ou
 ## 💎 Features
 
 -   **SSD-Native Autograd**: Perform backpropagation on models that exceed RAM capacity.
--   **DRAS v4 (Adaptive RAM-Aware Streaming)**: Features **Adaptive Restart** and **Safety Violation Protection** (terminates/restarts if system hits 21.5GB limit).
--   **PyTorch Speed Parity**: RAM-resident CPU operations now run at **~96% of PyTorch speed** thanks to the Hybrid Backend.
+-   **DRAS v4 (Adaptive RAM-Aware Streaming)**: Features **Adaptive Restart** and **Safety Violation Protection**.
+-   **PyTorch Speed Parity**: RAM-resident CPU operations run at **~91% of PyTorch speed** (1.09x slowdown) and MatMul at **~73%** (1.36x slowdown).
 -   **Zero-Copy Mounting**: Initialize tensors from binary files on disk in milliseconds without reading data.
+-   **Full Dtype Support**: Verified support for `int64`, `int32`, `int16`, `int8`, and `float32`.
 
 ---
 *Developed with 💙 for the open hardware community.*

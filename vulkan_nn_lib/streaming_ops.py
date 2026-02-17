@@ -131,14 +131,18 @@ class SOE:
         safe_budget = MemoryManager.get_safe_budget()
         
         if out_device == 'auto':
-            if total_size_bytes > safe_budget or a.device == 'ssd':
+            if a.device == 'ssd' or total_size_bytes > safe_budget:
                 out_device = 'ssd'
             else:
                 out_device = 'cpu'
+        
+        # FINAL GUARD: If a is on SSD, result MUST be on SSD for komponenent-wise
+        if a.device == 'ssd': out_device = 'ssd'
             
         Tensor = get_tensor_class()
         # Output is usually float32 for compute safety unless explicitly requested
         res_dtype = a.dtype if a.dtype != 'int4' else np.float32
+        if op_type == 'div' or op_type == 'truediv': res_dtype = np.float32
         res = Tensor(None, shape=a.shape, device=out_device, dtype=res_dtype)
         
         look_ahead = 12
@@ -153,7 +157,7 @@ class SOE:
                 b_is_cached = True
             else:
                 b_val = b.arr
-
+        
         prefetcher_a = TilePrefetcher(a, tile_len, look_ahead=look_ahead)
         torch = _get_torch()
         
@@ -204,14 +208,16 @@ class SOE:
                     ti.sync()
                     K.k_copy(ti_a, ti_out, end-start)
                 else:
-                    if op_type == 'add': K.k_add_scalar(ti_a, b_ram, end-start)
-                    elif op_type == 'mul': K.k_scale(ti_a, b_ram, end-start)
-                    elif op_type == 'exp': K.k_exp(ti_a, end-start)
-                    elif op_type == 'log': K.k_log(ti_a, end-start)
-                    elif op_type == 'sqrt': K.k_sqrt(ti_a, end-start)
+                    if op_type == 'add': K.k_add_scalar(ti_a, b_ram, end-start); K.k_copy(ti_a, ti_out, end-start)
+                    elif op_type == 'mul': K.k_scale(ti_a, b_ram, end-start); K.k_copy(ti_a, ti_out, end-start)
+                    elif op_type == 'exp': K.k_exp(ti_a, ti_out, end-start)
+                    elif op_type == 'log': K.k_log(ti_a, ti_out, end-start)
+                    elif op_type == 'sqrt': K.k_sqrt(ti_a, ti_out, end-start)
+                    elif op_type == 'relu': K.k_copy(ti_a, ti_out, end-start); K.k_relu_1d(ti_out, end-start)
+                    elif op_type == 'silu': K.k_copy(ti_a, ti_out, end-start); K.k_silu_1d(ti_out, end-start)
+                    elif op_type == 'gelu_tanh': K.k_copy(ti_a, ti_out, end-start); K.k_gelu_tanh(ti_out, end-start)
                     import taichi as ti
                     ti.sync()
-                    K.k_copy(ti_a, ti_out, end-start)
                 
                 ti.sync()
                 res.arr[start:end] = ti_out.to_numpy()
@@ -220,44 +226,57 @@ class SOE:
                 process_tile_cpu(start, end, a_ram)
 
         def process_tile_cpu(start, end, a_ram):
-            if isinstance(b, get_tensor_class()):
-                if b.total_size == 1: b_ram = float(b.to_numpy().flatten()[0])
-                elif b_is_cached: b_ram = b_val[start:end]
-                else: b_ram = b_val[start:end].copy()
-            else: b_ram = b_val
-            
-            if torch:
-                a_t = torch.from_numpy(a_ram)
-                b_t = torch.from_numpy(b_ram) if isinstance(b_ram, np.ndarray) else b_ram
-                if op_type == 'add': r_t = a_t + b_t
-                elif op_type == 'sub': r_t = a_t - b_t
-                elif op_type == 'mul': r_t = a_t * b_t
-                elif op_type == 'div': r_t = a_t / b_t
-                elif op_type == 'exp': r_t = torch.exp(a_t)
-                elif op_type == 'log': r_t = torch.log(a_t)
-                elif op_type == 'sqrt': r_t = torch.sqrt(a_t)
-                elif op_type == 'pow': r_t = torch.pow(a_t, b_t)
-                elif op_type == 'masked_fill':
-                    r_t = a_t.clone()
-                    r_t[b_t > 0.5] = extra
-                else: r_t = a_t
-                res.arr[start:end] = r_t.numpy()
-            else:
-                out_ram = np.empty_like(a_ram)
-                if op_type == 'add': np.add(a_ram, b_ram, out=out_ram)
-                elif op_type == 'sub': np.subtract(a_ram, b_ram, out=out_ram)
-                elif op_type == 'mul': np.multiply(a_ram, b_ram, out=out_ram)
-                elif op_type == 'div': np.divide(a_ram, b_ram, out=out_ram)
-                elif op_type == 'exp': np.exp(a_ram, out=out_ram)
-                elif op_type == 'log': np.log(a_ram, out=out_ram)
-                elif op_type == 'sqrt': np.sqrt(a_ram, out=out_ram)
-                elif op_type == 'pow': np.power(a_ram, b_ram, out=out_ram)
-                elif op_type == 'masked_fill':
-                    out_ram[:] = a_ram
-                    out_ram[b_ram > 0.5] = extra
-                res.arr[start:end] = out_ram
+            try:
+                if isinstance(b, get_tensor_class()):
+                    if b.total_size == 1: b_ram = float(b.to_numpy().flatten()[0])
+                    elif b_is_cached: b_ram = b_val[start:end]
+                    else: b_ram = b_val[start:end].copy()
+                else: b_ram = b_val
+                
+                if torch:
+                    a_t = torch.from_numpy(a_ram)
+                    b_t = torch.from_numpy(b_ram) if isinstance(b_ram, np.ndarray) else b_ram
+                    if op_type == 'add': r_t = a_t + b_t
+                    elif op_type == 'sub': r_t = a_t - b_t
+                    elif op_type == 'mul': r_t = a_t * b_t
+                    elif op_type == 'div': r_t = a_t / b_t
+                    elif op_type == 'exp': r_t = torch.exp(a_t)
+                    elif op_type == 'log': r_t = torch.log(a_t)
+                    elif op_type == 'sqrt': r_t = torch.sqrt(a_t)
+                    elif op_type == 'pow': r_t = torch.pow(a_t, b_t)
+                    elif op_type == 'relu': r_t = torch.relu(a_t)
+                    elif op_type == 'leaky_relu': r_t = torch.nn.functional.leaky_relu(a_t, negative_slope=extra if extra else 0.01)
+                    elif op_type == 'silu': r_t = torch.nn.functional.silu(a_t)
+                    elif op_type == 'gelu_tanh': 
+                        # GELU Tanh approximation parity
+                        r_t = 0.5 * a_t * (1.0 + torch.tanh(0.7978845608 * (a_t + 0.044715 * a_t**3)))
+                    elif op_type == 'masked_fill':
+                        r_t = a_t.clone()
+                        r_t[b_t > 0.5] = extra
+                    else: r_t = a_t
+                    res_np = r_t.numpy()
+                else:
+                    out_ram = np.empty_like(a_ram)
+                    if op_type == 'add': np.add(a_ram, b_ram, out=out_ram)
+                    elif op_type == 'sub': np.subtract(a_ram, b_ram, out=out_ram)
+                    elif op_type == 'mul': np.multiply(a_ram, b_ram, out=out_ram)
+                    elif op_type == 'div': np.divide(a_ram, b_ram, out=out_ram)
+                    elif op_type == 'exp': np.exp(a_ram, out=out_ram)
+                    elif op_type == 'log': np.log(a_ram, out=out_ram)
+                    elif op_type == 'sqrt': np.sqrt(a_ram, out=out_ram)
+                    elif op_type == 'pow': np.power(a_ram, b_ram, out=out_ram)
+                    elif op_type == 'masked_fill':
+                        out_ram[:] = a_ram
+                        out_ram[b_ram > 0.5] = extra
+                    res_np = out_ram
+
+                res.arr[start:end] = res_np
+            except Exception as e:
+                print(f"    [SOE] process_tile_cpu ERROR: {e}")
+                raise
 
         print(f"  [ARAS] Elementwise {op_type} on {total_size_bytes/1e6:.1f}MB tensor ({'Hybrid' if use_hybrid else 'Vulkan' if use_vulkan else 'CPU'})")
+        print(f"    [DEBUG] b_is_cached={b_is_cached}, use_vulkan={use_vulkan}, tile_len={tile_len}")
         
         gpu_lock = threading.Lock()
         def gpu_worker():
@@ -555,7 +574,7 @@ class SOE:
         res = Tensor(None, shape=(M, N), device=out_device, dtype=a.dtype)
         
         b_size_bytes = b.total_size * b.item_size
-        b_val = b.to_numpy() if b_size_bytes < safe_budget * 0.25 else b.arr
+        b_val = b.to_numpy() if b_size_bytes < safe_budget * 0.25 else b.arr.reshape(K2, N)
         
         remaining = safe_budget - (b_size_bytes if b_size_bytes < safe_budget * 0.25 else 0)
         raw_block_size = remaining // (SOE.MAX_THREADS * 2)

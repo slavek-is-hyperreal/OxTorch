@@ -26,11 +26,13 @@ VNN is not a general-purpose replacement for PyTorch; it is a **specialized tool
 Our Vulkan backend is designed for older/generic hardware. While slower than CUDA on NVIDIA cards, it provides acceleration on devices PyTorch often ignores (Intel UHD, mobile iGPUs).
 
 ## 📊 Benchmark Results (Standardized)
-| Scale | Size | Engine | Mode | Speed |
+| Operation | Size | Engine | Mode | Speed / Latency |
 | :--- | :--- | :--- | :--- | :--- |
-| **Small** | 128 MB | **PyTorch** | CPU | 1.63 GB/s |
-| **Small** | 128 MB | **VNN** | CPU | **1.56 GB/s** (1.04x) |
-| **Monster**| 34 GB | **VNN** | **Hybrid** | **141 MB/s** (**OOM-Safe**) |
+| **Add** | 8.3 M | **PyTorch** | CPU | 10.2 ms |
+| **Add** | 8.3 M | **VNN** | CPU | **11.1 ms (1.09x)** |
+| **MatMul** | 1024^2 | **PyTorch** | CPU | 25.6 ms |
+| **MatMul** | 1024^2 | **VNN** | CPU | **34.9 ms (1.36x)** |
+| **Monster Sum**| 34 GB | **VNN** | **SOE Engine** | **141 MB/s (OOM-Safe)** |
 
 ## Comparison Table
 

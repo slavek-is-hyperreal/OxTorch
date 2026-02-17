@@ -9,8 +9,8 @@ graph TD
     Tensor --> Decision{"Size & Device?"}
     
     Decision -- "< 128MB (FP32)" --> Vulkan["Taichi/Vulkan (GPU)"]
-    Decision -- "< 40% RAM Budget" --> Hybrid["PyTorch Fast-Path (CPU)"]
-    Decision -- "> 40% RAM Budget" --> ARAS["DRAS v4 Engine (SSD)"]
+    Decision -- "< 40% RAM Budget" --> Hybrid["PyTorch Fast-Path (CPU/Shared)"]
+    Decision -- "> 40% RAM Budget" --> ARAS["SOE Engine (SSD/Tiled)"]
     
     ARAS --> Tiled["Tiled Math Engine"]
     Tiled --> SSD["SSD Binary Storage"]
@@ -26,21 +26,23 @@ VNN automatically routes every operation through the most efficient backend base
 
 ### B. PyTorch Hybrid (Fast Path)
 *   **Target**: Tensors that fit in RAM (<40% of safe budget).
-*   **Benefit**: Near-zero overhead (**1.04x vs Torch**). Uses PyTorch-native kernels on NumPy views.
+*   **Innovation**: **Zero-Copy Shared Memory**. Uses `torch.from_numpy(self.arr)` to perform math directly on VNN's CPU memory using PyTorch's optimized BLAS/MKL kernels.
+*   **Benefit**: Extremely low overhead (**1.09x vs Torch** for Add, **1.36x** for MatMul). 
 *   **Limitation**: Synchronous execution.
 
-### C. DRAS v4 (Adaptive SSD Streaming)
-*   **Target**: "Monster Scale" tensors (34GB+ on 17GB RAM).
-*   **Innovation**: **Adaptive Restart**. If system RAM usage crosses **21.5GB**, the operation voluntarily aborts, reduces its RAM allocation, and restarts to prevent a hard system OOM.
+### C. SOE/ARAS (Streaming Operator Engine)
+*   **Target**: "Monster Scale" tensors (34GB+ on systems with limited RAM).
+*   **Innovation**: **Adaptive Tiling**. Automatically breaks operations into tiles that fit within a safe budget (default 512MB). 
+*   **SSD Native**: Resulting tensors are created directly on SSD via `memmap`, ensuring RAM usage remains flat regardless of total tensor size.
 
 ## 2. Autograd & Unified Gradient Accumulation
 VNN's reverse-mode differentiation engine is designed to be backend-agnostic. The core innovation is the `_acc_grad(grad)` method, which routes gradient accumulation based on the device:
 
-- **SSD**: Uses the ARAS engine for tiled, multi-threaded element-wise addition.
+- **SSD**: Uses the SOE/ARAS engine for tiled, multi-threaded element-wise addition directly on disk.
 - **Vulkan**: Uses Taichi kernels (`k_add`) for GPU-accelerated accumulation.
-- **CPU**: Uses NumPy for numerical stability.
+- **CPU**: Uses optimized PyTorch shared memory paths for peak performance.
 
-This ensures that even if you have a 40GB gradient buffer on an 8GB RAM system, the accumulation never triggers an OOM.
+This ensures that even if you have a 40GB gradient buffer on an system with only 8GB of RAM, the accumulation never triggers an OOM.
 
 ## 3. Zero-Copy Loading
 One of VNN's primary advantages over PyTorch is the `from_binary` (and `external_path`) mechanism. While PyTorch's `torch.load` usually requires loading the entire model into RAM before initializing, VNN **mounts** the binary files.

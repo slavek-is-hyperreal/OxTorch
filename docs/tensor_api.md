@@ -8,10 +8,11 @@ The `Tensor` class is the heart of VNN. It is designed to behave like a `torch.T
 - **`data`**: Initial data (NumPy array, list, or scalar).
 - **`device`**: 
     - `'vulkan'`: Taichi acceleration.
-    - `'cpu'`: PyTorch Hybrid Fast-Path (used if tensor < 40% of safe RAM).
+    - `'cpu'`: PyTorch Hybrid Fast-Path (uses zero-copy shared memory).
     - `'ssd'`: Disk-native storage via `TensorStore`.
-    - `'auto'`: (Default) Dynamically switches based on size, device availability, and global RAM budget.
+    - `'auto'`: (Default) Dynamically switches based on size and global RAM budget.
 - **`external_path`**: If provided, the tensor mounts an existing binary file on disk (Zero-copy).
+- **`requires_grad`**: Enables Autograd tracking.
 
 ---
 
@@ -32,7 +33,15 @@ Clears the gradient buffer.
 
 ### `item()`
 Returns the Python scalar value of a 0D or 1-element tensor. 
-- **Parity**: Matches PyTorch's `item()`.
+
+### `relu()`, `silu()`, `leaky_relu(alpha)`, `gelu_tanh()`, `softmax(dim)`
+Standard activation functions implemented as direct methods on the `Tensor` object.
+- **SOE Support**: These are fully streamed if the tensor resides on SSD.
+- **Parity**: Matches PyTorch behavior exactly (100% parity verified).
+
+### `pow(other)` or `**`
+Element-wise exponentiation. Supports both scalar and tensor exponents.
+- **Type Promotion**: Automatically promotes result to `float32`.
 
 ---
 
@@ -72,7 +81,8 @@ All standard operators are implemented.
 
 | Operation | Vulkan (<128MB) | CPU (Large) | SSD (Monster) |
 | :--- | :--- | :--- | :--- |
-| **Add/Sub/Mul** | Taichi Kernel | NumPy | ARAS Tiled Stream |
-| **Matmul** | Taichi Kernel | NumPy | Block-Based Parallel Stream |
-| **Exp/Log/Pow** | Taichi Kernel | NumPy | SOE Ufunc Stream |
-| **Sum/Mean** | - | NumPy | ARAS Tiled Reduction |
+| **Add/Sub/Mul** | Taichi Kernel | PyTorch (Shared) | SOE Tiled Stream |
+| **Matmul** | Taichi Kernel | PyTorch (Shared) | Block-Based Parallel Stream |
+| **Exp/Log/Pow** | Taichi Kernel | PyTorch (Shared) | SOE Ufunc Stream |
+| **Sum/Mean** | Taichi Kernel | PyTorch (Shared) | ARAS Tiled Reduction |
+| **Activations** | Taichi Kernel | PyTorch (Shared) | SOE Streaming |

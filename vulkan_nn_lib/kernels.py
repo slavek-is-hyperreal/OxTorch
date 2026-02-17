@@ -98,19 +98,19 @@ def k_add_scalar(A: ti.types.ndarray(), B: float, size: int):
         A[i] += B
 
 @ti.kernel
-def k_exp(A: ti.types.ndarray(), size: int):
+def k_exp(In: ti.types.ndarray(), Out: ti.types.ndarray(), size: int):
     for i in range(size):
-        A[i] = ti.exp(A[i])
+        Out[i] = ti.exp(In[i])
 
 @ti.kernel
-def k_log(A: ti.types.ndarray(), size: int):
+def k_log(In: ti.types.ndarray(), Out: ti.types.ndarray(), size: int):
     for i in range(size):
-        A[i] = ti.log(A[i])
+        Out[i] = ti.log(In[i])
 
 @ti.kernel
-def k_sqrt(A: ti.types.ndarray(), size: int):
+def k_sqrt(In: ti.types.ndarray(), Out: ti.types.ndarray(), size: int):
     for i in range(size):
-        A[i] = ti.sqrt(A[i])
+        Out[i] = ti.sqrt(In[i])
 
 @ti.kernel
 def k_copy(Src: ti.types.ndarray(), Dst: ti.types.ndarray(), Total: int):
@@ -349,16 +349,14 @@ def k_mean_last_dim(X: ti.types.ndarray(), Out: ti.types.ndarray(), M: int, N: i
         Out[i] = acc / N
 
 @ti.kernel
-def k_pow(X: ti.types.ndarray(), P: float, Total: int):
-    for i in range(Total): X[i] = ti.pow(X[i], P)
+def k_pow(In: ti.types.ndarray(), Out: ti.types.ndarray(), P: float, Total: int):
+    for i in range(Total): Out[i] = ti.pow(In[i], P)
+
+# Duplicate removed/refactored above
 
 @ti.kernel
-def k_sqrt(X: ti.types.ndarray(), Total: int):
-    for i in range(Total): X[i] = ti.sqrt(X[i])
-
-@ti.kernel
-def k_tanh(X: ti.types.ndarray(), Total: int):
-    for i in range(Total): X[i] = ti.tanh(X[i])
+def k_tanh(In: ti.types.ndarray(), Out: ti.types.ndarray(), Total: int):
+    for i in range(Total): Out[i] = ti.tanh(In[i])
 
 @ti.kernel
 def k_copy_offset(Src: ti.types.ndarray(), src_offset: int, Dst: ti.types.ndarray(), dst_offset: int, Total: int):

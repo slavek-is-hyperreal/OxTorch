@@ -17,6 +17,7 @@ class TiledLinear(Module):
             self.bias = Tensor(np.zeros(out_features, dtype=np.float32), requires_grad=True)
         self.weight_tile_vram = ti.ndarray(dtype=ti.f32, shape=(in_features * tile_size,))
         self.grad_tile_vram = ti.ndarray(dtype=ti.f32, shape=(in_features * tile_size,))
+        self.grad_out_tile_vram = None # Will be allocated once
 
     def forward(self, x: Tensor, sub_in_features=None, sub_out_features=None) -> Tensor:
         orig_shape = x.shape
@@ -50,16 +51,17 @@ class TiledLinear(Module):
             grad_out_flat = res.grad.reshape(M, N_out)
             if self.weight.requires_grad:
                 if self.weight.grad is None: self.weight.zero_grad()
+                if self.grad_out_tile_vram is None:
+                    self.grad_out_tile_vram = ti.ndarray(ti.f32, shape=(M * self.tile_size,))
+                
                 for n_offset in range(0, N_out, self.tile_size):
                     n_tile = min(self.tile_size, N_out - n_offset)
                     K.k_zero(self.grad_tile_vram, self.in_features * self.tile_size)
                     ti.sync()
                     grad_out_tile_np = grad_out_flat.to_numpy()[:, n_offset : n_offset + n_tile]
-                    grad_out_tile_vram = ti.ndarray(ti.f32, shape=(M * n_tile,))
-                    grad_out_tile_vram.from_numpy(grad_out_tile_np.flatten())
+                    self.grad_out_tile_vram.from_numpy(np.pad(grad_out_tile_np, ((0,0), (0, self.tile_size - n_tile))).flatten())
                     ti.sync()
-                    _ = grad_out_tile_vram.to_numpy() # Force sync
-                    K.k_matmul_tiled_grad_w(x_flat.arr, grad_out_tile_vram, self.grad_tile_vram, M, K_A, n_tile, self.tile_size)
+                    K.k_matmul_tiled_grad_w(x_flat.arr, self.grad_out_tile_vram, self.grad_tile_vram, M, K_A, n_tile, self.tile_size)
                     ti.sync()
                     grad_w_tile_ram = self.grad_tile_vram.to_numpy().reshape(self.in_features, self.tile_size)
                     self.weight.grad.arr.reshape(self.in_features, N_out)[:K_active, n_offset : n_offset + n_tile] += grad_w_tile_ram[:K_active, :n_tile]
