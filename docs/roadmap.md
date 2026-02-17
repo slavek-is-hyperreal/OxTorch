@@ -12,16 +12,17 @@ This document serves as the primary technical guide for subsequent AI agents and
 ## 🚀 Phase 4: Optimizer Expansion (NEXT STEP)
 The core Autograd is ready, but optimizers still rely partially on RAM/NumPy.
 
-- [ ] **SSD-Native Adam (`AutoAdam`)**: 
+- [x] **SSD-Native Adam (`AutoAdam`)**: 
     - Implement `m` and `v` buffer management on SSD via ARAS.
     - Ensure update rule `w -= lr * m / (sqrt(v) + eps)` is performed in tiles without loading all 3 buffers (w, m, v) into RAM simultaneously.
-- [ ] **SSD-Native SGD**: Simplest first step for large-scale training.
-- [ ] **Verification**: Train a dummy model with 20GB+ parameters on a machine with 4GB RAM.
+- [x] **SSD-Native SGD**: Simplest first step for large-scale training.
+- [x] **Verification**: Train a dummy model with 20GB+ parameters on a machine with 4GB RAM.
 
 ## ⚡ Phase 5: Operator Fusion & I/O Reduction
 SSD bandwidth is our primary bottleneck.
 
-- [ ] **Kernel Fusion**: Combine element-wise operations with subsequent reductions (e.g., `(w * 2).sum()`) inside a single ARAS pass to reduce read/write cycles by 50%.
+- [x] **Kernel Fusion**: Fuse element-wise ops with reductions (e.g., `(w * g).sum()`) to save SSD write cycles.
+- [x] **Prefetcher v2**: Use look-ahead logic to overlap SSD reads with CPU computations.
 - [ ] **Prefetcher v2**: Implement a look-ahead prefetcher in `streaming_ops.py` that starts loading the next tile's data into RAM while the current tile is being processed by the CPU/GPU.
 
 ## 📉 Phase 6: Precision & Quantization

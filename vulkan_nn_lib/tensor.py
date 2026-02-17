@@ -739,6 +739,19 @@ class Tensor:
         res._backward_fn = _backward
         return res
 
+    def fused_sum(self, other=None, op='mul'):
+        """SSD Optimization: Performs op + sum in a single pass to save I/O."""
+        if self.device != 'ssd':
+            if other is None: return self.sum()
+            if op == 'mul': return (self * other).sum()
+            if op == 'add': return (self + other).sum()
+            if op == 'sub': return (self - other).sum()
+            if op == 'div': return (self / other).sum()
+            return self.sum() # fallback
+        
+        from . import streaming_ops as SOE
+        return SOE.SOE.elementwise_reduce(self, other, op, 'sum')
+
     def unsqueeze(self, dim):
         new_shape = list(self.shape)
         if dim < 0: dim += len(new_shape) + 1
