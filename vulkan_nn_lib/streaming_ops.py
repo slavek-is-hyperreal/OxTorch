@@ -1,6 +1,7 @@
 import numpy as np
 from . import kernels as K
 from concurrent.futures import ThreadPoolExecutor
+import threading
 import time
 
 def get_tensor_class():
@@ -20,12 +21,12 @@ class SOE:
     """Streaming Operator Engine for tiled execution."""
     
     # Base tile size (will be scaled adaptively)
-    BASE_TILE_SIZE_BYTES = 256 * 1024 * 1024 
-    MAX_THREADS = 8 # Higher for concurrent prefetching
-    RAM_SAFETY_MARGIN = 0.7 # Use up to 70% of available RAM
+    BASE_TILE_SIZE_BYTES = 512 * 1024 * 1024 
+    MAX_THREADS = 12 # Higher for concurrent prefetching on high-end CPUs
+    RAM_SAFETY_MARGIN = 0.85 # Use up to 85% of available RAM for maximum greed
 
     @staticmethod
-    def elementwise_op(a, b, op_type, out_device='auto'):
+    def elementwise_op(a, b, op_type, out_device='auto', extra=None):
         """Adaptive component-wise op using explicit RAM prefetching."""
         n = a.total_size
         item_size = np.dtype(a.dtype).itemsize
@@ -37,7 +38,8 @@ class SOE:
         
         # We want to fill the budget with active tiles.
         # Each "active" tile needs A_ram + B_ram + Out_ram.
-        tile_len = max(1000, min(n, (safe_budget // (SOE.MAX_THREADS * 3)) // item_size))
+        # Reduced divisor (2 instead of 3) to be more aggressive
+        tile_len = max(1000, min(n, (safe_budget // (SOE.MAX_THREADS * 2)) // item_size))
         
         # Decide output device
         if out_device == 'auto':
@@ -49,20 +51,35 @@ class SOE:
         Tensor = get_tensor_class()
         res = Tensor(None, shape=a.shape, device=out_device, dtype=a.dtype)
         
-        print(f"  [ARAS] Greedy {op_type.upper()} on {total_size_bytes/1e6:.1f}MB ({out_device})")
-        print(f"         RAM Budget: {safe_budget/1e9:.1f}GB | Tile: {tile_len*item_size/1e6:.1f}MB x {SOE.MAX_THREADS} threads")
+        # 2. Strategy: Load full B into RAM if it fits 50% of budget
+        # Otherwise, B will stay as memmap (OS-level paging)
+        b_val = b
+        b_is_cached = False
+        if isinstance(b, Tensor):
+            b_size_bytes = b.total_size * item_size
+            if b_size_bytes < safe_budget * 0.5 and b.total_size > 1:
+                print(f"         B-Cache: Yes ({b_size_bytes/1e6:.1f}MB)")
+                # Flatten the cached view to match tiled 1D indexing
+                b_val = b.to_numpy().flatten()
+                b_is_cached = True
+            else:
+                b_val = b.arr # Keep as memmap
         
         t0 = time.perf_counter()
         
         def process_tile(start, end):
-            # 2. FORCE data into RAM by creating explicit copies
-            # This makes the process use its own memory budget instead of just ZFS ARC.
+            # 3. FORCE data into RAM by creating explicit copies
             a_ram = a.arr[start:end].copy()
             
             if isinstance(b, Tensor):
-                b_ram = b.arr[start:end].copy()
+                if b.total_size == 1:
+                    b_ram = b.to_numpy()[0]
+                elif b_is_cached:
+                    b_ram = b_val[start:end] # b_val is already in RAM
+                else:
+                    b_ram = b_val[start:end].copy() # Force slice to RAM
             else:
-                b_ram = b
+                b_ram = b_val
             
             # Workspace for result in RAM
             out_ram = np.empty_like(a_ram)
@@ -84,35 +101,63 @@ class SOE:
             elif op_type == 'eq': np.equal(a_ram, b_ram, out=out_ram)
             elif op_type == 'ne': np.not_equal(a_ram, b_ram, out=out_ram)
             elif op_type == 'masked_fill':
-                # b_ram is (mask, value) tuple or just mask if value is fixed
-                mask, val = b_ram
+                # a_ram: data, b_ram: mask, extra: value
                 out_ram[:] = a_ram
-                # Explicitly cast mask to bool for numpy indexing
-                out_ram[mask > 0.5] = val
+                out_ram[b_ram > 0.5] = extra
             
             # 3. Write back to SSD/Disk (memmap)
             res.arr[start:end] = out_ram
 
+        offsets = range(0, n, tile_len)
         with ThreadPoolExecutor(max_workers=SOE.MAX_THREADS) as executor:
             # We use a sliding window of futures to control memory precisely
-            offsets = range(0, n, tile_len)
-            total_tiles = len(offsets)
-            futures = []
-            
             for i, start in enumerate(offsets):
                 end = min(start + tile_len, n)
-                # Submit tile processing
-                futures.append(executor.submit(process_tile, start, end))
-                
-                # Progress every 10%
-                if i % max(1, total_tiles // 10) == 0:
-                    print(f"    Progress: {i/total_tiles*100:.1f}% | RAM: {i*tile_len*item_size*3/1e9:.1f}GB processed")
-
-            for f in futures:
-                f.result() # Wait for completion
-                    
+                executor.submit(process_tile, start, end)
+        
         print(f"    Done in {time.perf_counter()-t0:.2f}s")
         return res
+
+    @staticmethod
+    def sum(a):
+        """OOM-safe tiled summation of an SSD-native tensor."""
+        n = a.total_size
+        item_size = np.dtype(a.dtype).itemsize
+        
+        # We use a simple sequential reduction with thread-local partial sums
+        # to avoid contention, then aggregate.
+        avail_ram = _get_available_ram()
+        tile_len = max(1000, min(n, (int(avail_ram * 0.5) // SOE.MAX_THREADS) // item_size))
+        
+        total_sum = 0.0
+        lock = threading.Lock()
+        
+        def reduce_tile(start, end):
+            nonlocal total_sum
+            tile_data = a.arr[start:end].copy()
+            tile_sum = np.sum(tile_data)
+            with lock:
+                total_sum += tile_sum
+
+        t0 = time.perf_counter()
+        print(f"  [ARAS] Tiled Sum on {n*item_size/1e6:.1f}MB SSD tensor...")
+        with ThreadPoolExecutor(max_workers=SOE.MAX_THREADS) as executor:
+            offsets = range(0, n, tile_len)
+            for start in offsets:
+                end = min(start + tile_len, n)
+                executor.submit(reduce_tile, start, end)
+                
+        print(f"    Done in {time.perf_counter()-t0:.2f}s | Sum: {total_sum}")
+        from .tensor import Tensor
+        return Tensor([total_sum], shape=(), device='cpu')
+
+    @staticmethod
+    def mean(a):
+        """OOM-safe tiled mean."""
+        s = SOE.sum(a)
+        m = s.to_numpy()[0] / a.total_size
+        from .tensor import Tensor
+        return Tensor([m], shape=(), device='cpu')
 
     @staticmethod
     def matmul(a, b, out_device='auto'):

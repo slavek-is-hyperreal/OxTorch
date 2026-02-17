@@ -101,7 +101,9 @@ class Tensor:
             self.arr = Tensor._tensor_store.zeros(name, shape=(n,), dtype=self.dtype, external_path=external_path)
             if data is not None:
                 # Optimized copy to SSD
-                print(f"  [Tensor] Initializing SSD tensor {name} ({n*item_size/1e6:.1f}MB, {self.dtype})...")
+                size_bytes = n * item_size
+                size_str = f"{size_bytes/1e6:.1f}MB" if size_bytes >= 1e6 else f"{size_bytes/1024:.1f}KB"
+                print(f"  [Tensor] Initializing SSD tensor {name} ({size_str}, {self.dtype})...")
                 if isinstance(data, Tensor):
                     self.arr[:] = data.to_numpy().flatten().astype(self.dtype)
                 elif isinstance(data, (np.ndarray, list, tuple)):
@@ -144,6 +146,14 @@ class Tensor:
                 self.arr = np.zeros(n, dtype=self.dtype)
 
         self.requires_grad = requires_grad
+        self._prev = set()
+        self._backward_fn = None
+
+    def __hash__(self):
+        return id(self)
+        
+    def __eq__(self, other):
+        return self is other
 
     @property
     def requires_grad(self): return self._requires_grad
@@ -196,9 +206,35 @@ class Tensor:
 
     def zero_grad(self):
         if self.grad is None:
-            self.grad = Tensor(None, shape=self.shape, device=self.device)
+            self.grad = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
         self.grad.zero_()
 
+    def _acc_grad(self, grad):
+        """Unified gradient accumulation across backends (OOM-safe)."""
+        if not self.requires_grad: return
+        
+        if self.grad is None:
+            # First time: Initialize gradient on the same device as parameter
+            self.grad = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
+            self.grad.zero_()
+            
+        if self.device == 'ssd':
+            from . import streaming_ops as SOE
+            # Use ARAS engine for tiled gradient accumulation
+            self.grad = SOE.SOE.elementwise_op(self.grad, grad, 'add', out_device='ssd')
+        elif self.device == 'vulkan':
+            K.k_add(self.grad.arr, grad.arr, self.total_size, grad.total_size)
+            ti.sync()
+        else:
+            # CPU/RAM: Numpy handles broadcasting
+            if isinstance(grad, Tensor):
+                g_val = grad.to_numpy()
+            else:
+                g_val = np.array(grad)
+            
+            # Use rank-agnostic ellipsis for in-place update (handles 0D scalars)
+            self.grad.arr.reshape(self.shape)[...] += g_val
+            
     def backward(self, grad=None):
         if grad is None:
             if self.total_size != 1:
@@ -207,10 +243,8 @@ class Tensor:
         elif not isinstance(grad, Tensor):
             grad = Tensor(grad, shape=self.shape)
         
-        if self.grad is None: self.grad = grad
-        else:
-            K.k_add(self.grad.arr, grad.arr, self.total_size, grad.total_size)
-            if self.device == 'vulkan': ti.sync()
+        # Initial accumulation into the root
+        self._acc_grad(grad)
 
         topo = []
         visited = set()
@@ -231,6 +265,12 @@ class Tensor:
             ti.sync()
             return self.arr.to_numpy().reshape(self.shape)
         return self.arr.reshape(self.shape)
+
+    def item(self):
+        """Returns the value of this tensor as a standard Python number."""
+        if self.total_size != 1:
+            raise ValueError("item() can only be called on tensors with 1 element.")
+        return self.to_numpy().item()
 
     def load_from_numpy(self, np_arr):
         if self.device == 'vulkan':
@@ -339,182 +379,152 @@ class Tensor:
         return res
 
     def relu(self):
-        res = Tensor(None, shape=self.shape)
-        K.k_copy(self.arr, res.arr, self.total_size)
-        K.k_relu_1d(res.arr, self.total_size)
-        if self.device == 'vulkan': ti.sync()
+        if self.device == 'ssd':
+            from . import streaming_ops as SOE
+            res = SOE.SOE.elementwise_op(self, None, 'relu') # Assuming SOE supports relu
+        else:
+            res = Tensor(None, shape=self.shape, device=self.device)
+            K.k_copy(self.arr, res.arr, self.total_size)
+            K.k_relu_1d(res.arr, self.total_size)
+            if self.device == 'vulkan': ti.sync()
+            
         res._prev = {self}
         res.requires_grad = self.requires_grad
         def _backward():
             if self.requires_grad:
-                if self.grad is None: self.zero_grad()
-                K.k_relu_backward(self.arr, res.grad.arr, self.grad.arr, self.total_size)
-                if self.device == 'vulkan': ti.sync()
+                # Grad is Out_Grad * (In > 0)
+                mask = self > 0
+                self._acc_grad(res.grad * mask)
         res._backward_fn = _backward
         return res
 
     def matmul(self, other):
-        if self.device == 'ssd' or other.device == 'ssd':
-            from . import streaming_ops as SOE
-            return SOE.SOE.matmul(self, other)
+        """Matrix multiplication with ARAS/Vulkan support."""
         M, K_dim = self.shape
         K2, N = other.shape
-        res = Tensor(None, shape=(M, N))
-        K.k_matmul(self.arr, other.arr, res.arr, M, N, K_dim)
-        if self.device == 'vulkan': ti.sync()
+        if self.device == 'ssd' or other.device == 'ssd':
+            from . import streaming_ops as SOE
+            res = SOE.SOE.matmul(self, other)
+        else:
+            res = Tensor(None, shape=(M, N), device=self.device)
+            K.k_matmul(self.arr, other.arr, res.arr, M, N, K_dim)
+            if self.device == 'vulkan': ti.sync()
+            
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
+        
         def _backward():
             if self.requires_grad:
-                if self.grad is None: self.zero_grad()
+                # dA = dC * B^T
+                self._acc_grad(res.grad.matmul(other.transpose(0, 1)))
             if other.requires_grad:
-                if other.grad is None: other.zero_grad()
-            grad_a = self.grad.arr if self.requires_grad else Tensor(None, shape=self.shape).arr
-            grad_b = other.grad.arr if other.requires_grad else Tensor(None, shape=other.shape).arr
-            if self.requires_grad or other.requires_grad:
-                K.k_matmul_backward(res.grad.arr, self.arr, other.arr, grad_a, grad_b, M, N, K_dim)
-                if self.device == 'vulkan': ti.sync()
+                # dB = A^T * dC
+                other._acc_grad(self.transpose(0, 1).matmul(res.grad))
+                
         res._backward_fn = _backward
         return res
 
     def __add__(self, other):
-        if not isinstance(other, Tensor): other = Tensor(other, shape=self.shape, dtype=self.dtype)
+        if not isinstance(other, Tensor): 
+            other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
+            
         if self.device == 'ssd' or other.device == 'ssd':
             from . import streaming_ops as SOE
-            return SOE.SOE.elementwise_op(self, other, 'add')
-        res = Tensor(None, shape=self.shape, dtype=self.dtype)
-        K.k_copy(self.arr, res.arr, self.total_size)
-        K.k_add(res.arr, other.arr, res.total_size, other.total_size)
-        if self.device == 'vulkan': ti.sync()
+            res = SOE.SOE.elementwise_op(self, other, 'add')
+        else:
+            res = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
+            K.k_copy(self.arr, res.arr, self.total_size)
+            K.k_add(res.arr, other.arr, res.total_size, other.total_size)
+            if self.device == 'vulkan': ti.sync()
+            
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
+        
         def _backward():
             if self.requires_grad:
-                if self.grad is None: self.zero_grad()
+                self._acc_grad(res.grad)
             if other.requires_grad:
-                if other.grad is None: other.zero_grad()
-            if self.requires_grad and other.requires_grad:
-                K.k_add_backward(res.grad.arr, self.grad.arr, other.grad.arr, res.total_size, other.total_size)
-            elif self.requires_grad:
-                K.k_add(self.grad.arr, res.grad.arr, self.total_size, res.total_size)
-            elif other.requires_grad:
-                dummy = Tensor(None, shape=self.shape)
-                K.k_add_backward(res.grad.arr, dummy.arr, other.grad.arr, res.total_size, other.total_size)
-            if self.device == 'vulkan': ti.sync()
-            # print(f"DEBUG: va.grad sum after kernel: {self.grad.to_numpy().sum()}")
+                other._acc_grad(res.grad)
+                
         res._backward_fn = _backward
         return res
 
     def __sub__(self, other):
-        if not isinstance(other, Tensor): other = Tensor(other, shape=self.shape, dtype=self.dtype)
+        if not isinstance(other, Tensor): 
+            other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
+            
         if self.device == 'ssd' or other.device == 'ssd':
             from . import streaming_ops as SOE
-            return SOE.SOE.elementwise_op(self, other, 'sub')
-        res = Tensor(None, shape=self.shape, dtype=self.dtype)
-        K.k_copy(self.arr, res.arr, self.total_size)
-        K.k_sub(res.arr, other.arr, res.total_size, other.total_size)
-        if self.device == 'vulkan': ti.sync()
+            res = SOE.SOE.elementwise_op(self, other, 'sub')
+        else:
+            res = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
+            K.k_copy(self.arr, res.arr, self.total_size)
+            K.k_sub(res.arr, other.arr, res.total_size, other.total_size)
+            if self.device == 'vulkan': ti.sync()
+            
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
+        
         def _backward():
             if self.requires_grad:
-                if self.grad is None: self.zero_grad()
+                self._acc_grad(res.grad)
             if other.requires_grad:
-                if other.grad is None: other.zero_grad()
-            if self.requires_grad and other.requires_grad:
-                K.k_sub_backward(res.grad.arr, self.grad.arr, other.grad.arr, res.total_size, other.total_size)
-            elif self.requires_grad:
-                K.k_add(self.grad.arr, res.grad.arr, self.total_size, res.total_size)
-            elif other.requires_grad:
-                dummy = Tensor(None, shape=self.shape)
-                K.k_sub_backward(res.grad.arr, dummy.arr, other.grad.arr, res.total_size, other.total_size)
-            if self.device == 'vulkan': ti.sync()
+                other._acc_grad(res.grad * -1.0)
+                
         res._backward_fn = _backward
         return res
 
     def __mul__(self, other):
         if not isinstance(other, Tensor):
-            val = float(other)
-            if self.device == 'ssd':
-                from . import streaming_ops as SOE
-                return SOE.SOE.elementwise_op(self, val, 'mul')
-            res = self.clone()
-            K.k_scale(res.arr, val, res.total_size)
-            if self.device == 'vulkan': ti.sync()
-            res._prev = {self}
-            res.requires_grad = self.requires_grad
-            def _backward():
-                if self.requires_grad:
-                    if self.grad is None: self.zero_grad()
-                    K.k_scale_backward(res.grad.arr, val, self.grad.arr, self.total_size)
-                    if self.device == 'vulkan': ti.sync()
-            res._backward_fn = _backward
-            return res
+            other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
+            
         if self.device == 'ssd' or other.device == 'ssd':
             from . import streaming_ops as SOE
-            return SOE.SOE.elementwise_op(self, other, 'mul')
-        res = self.clone()
-        K.k_mul(res.arr, other.arr, res.total_size, other.total_size)
-        if self.device == 'vulkan': ti.sync()
+            res = SOE.SOE.elementwise_op(self, other, 'mul')
+        else:
+            res = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
+            K.k_copy(self.arr, res.arr, self.total_size)
+            K.k_mul(res.arr, other.arr, res.total_size, other.total_size)
+            if self.device == 'vulkan': ti.sync()
+            
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
+        
         def _backward():
             if self.requires_grad:
-                if self.grad is None: self.zero_grad()
+                # dA = dC * B
+                self._acc_grad(res.grad * other)
             if other.requires_grad:
-                if other.grad is None: other.zero_grad()
-            if self.requires_grad and other.requires_grad:
-                K.k_mul_backward(res.grad.arr, self.arr, other.arr, self.grad.arr, other.grad.arr, res.total_size, other.total_size)
-            elif self.requires_grad:
-                dummy_grad = Tensor(None, shape=other.shape)
-                K.k_mul_backward(res.grad.arr, self.arr, other.arr, self.grad.arr, dummy_grad.arr, res.total_size, other.total_size)
-            elif other.requires_grad:
-                dummy_grad = Tensor(None, shape=self.shape)
-                K.k_mul_backward(res.grad.arr, self.arr, other.arr, dummy_grad.arr, other.grad.arr, res.total_size, other.total_size)
-            if self.device == 'vulkan': ti.sync()
+                # dB = dC * A
+                other._acc_grad(res.grad * self)
+                
         res._backward_fn = _backward
         return res
 
     def __truediv__(self, other):
         if not isinstance(other, Tensor):
-            val = float(other)
-            if self.device == 'ssd':
-                from . import streaming_ops as SOE
-                return SOE.SOE.elementwise_op(self, val, 'div')
-            res = self.clone()
-            K.k_scale(res.arr, 1.0 / val, res.total_size)
-            if self.device == 'vulkan': ti.sync()
-            res._prev = {self}
-            res.requires_grad = self.requires_grad
-            def _backward():
-                if self.requires_grad:
-                    if self.grad is None: self.zero_grad()
-                    K.k_scale_backward(res.grad.arr, 1.0 / val, self.grad.arr, self.total_size)
-                    if self.device == 'vulkan': ti.sync()
-            res._backward_fn = _backward
-            return res
+            other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
+            
         if self.device == 'ssd' or other.device == 'ssd':
             from . import streaming_ops as SOE
-            return SOE.SOE.elementwise_op(self, other, 'div')
-        res = self.clone()
-        K.k_div(res.arr, other.arr, res.total_size, other.total_size)
-        if self.device == 'vulkan': ti.sync()
+            res = SOE.SOE.elementwise_op(self, other, 'div')
+        else:
+            res = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
+            K.k_copy(self.arr, res.arr, self.total_size)
+            K.k_div(res.arr, other.arr, res.total_size, other.total_size)
+            if self.device == 'vulkan': ti.sync()
+            
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
+        
         def _backward():
             if self.requires_grad:
-                if self.grad is None: self.zero_grad()
-                temp_grad = res.grad.clone()
-                K.k_div(temp_grad.arr, other.arr, res.total_size, other.total_size)
-                K.k_add(self.grad.arr, temp_grad.arr, self.total_size, self.total_size)
+                # dA = dC / B
+                self._acc_grad(res.grad / other)
             if other.requires_grad:
-                if other.grad is None: other.zero_grad()
-                temp = res.clone()
-                K.k_mul(temp.arr, res.grad.arr, res.total_size, res.total_size)
-                K.k_scale(temp.arr, -1.0, temp.total_size)
-                K.k_div(temp.arr, other.arr, res.total_size, other.total_size)
-                K.k_add(other.grad.arr, temp.arr, res.total_size, other.total_size)
-            if self.device == 'vulkan': ti.sync()
+                # dB = -dC * A / B^2
+                other._acc_grad(res.grad * self * -1.0 / (other * other))
+                
         res._backward_fn = _backward
         return res
 
@@ -524,16 +534,18 @@ class Tensor:
 
     def _comp_op(self, other, op_type):
         if not isinstance(other, Tensor):
-            other = Tensor(np.array([other], dtype=np.float32), device='cpu')
+            other = Tensor(np.array([other], dtype=np.float32), device=self.device)
             
         if self.device == 'ssd' or other.device == 'ssd':
             from . import streaming_ops as SOE
-            return SOE.SOE.elementwise_op(self, other, op_type)
+            res = SOE.SOE.elementwise_op(self, other, op_type)
+        else:
+            res = Tensor(None, shape=self.shape, device=self.device)
+            kernel = getattr(K, f"k_{op_type}")
+            kernel(self.arr, other.arr, res.arr, self.total_size, other.total_size)
+            if self.device == 'vulkan': ti.sync()
             
-        res = Tensor(None, shape=self.shape, device=self.device)
-        kernel = getattr(K, f"k_{op_type}")
-        kernel(self.arr, other.arr, res.arr, self.total_size, other.total_size)
-        if self.device == 'vulkan': ti.sync()
+        res._prev = {self, other}
         return res
 
     def __gt__(self, other): return self._comp_op(other, 'gt')
@@ -544,53 +556,132 @@ class Tensor:
     def __ne__(self, other): return self._comp_op(other, 'ne')
 
     def mean(self, dim=None, keepdim=False):
-        if dim == -1 or dim == len(self.shape) - 1:
-            N = self.shape[-1]
-            M = self.total_size // N
-            out = Tensor(None, shape=self.shape[:-1] + (1,) if keepdim else self.shape[:-1])
-            K.k_mean_last_dim(self.arr, out.arr, M, N)
-            if self.device == 'vulkan': ti.sync()
-            return out
-        return Tensor(float(np.mean(self.to_numpy())))
+        if dim is not None:
+            # TODO: Add tiled dimension-specific mean to SOE
+            if dim == -1 or dim == len(self.shape) - 1:
+                N = self.shape[-1]
+                M = self.total_size // N
+                out = Tensor(None, shape=self.shape[:-1] + (1,) if keepdim else self.shape[:-1], device=self.device)
+                K.k_mean_last_dim(self.arr, out.arr, M, N)
+                if self.device == 'vulkan': ti.sync()
+                return out
+            return Tensor(float(np.mean(self.to_numpy())))
+            
+        if self.device == 'ssd':
+            from . import streaming_ops as SOE
+            res = SOE.SOE.mean(self)
+        else:
+            res = Tensor(float(np.mean(self.to_numpy())), device=self.device)
+            
+        res._prev = {self}
+        res.requires_grad = self.requires_grad
+        def _backward():
+            if self.requires_grad:
+                # Grad of mean is 1/N * Out_Grad for all elements
+                self._acc_grad(res.grad.expand(*self.shape) / self.total_size)
+        res._backward_fn = _backward
+        return res
 
     def sqrt(self):
         if self.device == 'ssd':
             from . import streaming_ops as SOE
-            return SOE.SOE.elementwise_op(self, None, 'sqrt')
-        res = self.clone()
-        K.k_sqrt(res.arr, res.total_size)
-        if self.device == 'vulkan': ti.sync()
+            res = SOE.SOE.elementwise_op(self, None, 'sqrt')
+        else:
+            res = Tensor(None, shape=self.shape, device=self.device)
+            K.k_sqrt(res.arr, res.total_size)
+            if self.device == 'vulkan': ti.sync()
+            
+        res._prev = {self}
+        res.requires_grad = self.requires_grad
+        def _backward():
+            if self.requires_grad:
+                # d(sqrt(x))/dx = 0.5 / sqrt(x)
+                self._acc_grad(res.grad * 0.5 / res)
+        res._backward_fn = _backward
         return res
 
     def exp(self):
         if self.device == 'ssd':
             from . import streaming_ops as SOE
-            return SOE.SOE.elementwise_op(self, None, 'exp')
-        return Tensor(np.exp(self.to_numpy()), device=self.device)
+            res = SOE.SOE.elementwise_op(self, None, 'exp')
+        else:
+            res = Tensor(None, shape=self.shape, device=self.device)
+            K.k_exp(self.arr, res.arr, self.total_size)
+            if self.device == 'vulkan': ti.sync()
+            
+        res._prev = {self}
+        res.requires_grad = self.requires_grad
+        def _backward():
+            if self.requires_grad:
+                self._acc_grad(res.grad * res)
+        res._backward_fn = _backward
+        return res
 
     def log(self):
         if self.device == 'ssd':
             from . import streaming_ops as SOE
-            return SOE.SOE.elementwise_op(self, None, 'log')
-        return Tensor(np.log(self.to_numpy()), device=self.device)
+            res = SOE.SOE.elementwise_op(self, None, 'log')
+        else:
+            res = Tensor(None, shape=self.shape, device=self.device)
+            K.k_log(self.arr, res.arr, self.total_size)
+            if self.device == 'vulkan': ti.sync()
+            
+        res._prev = {self}
+        res.requires_grad = self.requires_grad
+        def _backward():
+            if self.requires_grad:
+                self._acc_grad(res.grad / self)
+        res._backward_fn = _backward
+        return res
 
     def pow(self, val):
         if self.device == 'ssd':
             from . import streaming_ops as SOE
-            return SOE.SOE.elementwise_op(self, val, 'pow')
-        return Tensor(np.power(self.to_numpy(), val), device=self.device)
+            res = SOE.SOE.elementwise_op(self, val, 'pow')
+        else:
+            if isinstance(val, Tensor):
+                res = Tensor(np.power(self.to_numpy(), val.to_numpy()), device=self.device)
+            else:
+                res = Tensor(np.power(self.to_numpy(), val), device=self.device)
+            
+        res._prev = {self}
+        if isinstance(val, Tensor): res._prev.add(val)
+        res.requires_grad = self.requires_grad or (isinstance(val, Tensor) and val.requires_grad)
+        
+        def _backward():
+            if self.requires_grad:
+                # d(x^n)/dx = n * x^(n-1)
+                self._acc_grad(res.grad * val * self.pow(val - 1.0))
+            if isinstance(val, Tensor) and val.requires_grad:
+                # d(a^x)/dx = a^x * ln(a)
+                val._acc_grad(res.grad * res * self.log())
+                
+        res._backward_fn = _backward
+        return res
 
     def masked_fill(self, mask, value):
         if self.device == 'ssd':
             from . import streaming_ops as SOE
-            # Pass (mask, value) as 'b' argument
-            m_np = mask.to_numpy() if isinstance(mask, Tensor) else mask
-            return SOE.SOE.elementwise_op(self, (m_np, value), 'masked_fill')
-        res = self.to_numpy()
-        m = mask.to_numpy() if isinstance(mask, Tensor) else mask
-        # Ensure mask is boolean for numpy indexing
-        res[m > 0.5] = value
-        return Tensor(res, device=self.device)
+            # Pass mask as 'b' and scalar value as 'extra'
+            res = SOE.SOE.elementwise_op(self, mask, 'masked_fill', extra=value)
+        else:
+            res_np = self.to_numpy()
+            m = mask.to_numpy() if isinstance(mask, Tensor) else mask
+            # Ensure mask is boolean for numpy indexing
+            res_np[m > 0.5] = value
+            res = Tensor(res_np, device=self.device)
+            
+        res._prev = {self, mask} if isinstance(mask, Tensor) else {self}
+        res.requires_grad = self.requires_grad
+        def _backward():
+            if self.requires_grad:
+                # Only propagate grad where mask was FALSE
+                m = mask.to_numpy() if isinstance(mask, Tensor) else mask
+                # Convert mask to 1.0 (False) or 0.0 (True)
+                float_mask = Tensor((m <= 0.5).astype(np.float32), device=res.device)
+                self._acc_grad(res.grad * float_mask)
+        res._backward_fn = _backward
+        return res
 
     def gather(self, dim, index):
         # Implementation for 1:1 parity
@@ -621,19 +712,18 @@ class Tensor:
         if self.device == 'vulkan': ti.sync()
         return res
     def sum(self):
-        # Result is a scalar tensor
-        res = Tensor(float(np.sum(self.to_numpy())), shape=(1,))
+        if self.device == 'ssd':
+            from . import streaming_ops as SOE
+            res = SOE.SOE.sum(self)
+        else:
+            res = Tensor(float(np.sum(self.to_numpy())), shape=(), device=self.device)
+            
         res._prev = {self}
         res.requires_grad = self.requires_grad
         def _backward():
             if self.requires_grad:
-                if self.grad is None: self.zero_grad()
-                # Gradient of sum is 1.0 everywhere (multiplied by incoming gradient)
-                # We use a kernel to add the scalar value to all elements of the gradient
-                if res.grad is not None:
-                    # Incoming grad is scalar (1,). We broadcast it to self.shape
-                    K.k_add(self.grad.arr, res.grad.arr, self.total_size, 1)
-                    if self.device == 'vulkan': ti.sync()
+                # Grad of sum is 1.0 everywhere (expanding)
+                self._acc_grad(res.grad.expand(*self.shape))
         res._backward_fn = _backward
         return res
 

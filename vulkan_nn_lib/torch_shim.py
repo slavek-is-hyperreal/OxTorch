@@ -80,7 +80,9 @@ def ones(*size, dtype=None, device='auto', requires_grad=False):
         chunk_size_bytes = 512 * 1024 * 1024
         chunk_len = chunk_size_bytes // item_size
         
-        print(f"  [Factory] Greedy SSD 'ones' ({n*item_size/1e6:.1f}MB)...")
+        # Optimized copy to SSD
+        size_str = f"{n*item_size/1e6:.1f}MB" if n*item_size >= 1e6 else f"{n*item_size/1024:.1f}KB"
+        print(f"  [Factory] Initializing SSD 'ones' tensor ({size_str}, {t.dtype})...")
         t0 = time.perf_counter()
         
         def fill_chunk(start, end):
@@ -88,7 +90,7 @@ def ones(*size, dtype=None, device='auto', requires_grad=False):
             buf = np.ones(end - start, dtype=t.dtype)
             t.arr[start:end] = buf
 
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=12) as executor:
             offsets = range(0, n, chunk_len)
             for start in offsets:
                 end = min(start + chunk_len, n)
@@ -117,7 +119,7 @@ def randn(*size, dtype=None, device='auto', requires_grad=False):
             buf = np.random.randn(end - start).astype(t.dtype)
             t.arr[start:end] = buf
 
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=12) as executor:
             offsets = range(0, n, chunk_len)
             for start in offsets:
                 end = min(start + chunk_len, n)
