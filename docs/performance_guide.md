@@ -29,9 +29,9 @@ Our Vulkan backend is designed for older/generic hardware. While slower than CUD
 | Operation | Size | Engine | Mode | Speed / Latency |
 | :--- | :--- | :--- | :--- | :--- |
 | **Add** | 8.3 M | **PyTorch** | CPU | 10.2 ms |
-| **Add** | 8.3 M | **VNN** | CPU | **11.1 ms (1.09x)** |
+| **Add** | 8.3 M | **VNN** | CPU | **11.1 ms (1.09x slowdown)** |
 | **MatMul** | 1024^2 | **PyTorch** | CPU | 25.6 ms |
-| **MatMul** | 1024^2 | **VNN** | CPU | **34.9 ms (1.36x)** |
+| **MatMul** | 1024^2 | **VNN** | CPU | **34.9 ms (1.36x slowdown)** |
 | **Monster Sum**| 37 GB | **VNN** | **SOE Engine** | **423 MB/s (OOM-Safe)** |
 
 ## Comparison Table
@@ -40,7 +40,10 @@ Our Vulkan backend is designed for older/generic hardware. While slower than CUD
 | :--- | :--- | :--- |
 | **Philosophy** | Compute-First (Max Speed) | Memory-First (No Crashes) |
 | **Min. RAM to run Gemma-7B** | ~16GB+ | **~512MB** |
-| **I/O Strategy** | Standard OS Memmap | Greedy ARAS Buffering |
+| **I/O Strategy** | Standard OS Memmap | Greedy ARAS Buffering (Linear Scaling)|
 | **Ease of Use** | Standard | `import torch_shim as torch` |
 | **Backpropagation** | In-Memory (Fast) | **SSD-Native (OOM-Safe)** |
 | **Gradient Checkpointing**| Manual | Automatic (via SSD Offload)|
+
+---
+*VNN performance is optimized for stability on edge and legacy hardware, where surviving the computation is more important than raw peak FLOPS.*

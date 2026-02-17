@@ -18,6 +18,9 @@ import shutil
 import tempfile
 import hashlib
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "../../"))
+
 class ProjectManager:
     """Manages the .splatproj container (ZIP) and its temporary working directory."""
     def __init__(self, log_callback):
@@ -333,8 +336,12 @@ class SplatEditor:
 
     def run_command(self, cmd, status_prefix, progress_start, progress_end, cwd=None):
         self.log(f"Running: {' '.join(cmd)}")
+        env = os.environ.copy()
+        # Ensure subprocesses can find vulkan_nn_lib even if cwd changes
+        env["PYTHONPATH"] = PROJECT_ROOT + os.pathsep + env.get("PYTHONPATH", "")
+        
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
-                                        text=True, bufsize=1, cwd=cwd or self.pm.work_dir)
+                                        text=True, bufsize=1, cwd=cwd or self.pm.work_dir, env=env)
         
         for line in self.process.stdout:
             self.log(line.strip())
@@ -369,7 +376,7 @@ class SplatEditor:
                     shutil.copy(src, save_path)
                     self.log(f"Model exported to {save_path}")
                 
-            subprocess.Popen([sys.executable, "train_gs.py", "--view"], cwd=self.pm.work_dir)
+                subprocess.Popen([sys.executable, os.path.join(SCRIPT_DIR, "train_gs.py"), "--view"], cwd=self.pm.work_dir)
             
     def run_reconstruction_manual(self):
         if not self.pm.work_dir: return
@@ -386,14 +393,14 @@ class SplatEditor:
         try:
             self.set_status(f"Researching {mode}...", 0)
             out_file = f"output/research_{mode}.ply"
-            cmd = [sys.executable, "gs_to_mesh.py", "--input", "output/trained_splats.ply", "--mode", mode, "--output", out_file, "--live"]
+            cmd = [sys.executable, os.path.join(SCRIPT_DIR, "gs_to_mesh.py"), "--input", "output/trained_splats.ply", "--mode", mode, "--output", out_file, "--live"]
             self.run_command(cmd, f"Reconstructing ({mode})", 0, 100)
             self.pm.save()
             self.log(f"Success! Result synced to .splatproj")
             self.set_status("Reconstruction Done!", 100)
             
             if messagebox.askyesno("Complete", f"Generated. Open Viewer?"):
-                subprocess.Popen([sys.executable, "view_mesh.py", "--input", out_file], cwd=self.pm.work_dir)
+                subprocess.Popen([sys.executable, os.path.join(SCRIPT_DIR, "view_mesh.py"), "--input", out_file], cwd=self.pm.work_dir)
         except Exception as e:
             self.log(f"Failed: {e}")
 
@@ -447,7 +454,7 @@ class SplatEditor:
                 # Use internal source videos
                 src_vids = [os.path.join(w, "source", v["name"]) for v in self.pm.data["videos"]]
                 for i, vid in enumerate(src_vids):
-                    cmd = [sys.executable, os.path.abspath("extract_frames.py"), "--video", vid, "--output", frames_dir, "--fps", str(fps), "--prefix", f"v{i}"]
+                    cmd = [sys.executable, os.path.join(SCRIPT_DIR, "extract_frames.py"), "--video", vid, "--output", frames_dir, "--fps", str(fps), "--prefix", f"v{i}"]
                     self.run_command(cmd, f"Extracting {os.path.basename(vid)}", (i/len(src_vids))*20, ((i+1)/len(src_vids))*20)
                 self.pm.data["fps_caches"][str(fps)] = "frames_done"
                 self.pm.save()
@@ -459,7 +466,7 @@ class SplatEditor:
             else:
                 self.set_status("Stage 2/4: SfM Reconstruction...", 20)
                 os.makedirs(colmap_path, exist_ok=True)
-                cmd = [sys.executable, os.path.abspath("run_colmap.py"), "--images", frames_dir, "--output", colmap_path]
+                cmd = [sys.executable, os.path.join(SCRIPT_DIR, "run_colmap.py"), "--images", frames_dir, "--output", colmap_path]
                 self.run_command(cmd, "COLMAP", 20, 45)
                 self.pm.save()
 
@@ -470,7 +477,7 @@ class SplatEditor:
                     self.log("Cache hit: AI points found. Skipping Stage 3.")
                 else:
                     self.set_status("Stage 3/4: AI Depth Enhancement...", 45)
-                    cmd = [sys.executable, os.path.abspath("align_depth.py"), "--colmap_path", f"cache/colmap/sparse/0", "--img_path", f"cache/frames/{fps}"]
+                    cmd = [sys.executable, os.path.join(SCRIPT_DIR, "align_depth.py"), "--colmap_path", f"cache/colmap/sparse/0", "--img_path", f"cache/frames/{fps}"]
                     self.run_command(cmd, "AI Depth", 45, 75)
                     self.pm.save()
 
@@ -480,7 +487,7 @@ class SplatEditor:
             
             self.set_status("Stage 4/4: GS Training...", 75)
             # train_gs.py writes to output/
-            cmd = [sys.executable, os.path.abspath("train_gs.py"), "--colmap_path", "cache/colmap/sparse/0", "--iterations", str(self.iter_var.get())]
+            cmd = [sys.executable, os.path.join(SCRIPT_DIR, "train_gs.py"), "--colmap_path", "cache/colmap/sparse/0", "--iterations", str(self.iter_var.get())]
             self.run_command(cmd, "Training", 75, 100)
             
             self.pm.data["completed_stages"].append("training")

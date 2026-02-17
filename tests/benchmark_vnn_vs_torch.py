@@ -40,7 +40,7 @@ def benchmark_adam_3way(K=4096, N=4096, iters=5, tile_size=4*1024*1024):
     gpu_result = wv.to_numpy()
 
     # --- 3. VNN Hybrid Adam (CPU+GPU) ---
-    wh = vnn.Tensor(w_init.copy(), requires_grad=True)
+    wh = vnn.Tensor(w_init.copy(), requires_grad=True, device='cpu')
     opt_hybrid = vnn.HybridAdam([wh], lr=1e-3, tile_size=tile_size)
 
     t0 = time.perf_counter()

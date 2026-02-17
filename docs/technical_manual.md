@@ -95,4 +95,6 @@ Provides the `torch.*` API.
 
 ### 9. [models.py](../vulkan_nn_lib/modules/models.py)
 *   **Gemma3Block**: Implements the complex Gemma-3 architecture (AltUp, Laurel, PLE) while keeping activation buffers OOM-safe via the core engine.
- bitumen
+
+---
+*This manual is updated dynamically to reflect the latest architectural refinements in VNN.*

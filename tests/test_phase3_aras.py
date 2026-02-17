@@ -9,8 +9,7 @@ def test_phase3_performance():
     print("--- Phase 3: ARAS Benchmark & Zero-Copy Test ---\n")
     
     # Setup SSD
-    cache_dir = "/vectorlegis_ssd_pool/vnn_cache/test_p3"
-    Tensor.setup_ssd_storage(cache_dir)
+    Tensor.setup_ssd_storage(None)
     
     # 1. Benchmark: Adaptive Streaming Addition
     # We'll use 4GB + 4GB. On a 24GB machine, this should trigger large tiles.

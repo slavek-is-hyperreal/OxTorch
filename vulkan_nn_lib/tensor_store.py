@@ -1,5 +1,6 @@
 import os
 import numpy as np
+from . import config
 
 class TensorStore:
     """SSD-backed tensor storage using numpy memmap on ZFS.
@@ -9,8 +10,10 @@ class TensorStore:
     Linux page cache / ZFS ARC.
     """
     
-    def __init__(self, base_path="/vectorlegis_ssd_pool/vnn_cache"):
+    def __init__(self, base_path=None):
         """base_path: directory on ZFS dataset."""
+        if base_path is None:
+            base_path = config.get_ssd_path()
         self.base_path = base_path
         if not os.path.exists(base_path):
             os.makedirs(base_path, exist_ok=True)

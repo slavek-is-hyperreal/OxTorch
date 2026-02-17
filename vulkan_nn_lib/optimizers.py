@@ -2,6 +2,7 @@ import taichi as ti
 import numpy as np
 from . import kernels as K
 import os
+from . import config
 
 class Optimizer:
     def __init__(self, params, lr=1e-3):
@@ -73,8 +74,8 @@ class HybridAdam(Optimizer):
                 curr_tile = end - start
                 
                 # Copy to VRAM
-                self.p_tile.from_numpy(p.arr[start:end])
-                self.g_tile.from_numpy(p.grad.arr[start:end])
+                self.p_tile.from_numpy(p[start:end].to_numpy())
+                self.g_tile.from_numpy(p.grad[start:end].to_numpy())
                 self.m_tile.from_numpy(self.m[i][start:end])
                 self.v_tile.from_numpy(self.v[i][start:end])
                 
@@ -84,7 +85,7 @@ class HybridAdam(Optimizer):
                 ti.sync()
                 
                 # Copy back
-                p.arr[start:end] = self.p_tile.to_numpy()[:curr_tile]
+                p[start:end] = self.p_tile.to_numpy()[:curr_tile]
                 self.m[i][start:end] = self.m_tile.to_numpy()[:curr_tile]
                 self.v[i][start:end] = self.v_tile.to_numpy()[:curr_tile]
 
@@ -93,7 +94,9 @@ class AutoSGD(Optimizer):
     def __init__(self, params, lr=1e-3, 
                  vram_budget=1500*1024*1024, # 1.5GB for a 2GB card
                  ram_budget='auto',
-                 ssd_path="/vectorlegis_ssd_pool/vnn_cache"):
+                 ssd_path=None):
+        if ssd_path is None:
+            ssd_path = config.get_ssd_path()
         from .tensor_store import TensorStore
         super().__init__(params, lr)
         
@@ -142,8 +145,8 @@ class AutoSGD(Optimizer):
         tile = min(n, self.gpu_tile)
         
         # 1. Dispatch GPU task (Non-blocking)
-        self.p_cache.from_numpy(p.arr[:tile])
-        self.g_cache.from_numpy(p.grad.arr[:tile])
+        self.p_cache.from_numpy(p[:tile].to_numpy())
+        self.g_cache.from_numpy(p.grad[:tile].to_numpy())
         K.k_sgd(self.p_cache, self.g_cache, self.lr, tile)
         
         # 2. Parallel CPU/SSD task (OOM-Safe Tiled)
@@ -155,7 +158,7 @@ class AutoSGD(Optimizer):
 
         # 3. Final Synchronization
         ti.sync()
-        p.arr[:tile] = self.p_cache.to_numpy()
+        p[:tile] = self.p_cache.to_numpy()
 
     def step(self):
         for i, p in enumerate(self.params):
@@ -173,7 +176,9 @@ class AutoAdam(Optimizer):
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8,
                  vram_budget=1500*1024*1024, # 1.5GB for a 2GB card
                  ram_budget='auto',
-                 ssd_path="/vectorlegis_ssd_pool/vnn_cache"):
+                 ssd_path=None):
+        if ssd_path is None:
+            ssd_path = config.get_ssd_path()
         from .tensor_store import TensorStore
         super().__init__(params, lr)
         
@@ -260,8 +265,8 @@ class AutoAdam(Optimizer):
         tile = min(n, self.gpu_tile)
         
         # 1. Dispatch GPU task (Non-blocking)
-        self.p_cache.from_numpy(p.arr[:tile])
-        self.g_cache.from_numpy(p.grad.arr[:tile])
+        self.p_cache.from_numpy(p[:tile].to_numpy())
+        self.g_cache.from_numpy(p.grad[:tile].to_numpy())
         self.m_cache.from_numpy(self.m[i][:tile])
         self.v_cache.from_numpy(self.v[i][:tile])
         
@@ -279,7 +284,7 @@ class AutoAdam(Optimizer):
 
         # 3. Final Synchronization
         ti.sync()
-        p.arr[:tile] = self.p_cache.to_numpy()
+        p[:tile] = self.p_cache.to_numpy()
         self.m[i][:tile] = self.m_cache.to_numpy()
         self.v[i][:tile] = self.v_cache.to_numpy()
 

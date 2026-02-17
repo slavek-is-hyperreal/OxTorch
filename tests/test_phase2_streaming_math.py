@@ -11,7 +11,7 @@ def test_phase2():
     print("--- Phase 2: Streaming Math (SOE) Test ---\n")
     
     # Setup SSD for large tests
-    Tensor.setup_ssd_storage("/vectorlegis_ssd_pool/vnn_cache/test_soe")
+    Tensor.setup_ssd_storage(None)
     
     # 1. 8GB Element-wise Addition (2B elements float32)
     # Total data involved: 8GB (A) + 8GB (B) + 8GB (Res) = 24GB on SSD.

@@ -3,6 +3,7 @@ import numpy as np
 from . import kernels as K
 import torch
 from .memory import MemoryManager
+from . import config
 
 def _get_torch():
     return torch
@@ -13,7 +14,9 @@ class Tensor:
     _tensor_counter = 0
 
     @classmethod
-    def setup_ssd_storage(cls, path="/vectorlegis_ssd_pool/vnn_cache"):
+    def setup_ssd_storage(cls, path=None):
+        if path is None:
+            path = config.get_ssd_path()
         from .tensor_store import TensorStore
         cls._tensor_store = TensorStore(path)
 

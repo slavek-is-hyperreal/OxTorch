@@ -25,38 +25,38 @@ VNN automatically routes every operation through the most efficient backend base
 *   **Limitation**: Limited by physical VRAM. 
 
 ### B. PyTorch Hybrid (Fast Path)
-*   **Target**: Tensors that fit in RAM (< Safe RAM Budget, scales linearly with system RAM).
-*   **Innovation**: **Zero-Copy Shared Memory**. Uses `torch.from_numpy(self.arr)` to perform math directly on VNN's CPU memory using PyTorch's optimized BLAS/MKL kernels.
-*   **Benefit**: Extremely low overhead (**1.09x vs Torch** for Add, **1.36x** for MatMul). 
+*   **Target**: Tensors that fit comfortably in RAM (below the "Safe RAM Budget").
+*   **Innovation**: **Zero-Copy Shared Memory**. VNN utilizes `torch.from_numpy(self.arr)` to execute operations directly on CPU memory using PyTorch's optimized BLAS/MKL kernels.
+*   **Benefit**: Extremely low overhead (**~1.09x slowdown** vs. native PyTorch for element-wise additions).
 *   **Limitation**: Synchronous execution.
 
 ### C. SOE/ARAS (Streaming Operator Engine)
-*   **Target**: "Monster Scale" tensors (34GB+ on systems with limited RAM).
+*   **Target**: "Monster Scale" tensors (e.g., 34GB+ on systems with limited RAM).
 *   **Innovation**: **Adaptive Tiling & Backpressure**. 
-    - **Adaptive Tiling**: Automatically breaks operations into tiles that fit within a safe budget (default 512MB).
-    - **Bounded Backpressure**: The engine uses a bounded prefetch queue and future-tracking to ensure the SSD doesn't overwhelm RAM. This prevents system hangs during 30GB+ operations by pausing disk I/O when the processing pipeline is full.
-*   **SSD Native**: Resulting tensors are created directly on SSD via `memmap`, ensuring RAM usage remains flat regardless of total tensor size.
+    - **Adaptive Tiling**: Automatically decomposes operations into tiles that fit within a safe budget (default: 512MB).
+    - **Bounded Backpressure**: The engine employs a bounded prefetch queue and future-tracking to prevent SSD operations from overwhelming RAM. This ensures system stability during massive operations by pausing disk I/O when the processing pipeline is saturated.
+*   **SSD Native**: Results are generated directly on SSD via `memmap`, maintaining flat RAM usage regardless of total tensor size.
 
 ## 2. Autograd & Unified Gradient Accumulation
-VNN's reverse-mode differentiation engine is designed to be backend-agnostic. The core innovation is the `_acc_grad(grad)` method, which routes gradient accumulation based on the device:
+VNN's reverse-mode differentiation engine is backend-agnostic. The core innovation lies in the `_acc_grad(grad)` method, which intelligently routes gradient accumulation based on the host device:
 
-- **SSD**: Uses the SOE/ARAS engine for tiled, multi-threaded element-wise addition directly on disk.
-- **Vulkan**: Uses Taichi kernels (`k_add`) for GPU-accelerated accumulation.
-- **CPU**: Uses optimized PyTorch shared memory paths for peak performance.
+- **SSD**: Employs the SOE/ARAS engine for multi-threaded, tiled element-wise addition directly on disk.
+- **Vulkan**: Uses Taichi kernels for GPU-accelerated accumulation.
+- **CPU**: Utilizes optimized PyTorch shared memory paths for maximum performance.
 
-This ensures that even if you have a 40GB gradient buffer on an system with only 8GB of RAM, the accumulation never triggers an OOM.
+This guarantees that even with a 40GB gradient buffer on an 8GB RAM system, accumulation will not trigger an Out-of-Memory (OOM) error.
 
 ## 3. Zero-Copy Loading
-One of VNN's primary advantages over PyTorch is the `from_binary` (and `external_path`) mechanism. While PyTorch's `torch.load` usually requires loading the entire model into RAM before initializing, VNN **mounts** the binary files.
+VNN offers a significant advantage over PyTorch through its `from_binary` (and `external_path`) mechanism. While PyTorch typically requires loading an entire state dictionary into RAM, VNN **mounts** binary files as virtual tensors.
 
-- **VNN**: Points to the file on disk. RAM usage is near zero until an operation starts.
-- **PyTorch**: Reads file, populates RAM, potentially triggers OOM.
+- **VNN**: Maps the file on disk via `memmap`. RAM consumption remains minimal until computation begins.
+- **PyTorch**: Reads the entire file into resident memory, often leading to OOM on constrained systems.
 
 ## 4. Compute Kernels & Taichi Backend
-All heavy lifting is done by **Taichi kernels**, which are JIT-compiled to SPIR-V (Vulkan compute shaders).
-- **Design**: Kernels operate on 1D flattened arrays to simplify shader code.
-- **Parallelization**: Automatically handled by Taichi.
-- **Precision**: Currently optimized for FP32 with expanding support for FP16 and INT8.
+Computationally intensive tasks are handled by **Taichi kernels**, which are JIT-compiled to SPIR-V (Vulkan compute shaders).
+- **Design**: Kernels operate on flattened 1D arrays to streamline shader logic.
+- **Parallelization**: Efficiently managed by the Taichi runtime.
+- **Precision**: Highly optimized for FP32, with expanding support for FP16 and INT8.
 
 ## 5. Hardware Calibration & Tuning
 Since VNN treats **VRAM/RAM as a Cache**, performance depends on finding the "Sweet Spot" for your hardware.

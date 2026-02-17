@@ -9,6 +9,10 @@ import random
 # Initialize Taichi with Vulkan backend
 ti.init(arch=ti.vulkan, device_memory_GB=1.5)
 
+import vulkan_nn_lib.torch_shim as torch
+import vulkan_nn_lib.core as vnn
+from vulkan_nn_lib.optimizers import AutoAdam
+
 def read_next_bytes(fid, num_bytes, format_char_sequence, endian_character="<"):
     data = fid.read(num_bytes)
     return struct.unpack(endian_character + format_char_sequence, data)
@@ -78,6 +82,11 @@ class GaussianModel:
         self.sh = ti.field(dtype=ti.f32, shape=(num_points, 1, 3), needs_grad=True)
         self.display_color = ti.Vector.field(3, dtype=ti.f32, shape=num_points)
         self.loss = ti.field(dtype=ti.f32, shape=(), needs_grad=True)
+        
+        # VNN Bridge: Parameters managed by the core engine for OOM-safety
+        self.pos_vnn = vnn.Tensor(None, shape=(num_points, 3), requires_grad=True, device='auto')
+        self.sh_vnn = vnn.Tensor(None, shape=(num_points, 1, 3), requires_grad=True, device='auto')
+        self.opacity_vnn = vnn.Tensor(None, shape=(num_points,), requires_grad=True, device='auto')
 
     @ti.kernel
     def initialize(self, xyz: ti.types.ndarray(), rgb: ti.types.ndarray()):
@@ -197,10 +206,27 @@ class GaussianModel:
 
     @ti.kernel
     def update_params(self, lr: ti.f32):
+        # Legacy manual update (kept for reference, but we use AutoAdam)
         for i in range(self.num_points):
             self.pos[i] -= lr * self.pos.grad[i]
             for j, k in ti.static(ti.ndrange(1, 3)):
                 self.sh[i, j, k] -= lr * self.sh.grad[i, j, k]
+
+    def params(self):
+        """Returns the VNN managed parameters."""
+        return [self.pos_vnn, self.sh_vnn, self.opacity_vnn]
+
+    def sync_to_vnn(self):
+        """Syncs gradients from Taichi fields to VNN tensors."""
+        self.pos_vnn.grad.load_from_numpy(self.pos.grad.to_numpy().reshape(self.num_points, 3))
+        self.sh_vnn.grad.load_from_numpy(self.sh.grad.to_numpy().reshape(self.num_points, 1, 3))
+        self.opacity_vnn.grad.load_from_numpy(self.opacity.grad.to_numpy())
+
+    def sync_from_vnn(self):
+        """Syncs updated parameters from VNN tensors back to Taichi fields."""
+        self.pos.from_numpy(self.pos_vnn.to_numpy().reshape(self.num_points, 3))
+        self.sh.from_numpy(self.sh_vnn.to_numpy().reshape(self.num_points, 1, 3))
+        self.opacity.from_numpy(self.opacity_vnn.to_numpy())
 
     def export_ply(self, path):
         pos = self.pos.to_numpy()
@@ -241,6 +267,11 @@ def main():
     
     model = GaussianModel(xyz.shape[0])
     model.initialize(xyz, rgb)
+    
+    # Sync initial state to VNN tensors for optimization
+    model.pos_vnn.load_from_numpy(model.pos.to_numpy().reshape(model.num_points, 3))
+    model.sh_vnn.load_from_numpy(model.sh.to_numpy().reshape(model.num_points, 1, 3))
+    model.opacity_vnn.load_from_numpy(model.opacity.to_numpy())
     
     if args.view:
         W, H = 1000, 700
@@ -318,6 +349,8 @@ def main():
         print(f"Starting Training on {len(images)} images...", flush=True)
         print("Note: The first few iterations may take time to start due to JIT compilation (Vulkan).", flush=True)
         img_list = list(images.values())
+        optimizer = AutoAdam(model.params(), lr=1e-3) # Higher-order optimizer from VNN
+        
         for i in range(args.iterations):
             img_data = random.choice(img_list)
             cam = cameras[img_data["cam_id"]]
@@ -329,7 +362,11 @@ def main():
             model.reset_loss()
             with ti.ad.Tape(model.loss):
                 model.train_step(img_data["R"], img_data["T"], cam["f"], cam["w"], cam["h"], target)
-            model.update_params(0.1) # Higher LR for point-based loss
+            
+            # Use VNN's AutoAdam for memory-safe updates
+            model.sync_to_vnn()
+            optimizer.step()
+            model.sync_from_vnn()
             
             if i % 10 == 0:
                 print(f"Iteration {i}/{args.iterations} - Loss: {model.loss[None]:.10f}", flush=True)

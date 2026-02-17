@@ -10,7 +10,7 @@ def test_phase1():
     print("--- Phase 1: Compatibility & Multi-Dtype Test ---\n")
     
     # Setup SSD for large tests
-    Tensor.setup_ssd_storage("/vectorlegis_ssd_pool/vnn_cache/test_compat")
+    Tensor.setup_ssd_storage(None)
     
     # 1. Basic Factory Functions
     print("1. Testing Factory Functions...")

@@ -36,19 +36,19 @@ Returns the Python scalar value of a 0D or 1-element tensor.
 
 ### `relu()`, `silu()`, `leaky_relu(alpha)`, `gelu_tanh()`, `softmax(dim)`
 Standard activation functions implemented as direct methods on the `Tensor` object.
-- **SOE Support**: These are fully streamed if the tensor resides on SSD.
-- **Parity**: Matches PyTorch behavior exactly (100% parity verified).
+- **SOE Support**: These operations are fully streamed when the tensor resides on SSD.
+- **Parity**: Matches PyTorch behavior exactly (100% verified parity).
 
 ### `pow(other)` or `**`
 Element-wise exponentiation. Supports both scalar and tensor exponents.
-- **Type Promotion**: Automatically promotes result to `float32`.
+- **Type Promotion**: Automatically promotes results to `float32`.
 
 ---
 
 ## Identity & Graphing
 
 ### Hashability
-Tensors are hashable by their **identity** (`id(self)`). This allows them to be used in sets and dictionaries during topological sorting of the computation graph, even if their content changes.
+Tensors are hashable based on their **identity** (`id(self)`). This enables their use in sets and dictionaries during topological sorting of the computation graph, even if their content is modified.
 
 ---
 
@@ -56,24 +56,24 @@ Tensors are hashable by their **identity** (`id(self)`). This allows them to be 
 
 ### `permute(*dims)`
 Changes the dimension order. 
-- **SSD Behavior**: Performs a **physical re-layout** on disk if the tensor is SSD-resident. This is different from PyTorch (which uses strides) but ensures that subsequent streaming operations are sequentially optimal.
+- **SSD Behavior**: Executes a **physical re-layout** on disk if the tensor is SSD-resident. Unlike PyTorch (which manipulates strides), this ensures that subsequent streaming operations remain sequentially optimal.
 
 ### `expand(*shape)`
-Mimics PyTorch's `expand`. 
-- **Auto-Broadcasting**: VNN gradients automatically handle broadcasting during `backward()` to match expanded shapes.
+Mimics PyTorch's `expand` functionality. 
+- **Auto-Broadcasting**: VNN's Autograd engine automatically handles broadcasting during `backward()` to match expanded shapes.
 
 ---
 
 ## Boolean Masking & Conditional Logic
 
 ### `masked_fill(mask, value)`
-- **Description**: Fills elements of `self` where `mask` is True with `value`.
-- **SSD Strategy**: Uses **RAM-First Caching**. If the mask fits in RAM, it's cached once to avoid SSD thrashing. The main data remains streamed from disk.
+- **Description**: Fills elements of `self` with `value` where `mask` is True.
+- **SSD Strategy**: Employs **RAM-First Caching**. If the mask fits in RAM, it is cached to avoid SSD thrashing, while the primary data remains streamed from disk.
 
 ### Comparison Operators (`>`, `<`, `==`, etc.)
-All standard operators are implemented. 
+Standard comparison operators are fully supported. 
 - **Result**: Returns a new tensor where elements are `1.0` (True) or `0.0` (False). 
-- **Broadcasting**: Supports scalar-tensor broadcasting (e.g., `tensor > 0.5`) across all backends.
+- **Broadcasting**: Supports both scalar-tensor and tensor-tensor broadcasting across all backends.
 
 ---
 

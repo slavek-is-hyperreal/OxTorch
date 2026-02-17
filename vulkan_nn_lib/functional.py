@@ -56,6 +56,8 @@ def gelu_tanh(x: Tensor) -> Tensor:
     res._backward_fn = _backward
     return res
 
+GELUTanh = gelu_tanh
+
 class F:
     relu = staticmethod(relu)
     leaky_relu = staticmethod(leaky_relu)

@@ -5,7 +5,7 @@ Optimized for 2GB VRAM and 24GB RAM hardware.
 import subprocess, sys, json, os, numpy as np, gc
 
 TILE = 4 * 1024 * 1024
-BENCH_DIR = "/vectorlegis_ssd_pool/vnn_cache/bench"
+BENCH_DIR = "./vnn_cache/bench"
 
 # Worker script run in isolated subprocess
 WORKER = '''
@@ -19,13 +19,13 @@ def get_peak_ram():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
 
 vnn.warmup()
-Tensor.setup_ssd_storage("/vectorlegis_ssd_pool/vnn_cache/bench_tensors")
+Tensor.setup_ssd_storage(None)
 
 mode = sys.argv[1]
 n_elems = int(sys.argv[2])
 iters = int(sys.argv[3])
 tile_size = int(sys.argv[4])
-tmp_dir = "/vectorlegis_ssd_pool/vnn_cache/bench"
+tmp_dir = "./vnn_cache/bench"
 
 device = 'auto'
 
@@ -134,7 +134,7 @@ def bench(n_elems, iters=3):
     print(f"{'='*72}")
 
     os.makedirs(BENCH_DIR, exist_ok=True)
-    os.makedirs("/vectorlegis_ssd_pool/vnn_cache/bench_tensors", exist_ok=True)
+    os.makedirs("./vnn_cache/bench_tensors", exist_ok=True)
     
     # Save to SSD (chunked to avoid OOM in preparation)
     print("  Preparing data on SSD...")
@@ -205,7 +205,7 @@ def bench(n_elems, iters=3):
 
     import shutil
     try:
-        shutil.rmtree("/vectorlegis_ssd_pool/vnn_cache/bench_tensors")
+        shutil.rmtree("./vnn_cache/bench_tensors")
     except:
         pass
 
