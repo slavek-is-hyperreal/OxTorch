@@ -30,11 +30,20 @@ VNN automatically routes every operation through the most efficient backend base
 *   **Limitation**: Limited by system RAM capacity.
 
 ### C. ARAS (SSD Streaming)
-*   **Target**: "Monster Scale" tensors (Gemma weights, enormous activations).
+*   **Target**: "Monster Scale" tensors (Gemma weights, enormous activations, gradients).
 *   **Benefit**: OOM-safety. Can process models of arbitrary size (100GB+) as long as there is disk space.
-*   **Innovation**: **Adaptive RAM-Aware Streaming**. Instead of simple memmap, it uses a "Greedy Factory" and "RAM-First Caching" to bypass OS bottlenecks (like ZFS ARC limits) and hit 1GB/s+ throughput.
+*   **Innovation**: **Adaptive RAM-Aware Streaming**. Instead of simple memmap, it uses a "Greedy Factory" and "RAM-First Caching" to bypass OS bottlenecks (like ZFS ARC limits). Now supports **Tiled Reductions** (SSD-native `sum`/`mean`).
 
-## 2. Zero-Copy Loading
+## 2. Autograd & Unified Gradient Accumulation
+VNN's reverse-mode differentiation engine is designed to be backend-agnostic. The core innovation is the `_acc_grad(grad)` method, which routes gradient accumulation based on the device:
+
+- **SSD**: Uses the ARAS engine for tiled, multi-threaded element-wise addition.
+- **Vulkan**: Uses Taichi kernels (`k_add`) for GPU-accelerated accumulation.
+- **CPU**: Uses NumPy for numerical stability.
+
+This ensures that even if you have a 40GB gradient buffer on an 8GB RAM system, the accumulation never triggers an OOM.
+
+## 3. Zero-Copy Loading
 One of VNN's primary advantages over PyTorch is the `from_binary` (and `external_path`) mechanism. While PyTorch's `torch.load` usually requires loading the entire model into RAM before initializing, VNN **mounts** the binary files.
 
 - **VNN**: Points to the file on disk. RAM usage is near zero until an operation starts.
@@ -53,9 +62,9 @@ Since VNN treats **VRAM/RAM as a Cache**, performance depends on finding the "Sw
 Most GPUs have a Visible VRAM BAR (usually 256MB). 
 - **Optimization**: Set your optimizer `tile_size` so that state buffers fit into this 256MB window for full-speed CPU access.
 
-### Recommendation Table
-| GPU Tier | VRAM | Recommended Tile Size | Strategy |
+### Recommendation Table (Backpropagation)
+| GPU Tier | VRAM | Strategy | SSD Speed Target |
 | :--- | :---: | :--- | :--- |
-| **Legacy (R7 260X)** | 1-2GB | 64MB | RAM-Centric |
-| **Mid-Range (RX 580)** | 8GB | 256MB | Hybrid |
-| **High-End (RTX 4090)**| 24GB | 1GB+ | Full-VRAM |
+| **Legacy** | 1-2GB | SSD-Native | ~500MB/s (SATA) |
+| **Mid-Range** | 8GB | Hybrid Buffer | ~2GB/s (NVMe Gen3) |
+| **High-End** | 24GB | VRAM-Cached | ~7GB/s (NVMe Gen4) |

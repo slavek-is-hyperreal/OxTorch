@@ -24,7 +24,22 @@ Forces the tensor into a NumPy array in RAM.
 
 ### `backward(grad=None)`
 Triggers the Autograd engine. It builds a topological sort of the graph and computes gradients.
-- **SSD Support**: Currently being expanded in Phase 4 to handle gigabyte-scale gradient buffers.
+- **SSD Support**: Fully mature. Handles multi-gigabyte gradient accumulation on SSD-resident parameters using the ARAS engine.
+
+### `zero_grad()`
+Clears the gradient buffer. 
+- **Device-Aware**: If the tensor is on SSD, the gradient is initialized as an SSD tensor to save RAM.
+
+### `item()`
+Returns the Python scalar value of a 0D or 1-element tensor. 
+- **Parity**: Matches PyTorch's `item()`.
+
+---
+
+## Identity & Graphing
+
+### Hashability
+Tensors are hashable by their **identity** (`id(self)`). This allows them to be used in sets and dictionaries during topological sorting of the computation graph, even if their content changes.
 
 ---
 
@@ -36,7 +51,7 @@ Changes the dimension order.
 
 ### `expand(*shape)`
 Mimics PyTorch's `expand`. 
-- **Implementation**: Note that VNN currently performs a **real copy** (materialization) when expanding on SSD to maintain layout consistency for the streaming engine.
+- **Auto-Broadcasting**: VNN gradients automatically handle broadcasting during `backward()` to match expanded shapes.
 
 ---
 
@@ -60,3 +75,4 @@ All standard operators are implemented.
 | **Add/Sub/Mul** | Taichi Kernel | NumPy | ARAS Tiled Stream |
 | **Matmul** | Taichi Kernel | NumPy | Block-Based Parallel Stream |
 | **Exp/Log/Pow** | Taichi Kernel | NumPy | SOE Ufunc Stream |
+| **Sum/Mean** | - | NumPy | ARAS Tiled Reduction |

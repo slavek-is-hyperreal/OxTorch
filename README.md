@@ -20,11 +20,16 @@ VNN is designed to be a transparent replacement for PyTorch in your existing scr
 ```python
 import vulkan_nn_lib.torch_shim as torch
 
-# This tensor is 4GB, but it won't crash your 2GB RAM system.
-# VNN will automatically mount it to SSD using ARAS streaming.
-x = torch.randn(1024, 1024, 1024) 
-y = torch.exp(x)
-print(y[0, 0, 0])
+# 1. Monster Scale Initialization (10GB+)
+w = torch.randn(1024, 1024, 2560, requires_grad=True) 
+
+# 2. SSD-Native Forward Pass
+loss = (w * 2.0).sum()
+
+# 3. OOM-Safe Backpropagation (SSD-Native Accumulation)
+loss.backward()
+
+print(f"Gradient on SSD: {w.grad.device}")
 ```
 
 ---
@@ -35,9 +40,9 @@ For deep technical insights, architecture diagrams, and API references, check ou
 
 | Guide | Description |
 | :--- | :--- |
-| 🏗️ **[Architecture](docs/architecture.md)** | Multi-tier bridge logic, SSD streaming, and ARAS details. |
-| 📜 **[Tensor API Reference](docs/tensor_api.md)** | Deep dive into every function, from `permute` to `masked_fill`. |
-| ⚡ **[Performance Guide](docs/performance_guide.md)** | VNN vs PyTorch: When to use which and how to maximize throughput. |
+| 🏗️ **[Architecture](docs/architecture.md)** | Multi-tier bridge logic, SSD Autograd, and ARAS details. |
+| 📜 **[Tensor API Reference](docs/tensor_api.md)** | Deep dive into every function, from `backward` to `item`. |
+| ⚡ **[Performance Guide](docs/performance_guide.md)** | VNN vs PyTorch: Performance of SSD-Native backprop. |
 
 ---
 
@@ -46,14 +51,15 @@ For deep technical insights, architecture diagrams, and API references, check ou
 -   **[vulkan_nn_lib/](vulkan_nn_lib/)**: Core library (Shim, Kernels, ARAS engine).
 -   **[docs/](docs/)**: Technical deep-dives and implementation details.
 -   **[demos/splat_studio/](demos/splat_studio/)**: 3D Gaussian Splatting optimized with VNN.
--   **[tests/](tests/)**: PyTorch API parity verification suite.
+-   **[tests/](tests/)**: Verification suite including **SSD Autograd 1GB tests**.
 
 ---
 
 ## 💎 Features
 
+-   **SSD-Native Autograd**: Perform backpropagation on models that exceed RAM capacity.
 -   **ARAS (Adaptive RAM-Aware Streaming)**: Processes tensors in tiles based on real-time RAM availability.
--   **SSD-Native Ops**: Matrix Multiplication and Element-wise operations that never touch RAM in bulk.
+-   **Tiled Reductions**: OOM-safe `sum` and `mean` for multi-gigabyte tensors.
 -   **Zero-Copy Mounting**: Initialize tensors from binary files on disk in milliseconds without reading data.
 
 ---
