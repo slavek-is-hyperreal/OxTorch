@@ -496,9 +496,19 @@ def warmup():
     ti.sync()
     print("Kernels warmed up.")
 @ti.kernel
-def k_reduce_sum(X: ti.types.ndarray(), Out: ti.types.ndarray(), Total: int):
-    # Use f64 accumulator to prevent precision loss on massive tensors
-    acc = ti.f64(0.0)
+def k_reduce_sum(X: ti.types.ndarray(), Out: ti.types.ndarray(), Total: ti.i32):
+    acc = ti.f64(0.0) # HIGH PRECISION ACCUMULATOR
     for i in range(Total):
         acc += ti.f64(X[i])
-    Out[0] = acc # Return f64 to host
+    Out[0] = acc # Return f64 to host (host will cast if needed)
+
+@ti.kernel
+def k_unpack_int4(Packed: ti.types.ndarray(), Unpacked: ti.types.ndarray(), Total: ti.i32):
+    """Unpack 4-bit weights from 8-bit storage.
+    Packed: [B0_high:B0_low, B1_high:B1_low, ...] -> Unpacked: [B0_low, B0_high, B1_low, B1_high, ...]
+    """
+    ti.loop_config(block_dim=128)
+    for i in range(Total):
+        byte = ti.u8(Packed[i])
+        Unpacked[i*2]   = ti.f32(byte & 0x0F) - 8.0 # Range [-8, 7]
+        Unpacked[i*2+1] = ti.f32(byte >> 4) - 8.0

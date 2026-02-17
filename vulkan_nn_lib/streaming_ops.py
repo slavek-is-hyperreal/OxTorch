@@ -22,7 +22,7 @@ class TilePrefetcher:
     """Producer-consumer prefetcher for SSD tensors.
     Maximizes throughput by issuing parallel sequential background reads.
     """
-    def __init__(self, tensor, tile_len, look_ahead=4, num_consumers=1):
+    def __init__(self, tensor, tile_len, look_ahead=12, num_consumers=1):
         self.tensor = tensor
         self.tile_len = tile_len
         self.n = tensor.total_size
@@ -30,7 +30,7 @@ class TilePrefetcher:
         self.num_consumers = num_consumers
         self.queue = queue.Queue(maxsize=look_ahead)
         self.stop_event = threading.Event()
-        self.executor = ThreadPoolExecutor(max_workers=min(look_ahead, 4))
+        self.executor = ThreadPoolExecutor(max_workers=min(look_ahead, 12))
         self.thread = threading.Thread(target=self._orchestrator)
         self.thread.daemon = True
         self.thread.start()
@@ -42,6 +42,9 @@ class TilePrefetcher:
             for start in range(0, self.n, self.tile_len):
                 if self.stop_event.is_set(): break
                 end = min(start + self.tile_len, self.n)
+                
+                # DRAS: Wait if system RAM is critical before submitting NEW future
+                MemoryManager.wait_for_ram()
                 
                 # Submit read job
                 future = self.executor.submit(self._read_tile, start, end)
@@ -70,7 +73,15 @@ class TilePrefetcher:
     def _read_tile(self, start, end):
         try:
             # Explicitly copy to resident RAM
-            return (start, end, self.tensor.arr[start:end].copy())
+            raw = self.tensor.arr[start:end].copy()
+            if self.tensor.dtype == 'int4':
+                # Dequantize on-the-fly during prefetch
+                n = end - start
+                unpacked = np.zeros(n, dtype=np.float32)
+                unpacked[0::2] = (raw & 0x0F).astype(np.float32) - 8.0
+                unpacked[1::2] = ((raw >> 4) & 0x0F).astype(np.float32) - 8.0
+                return (start, end, unpacked)
+            return (start, end, raw)
         except Exception as e:
             print(f"  [TilePrefetcher] Read Error at {start}: {e}")
             return None
@@ -102,8 +113,8 @@ class SOE:
     def elementwise_op(a, b, op_type, out_device='auto', extra=None):
         """Adaptive component-wise op using ParallelTilePrefetcher and PyTorch backend."""
         n = a.total_size
-        item_size = np.dtype(a.dtype).itemsize
-        total_size_bytes = n * item_size
+        item_size = a.item_size
+        total_size_bytes = int(n * item_size)
         
         safe_budget = MemoryManager.get_safe_budget()
         
@@ -114,16 +125,18 @@ class SOE:
                 out_device = 'cpu'
             
         Tensor = get_tensor_class()
-        res = Tensor(None, shape=a.shape, device=out_device, dtype=a.dtype)
+        # Output is usually float32 for compute safety unless explicitly requested
+        res_dtype = a.dtype if a.dtype != 'int4' else np.float32
+        res = Tensor(None, shape=a.shape, device=out_device, dtype=res_dtype)
         
-        look_ahead = 4
+        look_ahead = 12
         total_overlap = SOE.MAX_THREADS + look_ahead
-        tile_len = max(1000, min(n, (safe_budget // (total_overlap * 3)) // item_size))
+        tile_len = max(1000, min(n, (safe_budget // total_overlap) // item_size))
 
         b_val = b
         b_is_cached = False
         if isinstance(b, Tensor):
-            if b.total_size * item_size < safe_budget * 0.2:
+            if b.total_size * b.item_size < safe_budget * 0.2:
                 b_val = b.to_numpy().flatten()
                 b_is_cached = True
             else:
@@ -278,17 +291,17 @@ class SOE:
     def elementwise_reduce(a, b, op_type, reduction_type='sum'):
         """High-performance fused op + reduction for SSD tensors."""
         n = a.total_size
-        item_size = np.dtype(a.dtype).itemsize
-        total_size_bytes = n * item_size
+        item_size = a.item_size
+        total_size_bytes = int(n * item_size)
         
         safe_budget = MemoryManager.get_safe_budget()
         vram_budget = MemoryManager.get_vram_budget()
         
-        look_ahead = 4
+        look_ahead = 12
         total_overlap = SOE.MAX_THREADS + look_ahead
         
         # Base tile fits in RAM
-        tile_len = max(1000, min(n, (safe_budget // (total_overlap * 3)) // item_size))
+        tile_len = max(1000, min(n, (safe_budget // total_overlap) // item_size))
         
         # If we want to use Vulkan, we must cap tile_len to VRAM budget 
         # (needs Space for A, B, Output in workspace)
@@ -301,7 +314,7 @@ class SOE:
         b_val = b
         b_is_cached = False
         if isinstance(b, get_tensor_class()):
-            if b.total_size * item_size < safe_budget * 0.2:
+            if b.total_size * b.item_size < safe_budget * 0.2:
                 b_val = b.to_numpy().flatten()
                 b_is_cached = True
             else:
@@ -447,7 +460,7 @@ class SOE:
     def sum(a):
         """OOM-safe tiled summation."""
         n = a.total_size
-        item_size = np.dtype(a.dtype).itemsize
+        item_size = a.item_size
         safe_budget = MemoryManager.get_safe_budget()
         tile_len = max(1000, min(n, (safe_budget // (SOE.MAX_THREADS * 2)) // item_size))
         
@@ -470,7 +483,12 @@ class SOE:
                 K.k_reduce_sum(ti_data, ti_res_scalar, len(tile_data))
                 tile_sum = float(ti_res_scalar.to_numpy()[0])
             else:
-                tile_sum = np.sum(tile_data)
+                torch = _get_torch()
+                if torch:
+                    t_tile = torch.from_numpy(tile_data)
+                    tile_sum = float(torch.sum(t_tile.to(torch.float64)).item())
+                else:
+                    tile_sum = np.sum(tile_data)
             with lock:
                 total_sum += tile_sum
 
@@ -492,7 +510,7 @@ class SOE:
         """Adaptive Parallel Block Matrix Multiplication."""
         M, K_dim = a.shape
         K2, N = b.shape
-        item_size = np.dtype(a.dtype).itemsize
+        item_size = a.item_size
         
         safe_budget = MemoryManager.get_safe_budget()
         out_size_bytes = M * N * item_size
@@ -503,7 +521,7 @@ class SOE:
         Tensor = get_tensor_class()
         res = Tensor(None, shape=(M, N), device=out_device, dtype=a.dtype)
         
-        b_size_bytes = b.total_size * item_size
+        b_size_bytes = b.total_size * b.item_size
         b_val = b.to_numpy() if b_size_bytes < safe_budget * 0.25 else b.arr
         
         remaining = safe_budget - (b_size_bytes if b_size_bytes < safe_budget * 0.25 else 0)
@@ -530,7 +548,7 @@ class SOE:
     def sgd_update(p, g, lr):
         """OOM-safe tiled SGD update."""
         n = p.total_size
-        item_size = np.dtype(p.dtype).itemsize
+        item_size = p.item_size
         safe_budget = MemoryManager.get_safe_budget()
         tile_len = max(1000, min(n, (safe_budget // (SOE.MAX_THREADS * 2)) // item_size))
         
@@ -550,7 +568,7 @@ class SOE:
     def adam_update(p, g, m, v, lr, b1, b2, eps, t):
         """OOM-safe tiled Adam update."""
         n = p.total_size
-        item_size = np.dtype(p.dtype).itemsize
+        item_size = p.item_size
         safe_budget = MemoryManager.get_safe_budget()
         tile_len = max(1000, min(n, (safe_budget // (SOE.MAX_THREADS * 4)) // item_size))
         
