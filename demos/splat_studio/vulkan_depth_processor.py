@@ -1,24 +1,25 @@
 import numpy as np
-from vulkan_nn import Tensor, Conv2D, ReLU, Sequential, Upsample2D, Module
+import vulkan_nn_lib as torch
+from vulkan_nn_lib import nn
 import time
 
-class VulkanDepthRefiner(Module):
+class VulkanDepthRefiner(nn.Module):
     """
     A simple 3-layer CNN for depth refinement running on Vulkan.
-    This demonstrates how to use VulkanNN to replace slow CPU loops.
+    Updated to use the VNN Legacy Edition (PyTorch replacement) engine.
     """
     def __init__(self):
         super().__init__()
-        self.net = Sequential(
-            Conv2D(1, 16, kernel_size=3), # Input: Low-res depth (1 channel)
-            ReLU(),
-            Conv2D(16, 16, kernel_size=3),
-            ReLU(),
-            Upsample2D(scale=2),
-            Conv2D(16, 1, kernel_size=3) # Output: Higher-res refined depth
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3), # Input: Low-res depth (1 channel)
+            nn.ReLU(),
+            nn.Conv2d(16, 16, kernel_size=3),
+            nn.ReLU(),
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(16, 1, kernel_size=3) # Output: Higher-res refined depth
         )
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
 def process_depth_vulkan(low_res_depth_np):
@@ -32,14 +33,14 @@ def process_depth_vulkan(low_res_depth_np):
     
     print(f"Uploading {h}x{w} depth map to Vulkan...")
     t_start = time.time()
-    x_tensor = Tensor(x_input)
+    x_tensor = torch.Tensor(x_input)
     
     # 2. Run Inference
     print("Running Vulkan-Accelerated Refinement...")
     model = VulkanDepthRefiner()
     
     # In a real scenario, we'd load weights here
-    # model.load_weights(...)
+    # model.load_state_dict(...)
     
     output_tensor = model(x_tensor)
     

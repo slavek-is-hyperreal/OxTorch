@@ -2,6 +2,7 @@ import numpy as np
 from ..tensor import Tensor
 from .base import Module
 from .. import kernels as K
+from .. import functional as F
 
 class Linear(Module):
     def __init__(self, in_features, out_features, bias=True):
@@ -24,20 +25,15 @@ class Linear(Module):
 
 class ReLU(Module):
     def forward(self, x: Tensor) -> Tensor:
-        return x.relu()
+        return F.relu(x)
 
 class SiLU(Module):
     def forward(self, x: Tensor) -> Tensor:
-        res = x.clone()
-        K.k_silu_1d(res.arr, res.total_size)
-        res._prev = {x}
-        res.requires_grad = x.requires_grad
-        def _backward():
-            if x.requires_grad:
-                if x.grad is None: x.zero_grad()
-                K.k_silu_backward(x.arr, res.grad.arr, x.grad.arr, x.total_size)
-        res._backward_fn = _backward
-        return res
+        return F.silu(x)
+
+class GELUTanh(Module):
+    def forward(self, x: Tensor) -> Tensor:
+        return F.gelu_tanh(x)
 
 class RMSNorm(Module):
     def __init__(self, dim, eps=1e-6, add_unit_offset=True):
@@ -71,35 +67,14 @@ class Softmax(Module):
         super().__init__()
         self.dim = dim
     def forward(self, x: Tensor) -> Tensor:
-        shape = x.shape
-        N = shape[-1]
-        M = x.total_size // N
-        res = Tensor(None, shape=shape)
-        K.k_softmax_1d(x.arr, res.arr, M, N)
-        res._prev = {x}
-        res.requires_grad = x.requires_grad
-        def _backward():
-            if x.requires_grad:
-                if x.grad is None: x.zero_grad()
-                K.k_softmax_backward(res.arr, res.grad.arr, x.grad.arr, M, N)
-        res._backward_fn = _backward
-        return res
+        return F.softmax(x, self.dim)
 
 class LeakyReLU(Module):
     def __init__(self, negative_slope=0.01):
         super().__init__()
         self.alpha = negative_slope
     def forward(self, x: Tensor) -> Tensor:
-        res = x.clone()
-        K.k_leaky_relu_1d(res.arr, res.total_size, self.alpha)
-        res._prev = {x}
-        res.requires_grad = x.requires_grad
-        def _backward():
-            if x.requires_grad:
-                if x.grad is None: x.zero_grad()
-                K.k_leaky_relu_backward(x.arr, res.grad.arr, x.grad.arr, x.total_size, self.alpha)
-        res._backward_fn = _backward
-        return res
+        return F.leaky_relu(x, self.alpha)
 
 class Conv2d(Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, bias=True):

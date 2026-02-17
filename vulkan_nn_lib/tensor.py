@@ -1,58 +1,149 @@
 import taichi as ti
 import numpy as np
 from . import kernels as K
+# Circular dependency avoidance: import SOE locally within methods
 
 class Tensor:
     """A wrapper around ti.ndarray for Vulkan NN operations with Autograd."""
-    def __init__(self, data=None, shape=None, requires_grad=False, device='vulkan'):
+    _tensor_store = None
+    _tensor_counter = 0
+
+    @classmethod
+    def setup_ssd_storage(cls, path="/vectorlegis_ssd_pool/vnn_cache"):
+        from .tensor_store import TensorStore
+        cls._tensor_store = TensorStore(path)
+
+    def _get_available_ram(self):
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                for line in f:
+                    if line.startswith('MemAvailable:'):
+                        return int(line.split()[1]) * 1024
+        except:
+            return 8 * 1024 * 1024 * 1024
+
+    def __init__(self, data=None, shape=None, requires_grad=False, device='auto', dtype=None):
         self._shape = shape
         self._requires_grad = False
         self._prev = set()
         self._backward_fn = None
         self.grad = None
-        self.device = device
         
+        # Dtype handling (PyTorch compatibility)
+        if dtype is None:
+            if isinstance(data, np.ndarray): dtype = data.dtype
+            elif isinstance(data, Tensor): dtype = data.dtype
+            else: dtype = np.float32 # Default
+        
+        # Map strings or torch-like dtypes to numpy
+        dtype_map = {
+            'float32': np.float32, 'float16': np.float16,
+            'int32': np.int32, 'int16': np.int16, 'int8': np.int8,
+            'float': np.float32, 'double': np.float64,
+            'long': np.int64, 'int': np.int32,
+            np.float32: np.float32, np.float16: np.float16,
+            np.int32: np.int32, np.int16: np.int16, np.int8: np.int8
+        }
+        self.dtype = dtype_map.get(dtype, dtype)
+        
+        # Item size for memory calculation
+        item_size = np.dtype(self.dtype).itemsize
+
+        # Initial size estimation
         if data is not None:
             if isinstance(data, np.ndarray):
                 self._shape = data.shape if shape is None else shape
-                self.np_arr = data.astype(np.float32).flatten()
             elif isinstance(data, (list, tuple)):
-                self.np_arr = np.array(data, dtype=np.float32).flatten()
                 self._shape = (len(data),) if shape is None else shape
-            elif isinstance(data, (Tensor, ti.Ndarray, np.ndarray)):
-                if isinstance(data, Tensor):
-                    self.arr = data.arr
-                    self._shape = data.shape
-                    self.device = data.device
-                    if self.device == 'ram' or self.device == 'cpu': self.np_arr = data.np_arr
-                elif isinstance(data, ti.Ndarray):
-                    self.arr = data
-                    self._shape = data.shape if shape is None else shape
-                    self.device = 'vulkan'
-                else: # numpy array
-                    self._shape = data.shape if shape is None else shape
-                    self.np_arr = data.astype(np.float32).flatten()
+            elif isinstance(data, Tensor):
+                self._shape = data.shape
+            elif isinstance(data, ti.Ndarray):
+                self._shape = data.shape if shape is None else shape
             else: # Scalar
-                self.np_arr = np.array([data], dtype=np.float32).flatten()
                 self._shape = (1,) if shape is None else shape
+        
+        n = self.total_size
+        size_bytes = n * item_size
+
+        # Auto-device selection
+        if device == 'auto':
+            # 1. Try Vulkan (only for float32 for now)
+            if self.dtype == np.float32 and size_bytes <= 128 * 1024 * 1024:
+                device = 'vulkan'
+            else:
+                avail = self._get_available_ram()
+                # 90% of available as threshold
+                if size_bytes <= avail * 0.9: 
+                    device = 'cpu'
+                else:
+                    device = 'ssd'
+
+        self.device = device
+        
+        # Calculate total size first
+        if data is not None:
+            if isinstance(data, np.ndarray):
+                self._shape = data.shape if shape is None else shape
+            elif isinstance(data, (list, tuple)):
+                self._shape = (len(data),) if shape is None else shape
+            elif isinstance(data, Tensor):
+                self._shape = data.shape
+            elif isinstance(data, ti.Ndarray):
+                self._shape = data.shape if shape is None else shape
+            else: # Scalar
+                self._shape = (1,) if shape is None else shape
+        
+        n = self.total_size
+
+        if device == 'ssd':
+            if Tensor._tensor_store is None:
+                Tensor.setup_ssd_storage()
+            name = f"t{Tensor._tensor_counter}"
+            Tensor._tensor_counter += 1
+            self.arr = Tensor._tensor_store.zeros(name, shape=(n,), dtype=self.dtype)
+            if data is not None:
+                # Optimized copy to SSD
+                print(f"  [Tensor] Initializing SSD tensor {name} ({n*item_size/1e6:.1f}MB, {self.dtype})...")
+                if isinstance(data, Tensor):
+                    self.arr[:] = data.to_numpy().flatten().astype(self.dtype)
+                elif isinstance(data, (np.ndarray, list, tuple)):
+                    self.arr[:] = np.array(data, dtype=self.dtype).flatten()
+                else: # scalar
+                    self.arr.fill(data)
+        elif data is not None:
+            if isinstance(data, np.ndarray):
+                self.np_arr = data.astype(self.dtype).flatten()
+            elif isinstance(data, (list, tuple)):
+                self.np_arr = np.array(data, dtype=self.dtype).flatten()
+            elif isinstance(data, Tensor):
+                self.arr = data.arr
+                self.device = data.device
+                if self.device in ['ram', 'cpu', 'ssd']: 
+                    self.np_arr = data.arr.flatten()
+            elif isinstance(data, ti.Ndarray):
+                self.np_arr = data.to_numpy().flatten().astype(self.dtype)
+                self._shape = data.shape if shape is None else shape
+                self.device = 'vulkan' # Default to vulkan if from ti.ndarray
+            else: # Scalar
+                self.np_arr = np.array([data], dtype=self.dtype).flatten()
             
             if self.device == 'vulkan':
                 if not hasattr(self, 'arr'):
-                    self.arr = ti.ndarray(dtype=ti.f32, shape=(self.total_size,))
+                    self.arr = ti.ndarray(dtype=ti.f32, shape=(n,))
                 if hasattr(self, 'np_arr'):
-                    self.arr.from_numpy(self.np_arr)
+                    self.arr.from_numpy(self.np_arr.astype(np.float32))
                     ti.sync()
-                    # Forced round-trip to guarantee synchronization
-                    _ = self.arr.to_numpy()
             else: # device == 'ram' or 'cpu'
-                if hasattr(self, 'np_arr'): self.arr = self.np_arr
-                else: self.arr = np.zeros(self.total_size, dtype=np.float32)
+                if hasattr(self, 'np_arr'): 
+                    # Reuse np_arr directly to avoid copy
+                    self.arr = self.np_arr
+                else: 
+                    self.arr = np.zeros(n, dtype=self.dtype)
         else:
             if self.device == 'vulkan':
-                if not hasattr(self, 'arr'):
-                    self.arr = ti.ndarray(dtype=ti.f32, shape=(self.total_size,))
-            else:
-                self.arr = np.zeros(self.total_size, dtype=np.float32)
+                self.arr = ti.ndarray(dtype=ti.f32, shape=(n,))
+            else: # ram/cpu
+                self.arr = np.zeros(n, dtype=self.dtype)
 
         self.requires_grad = requires_grad
 
@@ -64,14 +155,18 @@ class Tensor:
         self._requires_grad = val
         if val and self.grad is None: self.zero_grad()
 
+    def zero_(self):
+        """In-place zeroing of the tensor."""
+        if self.device == 'vulkan':
+            K.k_zero(self.arr, self.total_size)
+            ti.sync()
+        else:
+            self.arr.fill(0.0)
+
     def zero_grad(self):
         if self.grad is None:
             self.grad = Tensor(None, shape=self.shape, device=self.device)
-        if self.device == 'vulkan':
-            K.k_zero(self.grad.arr, self.total_size)
-            ti.sync()
-        else:
-            self.grad.arr.fill(0.0)
+        self.grad.zero_()
 
     def backward(self, grad=None):
         if grad is None:
@@ -127,7 +222,15 @@ class Tensor:
     def shape(self, val): self._shape = val
 
     def clone(self):
-        new_t = Tensor(None, shape=self.shape)
+        new_t = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
+        if self.device == 'ssd':
+            # Tiled copy for SSD to avoid Taichi/VRAM allocation errors
+            n = self.total_size
+            chunk = 128 * 1024 * 1024 # 128M elements
+            for i in range(0, n, chunk):
+                end = min(i + chunk, n)
+                new_t.arr[i:end] = self.arr[i:end]
+            return new_t
         K.k_copy(self.arr, new_t.arr, self.total_size)
         if self.device == 'vulkan': ti.sync()
         return new_t
@@ -167,6 +270,9 @@ class Tensor:
         return res
 
     def matmul(self, other):
+        if self.device == 'ssd' or other.device == 'ssd':
+            from . import streaming_ops as SOE
+            return SOE.SOE.matmul(self, other)
         M, K_dim = self.shape
         K2, N = other.shape
         res = Tensor(None, shape=(M, N))
@@ -188,8 +294,11 @@ class Tensor:
         return res
 
     def __add__(self, other):
-        if not isinstance(other, Tensor): other = Tensor(other, shape=self.shape)
-        res = Tensor(None, shape=self.shape)
+        if not isinstance(other, Tensor): other = Tensor(other, shape=self.shape, dtype=self.dtype)
+        if self.device == 'ssd' or other.device == 'ssd':
+            from . import streaming_ops as SOE
+            return SOE.SOE.elementwise_op(self, other, 'add')
+        res = Tensor(None, shape=self.shape, dtype=self.dtype)
         K.k_copy(self.arr, res.arr, self.total_size)
         K.k_add(res.arr, other.arr, res.total_size, other.total_size)
         if self.device == 'vulkan': ti.sync()
@@ -213,8 +322,11 @@ class Tensor:
         return res
 
     def __sub__(self, other):
-        if not isinstance(other, Tensor): other = Tensor(other, shape=self.shape)
-        res = Tensor(None, shape=self.shape)
+        if not isinstance(other, Tensor): other = Tensor(other, shape=self.shape, dtype=self.dtype)
+        if self.device == 'ssd' or other.device == 'ssd':
+            from . import streaming_ops as SOE
+            return SOE.SOE.elementwise_op(self, other, 'sub')
+        res = Tensor(None, shape=self.shape, dtype=self.dtype)
         K.k_copy(self.arr, res.arr, self.total_size)
         K.k_sub(res.arr, other.arr, res.total_size, other.total_size)
         if self.device == 'vulkan': ti.sync()
@@ -239,6 +351,9 @@ class Tensor:
     def __mul__(self, other):
         if not isinstance(other, Tensor):
             val = float(other)
+            if self.device == 'ssd':
+                from . import streaming_ops as SOE
+                return SOE.SOE.elementwise_op(self, val, 'mul')
             res = self.clone()
             K.k_scale(res.arr, val, res.total_size)
             if self.device == 'vulkan': ti.sync()
@@ -246,10 +361,14 @@ class Tensor:
             res.requires_grad = self.requires_grad
             def _backward():
                 if self.requires_grad:
+                    if self.grad is None: self.zero_grad()
                     K.k_scale_backward(res.grad.arr, val, self.grad.arr, self.total_size)
                     if self.device == 'vulkan': ti.sync()
             res._backward_fn = _backward
             return res
+        if self.device == 'ssd' or other.device == 'ssd':
+            from . import streaming_ops as SOE
+            return SOE.SOE.elementwise_op(self, other, 'mul')
         res = self.clone()
         K.k_mul(res.arr, other.arr, res.total_size, other.total_size)
         if self.device == 'vulkan': ti.sync()
@@ -275,6 +394,9 @@ class Tensor:
     def __truediv__(self, other):
         if not isinstance(other, Tensor):
             val = float(other)
+            if self.device == 'ssd':
+                from . import streaming_ops as SOE
+                return SOE.SOE.elementwise_op(self, val, 'div')
             res = self.clone()
             K.k_scale(res.arr, 1.0 / val, res.total_size)
             if self.device == 'vulkan': ti.sync()
@@ -282,10 +404,14 @@ class Tensor:
             res.requires_grad = self.requires_grad
             def _backward():
                 if self.requires_grad:
+                    if self.grad is None: self.zero_grad()
                     K.k_scale_backward(res.grad.arr, 1.0 / val, self.grad.arr, self.total_size)
                     if self.device == 'vulkan': ti.sync()
             res._backward_fn = _backward
             return res
+        if self.device == 'ssd' or other.device == 'ssd':
+            from . import streaming_ops as SOE
+            return SOE.SOE.elementwise_op(self, other, 'div')
         res = self.clone()
         K.k_div(res.arr, other.arr, res.total_size, other.total_size)
         if self.device == 'vulkan': ti.sync()

@@ -4,7 +4,7 @@ from ..tensor import Tensor
 from .base import Module, ModuleList
 from .layers import Linear, RMSNorm, Embedding, Softmax
 from .tiled import MatFormerLinear, TiledEmbedding
-from ..functional import GELUTanh
+from .layers import Linear, RMSNorm, Embedding, GELUTanh, SiLU, Softmax
 from .. import kernels as K
 
 class RoPE(Module):

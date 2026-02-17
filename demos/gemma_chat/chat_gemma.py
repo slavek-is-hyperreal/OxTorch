@@ -14,8 +14,9 @@ class GemmaChat:
         print(f"--- Initializing Gemma 3n {model_type.upper()} on Vulkan ---")
         self.model_type = model_type
         
-        # Load tokenizer from local weights directory to avoid gated repo issues
-        weights_dir_raw = f"weights_gemma_3n" if model_type == "e4b" else "weights_gemma_3n_e2b"
+        # Load tokenizer from local weights directory
+        base_weights = os.path.join(os.path.dirname(__file__), "weights")
+        weights_dir_raw = os.path.join(base_weights, f"weights_gemma_3n" if model_type == "e4b" else "weights_gemma_3n_e2b")
         print(f"Loading tokenizer from {weights_dir_raw}...")
         self.tokenizer = AutoTokenizer.from_pretrained(weights_dir_raw, local_files_only=True)
         print("Tokenizer loaded successfully.")
@@ -71,9 +72,10 @@ class GemmaChat:
         print("Model architecture built.")
         
         # 2. Load Weights from Binaries
-        weights_dir = f"vulkan_nn_lib/weights/gemma_3n_{model_type}"
+        weights_dir = os.path.join(os.path.dirname(__file__), "weights", f"gemma_3n_{model_type}")
         if not os.path.exists(weights_dir):
-            weights_dir = "vulkan_nn_lib/weights/gemma_3n"
+            # Fallback to subdirectory inside weights_dir_raw if binaries are there
+            weights_dir = os.path.join(weights_dir_raw, "vnn_weights")
             
         print(f"Loading weights from {weights_dir}...")
         self.load_weights(weights_dir)

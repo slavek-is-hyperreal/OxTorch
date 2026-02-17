@@ -20,21 +20,27 @@ def k_add(A: ti.types.ndarray(), B: ti.types.ndarray(), size: int, size_b: int):
         A[i] += B[i % size_b]
 
 @ti.kernel
-def k_sgd_step(p: ti.types.ndarray(), g: ti.types.ndarray(), lr: float, size: int):
+def k_sgd(p: ti.types.ndarray(), g: ti.types.ndarray(), lr: float, size: int):
     for i in range(size):
         p[i] -= lr * g[i]
 
+k_sgd_step = k_sgd
+
 @ti.kernel
-def k_adam_step(p: ti.types.ndarray(), g: ti.types.ndarray(), m: ti.types.ndarray(), v: ti.types.ndarray(),
+def k_adam(p: ti.types.ndarray(), g: ti.types.ndarray(), m: ti.types.ndarray(), v: ti.types.ndarray(),
                 lr: float, b1: float, b2: float, eps: float, t: int, size: int):
-    b1_t = 1.0 - pow(b1, float(t))
-    b2_t = 1.0 - pow(b2, float(t))
-    alpha = lr * ti.sqrt(b2_t) / b1_t
+    b1_corr = 1.0 - pow(b1, float(t))
+    b2_corr = 1.0 - pow(b2, float(t))
     
     for i in range(size):
         m[i] = b1 * m[i] + (1.0 - b1) * g[i]
         v[i] = b2 * v[i] + (1.0 - b2) * g[i] * g[i]
-        p[i] -= alpha * m[i] / (ti.sqrt(v[i]) + eps)
+        m_hat = m[i] / b1_corr
+        v_hat = v[i] / b2_corr
+        p[i] -= lr * m_hat / (ti.sqrt(v_hat) + eps)
+
+k_adam_step = k_adam
+k_adam_hybrid = k_adam
 
 @ti.kernel
 def k_sub(A: ti.types.ndarray(), B: ti.types.ndarray(), Total: int, B_Total: int):
@@ -344,7 +350,7 @@ def k_pool2d_1d(X: ti.types.ndarray(), Out: ti.types.ndarray(), b: int, c: int, 
         for ikh, ikw in ti.ndrange(s, s):
             val = X[((ib * c + ic) * h + (ioh * s + ikh)) * w + (iow * s + ikw)]
             if val > max_val: max_val = val
-        Out[((ib * ic + ic) * oh + ioh) * ow + iow] = max_val
+        Out[((ib * c + ic) * oh + ioh) * ow + iow] = max_val
 
 @ti.kernel
 def k_upsample2d_1d(X: ti.types.ndarray(), Out: ti.types.ndarray(), b: int, c: int, h: int, w: int, s: int):
@@ -436,4 +442,6 @@ def warmup():
     dummy = ti.ndarray(ti.f32, shape=(1,))
     k_zero(dummy, 1)
     k_add(dummy, dummy, 1, 1)
+    k_adam(dummy, dummy, dummy, dummy, 1.0, 0.9, 0.999, 1e-8, 1, 1)
+    ti.sync()
     print("Kernels warmed up.")

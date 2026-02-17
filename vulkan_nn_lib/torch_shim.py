@@ -1,94 +1,135 @@
-import sys
-import types
-from . import core as vnn
 import numpy as np
+from .tensor import Tensor
+from . import optimizers as optim
+from . import functional as F
+from .modules import base, layers, tiled
+from concurrent.futures import ThreadPoolExecutor
+import time
 
-# 1. Create real module objects for the shim
-torch = types.ModuleType("torch")
-nn = types.ModuleType("torch.nn")
-functional = types.ModuleType("torch.nn.functional")
-optim = types.ModuleType("torch.optim")
+# Dtype Aliases
+float32 = np.float32
+float16 = np.float16
+int32 = np.int32
+int16 = np.int16
+int8 = np.int8
+long = np.int64
+int = np.int32
+double = np.float64
 
-# 2. Populate functional (torch.nn.functional)
-functional.relu = lambda x, inplace=False: x.relu()
-functional.leaky_relu = vnn.F.leaky_relu
-functional.max_pool2d = vnn.F.max_pool2d
-functional.gelu = lambda x, approximate=None: x.silu() if approximate is None else vnn.GELUTanh()(x)
-functional.silu = lambda x: x.silu()
-functional.softmax = lambda x, dim=-1: vnn.Softmax(dim)(x)
-functional.linear = lambda x, w, b=None: vnn.Linear(w.shape[1], w.shape[0])(x).from_numpy(w.to_numpy())
-functional.embedding = lambda x, w: vnn.Embedding(w.shape[0], w.shape[1])(x).from_numpy(w.to_numpy())
-functional.rms_norm = lambda x, w, eps=1e-6: vnn.RMSNorm(w.shape[0], eps=eps)(x)
+# Device Shim
+class cuda:
+    @staticmethod
+    def is_available(): return True # We use Vulkan, but torch scripts ask this
+    @staticmethod
+    def device_count(): return 1
 
-# 3. Populate optim
-optim.SGD = vnn.SGD
-optim.Adam = vnn.Adam
+# nn subpackage
+class NN:
+    Module = base.Module
+    ModuleList = base.ModuleList
+    Sequential = base.Sequential
+    Linear = layers.Linear
+    ReLU = layers.ReLU
+    SiLU = layers.SiLU
+    RMSNorm = layers.RMSNorm
+    Softmax = layers.Softmax
+    Embedding = layers.Embedding
+    # Tiled variants
+    TiledLinear = tiled.TiledLinear
+    TiledEmbedding = tiled.TiledEmbedding
 
-# 4. Populate nn (torch.nn)
-nn.Module = vnn.Module
-nn.Linear = vnn.Linear
-nn.TiledLinear = vnn.TiledLinear
-nn.Conv2d = vnn.Conv2d
-nn.ReLU = vnn.ReLU
-nn.LeakyReLU = vnn.LeakyReLU
-nn.GELUTanh = vnn.GELUTanh
-nn.Softmax = vnn.Softmax
-nn.RMSNorm = vnn.RMSNorm
-nn.Embedding = vnn.Embedding
-nn.MaxPool2d = vnn.MaxPool2d
-nn.Upsample = vnn.Upsample
-nn.Sequential = vnn.Sequential
-nn.ModuleList = vnn.ModuleList
+nn = NN()
 
-class Parameter(vnn.Tensor):
-    def __new__(cls, data, requires_grad=True):
-        if isinstance(data, vnn.Tensor):
-            data.requires_grad = requires_grad
-            data.__class__ = cls
-            return data
-        return vnn.Tensor(data, requires_grad=requires_grad)
-nn.Parameter = Parameter
-nn.functional = functional
+# Factory Functions
+def tensor(data, dtype=None, device='auto', requires_grad=False):
+    return Tensor(data, dtype=dtype, device=device, requires_grad=requires_grad)
 
-# 5. Populate torch
-torch.nn = nn
-torch.optim = optim
-torch.Tensor = vnn.Tensor
-torch.from_numpy = lambda x: vnn.Tensor(x, requires_grad=False)
-torch.as_tensor = lambda x, **kw: vnn.Tensor(x)
-torch.load = lambda path, **kwargs: np.load(path, allow_pickle=True).item() if path.endswith(".npy") else {}
-torch.device = lambda name: name
-torch.float32 = vnn.ti.f32
-torch.float16 = vnn.ti.f32
-torch.float = vnn.ti.f32
-torch.int64 = vnn.ti.i32
-torch.int32 = vnn.ti.i32
-torch.bool = vnn.ti.i32
+def from_numpy(np_array):
+    return Tensor(np_array)
+def _should_stream(size, dtype, device):
+    if device == 'ssd': return True
+    if device == 'auto':
+        n = 1
+        for s in size: n *= s
+        item_size = np.dtype(dtype if dtype else np.float32).itemsize
+        # If > 512MB, check if we should go to SSD
+        if n * item_size > 512 * 1024 * 1024:
+            from .tensor import Tensor
+            # We don't want to import Tensor at top level due to circularity if not careful
+            # but here it's fine.
+            return True
+    return False
 
-torch.rsqrt = lambda x: x.pow(-0.5)
-torch.sqrt = lambda x: x.sqrt()
-torch.tanh = lambda x: x.tanh()
-torch.matmul = lambda a, b: a @ b
-torch.cat = vnn.Tensor.cat
-torch.stack = lambda ts, dim=0: vnn.Tensor.cat([t.unsqueeze(dim) for t in ts], dim=dim)
+def zeros(*size, dtype=None, device='auto', requires_grad=False):
+    if len(size) == 1 and isinstance(size[0], (list, tuple)): size = size[0]
+    if _should_stream(size, dtype, device):
+        t = Tensor(None, shape=size, dtype=dtype, device='ssd', requires_grad=requires_grad)
+        # Tensor(None) is already zeroed by TensorStore.zeros()
+        return t
+    return Tensor(np.zeros(size, dtype=np.float32 if dtype is None else dtype), 
+                  dtype=dtype, device=device, requires_grad=requires_grad)
 
-class NoGrad:
-    def __enter__(self): pass
-    def __exit__(self, *a): pass
-torch.no_grad = lambda: NoGrad()
+def ones(*size, dtype=None, device='auto', requires_grad=False):
+    if len(size) == 1 and isinstance(size[0], (list, tuple)): size = size[0]
+    if _should_stream(size, dtype, device):
+        t = Tensor(None, shape=size, dtype=dtype, device='ssd', requires_grad=requires_grad)
+        # Parallel chunked fill with 1.0
+        n = t.total_size
+        chunk = 128 * 1024 * 1024 # 128M elements
+        print(f"  [Factory] Parallel initializing SSD 'ones' ({n*np.dtype(t.dtype).itemsize/1e6:.1f}MB)...")
+        t0 = time.perf_counter()
+        
+        def fill_chunk(start, end):
+            t.arr[start:end] = 1.0
 
-def hijack_torch():
-    sys.modules['torch'] = torch
-    sys.modules['torch.nn'] = nn
-    sys.modules['torch.nn.functional'] = functional
-    sys.modules['torch.optim'] = optim
-    print("VulkanTorch: Global Hijack Active (including Optimizers)!")
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            offsets = range(0, n, chunk)
+            for start in offsets:
+                end = min(start + chunk, n)
+                executor.submit(fill_chunk, start, end)
+        
+        print(f"    Done in {time.perf_counter()-t0:.2f}s")
+        return t
+    return Tensor(np.ones(size, dtype=np.float32 if dtype is None else dtype), 
+                  dtype=dtype, device=device, requires_grad=requires_grad)
 
-F = functional
-Tensor = vnn.Tensor
-from_numpy = torch.from_numpy
-no_grad = torch.no_grad
-load = torch.load
-device = torch.device
+def randn(*size, dtype=None, device='auto', requires_grad=False):
+    if len(size) == 1 and isinstance(size[0], (list, tuple)): size = size[0]
+    if _should_stream(size, dtype, device):
+        t = Tensor(None, shape=size, dtype=dtype, device='ssd', requires_grad=requires_grad)
+        n = t.total_size
+        chunk = 32 * 1024 * 1024
+        print(f"  [Factory] Parallel initializing SSD 'randn' ({n*np.dtype(t.dtype).itemsize/1e6:.1f}MB)...")
+        t0 = time.perf_counter()
+        
+        def fill_chunk(start, end):
+            t.arr[start:end] = np.random.randn(end-start).astype(t.dtype)
 
-print("VulkanTorch: Shim loaded. Use hijack_torch() for training & inference.")
+        # Note: np.random is not truly thread-safe for high speed, 
+        # but for initialization it's okay or we use one seed per thread.
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            offsets = range(0, n, chunk)
+            for start in offsets:
+                end = min(start + chunk, n)
+                executor.submit(fill_chunk, start, end)
+        
+        print(f"    Done in {time.perf_counter()-t0:.2f}s")
+        return t
+    return Tensor(np.random.randn(*size).astype(np.float32 if dtype is None else dtype), 
+                  dtype=dtype, device=device, requires_grad=requires_grad)
+
+def arange(end, dtype=None, device='auto'):
+    return Tensor(np.arange(end, dtype=np.float32 if dtype is None else dtype),
+                  dtype=dtype, device=device)
+
+# Global settings
+def manual_seed(s):
+    np.random.seed(s)
+
+def patch_pytorch():
+    """Nuclear option: Replace torch in sys.modules."""
+    import sys
+    sys.modules['torch'] = sys.modules['vulkan_nn_lib.torch_shim']
+    sys.modules['torch.nn'] = sys.modules['vulkan_nn_lib.torch_shim'].nn
+    sys.modules['torch.nn.functional'] = sys.modules['vulkan_nn_lib.functional']
+    sys.modules['torch.optim'] = sys.modules['vulkan_nn_lib.optimizers']
