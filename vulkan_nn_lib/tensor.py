@@ -431,6 +431,9 @@ class Tensor:
         if self.device == 'ssd' or other.device == 'ssd':
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'add')
+        elif self.device == 'cpu' or self.device == 'ram':
+            res_np = self.to_numpy() + other.to_numpy()
+            res = Tensor(res_np, device=self.device, dtype=self.dtype)
         else:
             res = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
             K.k_copy(self.arr, res.arr, self.total_size)
@@ -456,6 +459,9 @@ class Tensor:
         if self.device == 'ssd' or other.device == 'ssd':
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'sub')
+        elif self.device == 'cpu' or self.device == 'ram':
+            res_np = self.to_numpy() - other.to_numpy()
+            res = Tensor(res_np, device=self.device, dtype=self.dtype)
         else:
             res = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
             K.k_copy(self.arr, res.arr, self.total_size)
@@ -481,6 +487,9 @@ class Tensor:
         if self.device == 'ssd' or other.device == 'ssd':
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'mul')
+        elif self.device == 'cpu' or self.device == 'ram':
+            res_np = self.to_numpy() * other.to_numpy()
+            res = Tensor(res_np, device=self.device, dtype=self.dtype)
         else:
             res = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
             K.k_copy(self.arr, res.arr, self.total_size)
@@ -508,6 +517,9 @@ class Tensor:
         if self.device == 'ssd' or other.device == 'ssd':
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'div')
+        elif self.device == 'cpu' or self.device == 'ram':
+            res_np = self.to_numpy() / other.to_numpy()
+            res = Tensor(res_np, device=self.device, dtype=self.dtype)
         else:
             res = Tensor(None, shape=self.shape, device=self.device, dtype=self.dtype)
             K.k_copy(self.arr, res.arr, self.total_size)

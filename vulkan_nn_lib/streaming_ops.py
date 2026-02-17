@@ -31,14 +31,11 @@ class SOE:
         n = a.total_size
         item_size = np.dtype(a.dtype).itemsize
         total_size_bytes = n * item_size
-        
-        # 1. Adaptive Budgeting
         avail_ram = _get_available_ram()
         safe_budget = int(avail_ram * SOE.RAM_SAFETY_MARGIN)
         
         # We want to fill the budget with active tiles.
         # Each "active" tile needs A_ram + B_ram + Out_ram.
-        # Reduced divisor (2 instead of 3) to be more aggressive
         tile_len = max(1000, min(n, (safe_budget // (SOE.MAX_THREADS * 2)) // item_size))
         
         # Decide output device
@@ -50,7 +47,6 @@ class SOE:
             
         Tensor = get_tensor_class()
         res = Tensor(None, shape=a.shape, device=out_device, dtype=a.dtype)
-        
         # 2. Strategy: Load full B into RAM if it fits 50% of budget
         # Otherwise, B will stay as memmap (OS-level paging)
         b_val = b
@@ -73,11 +69,12 @@ class SOE:
             
             if isinstance(b, Tensor):
                 if b.total_size == 1:
-                    b_ram = b.to_numpy()[0]
+                    # Scalar broadcast
+                    b_ram = float(b.to_numpy().flatten()[0])
                 elif b_is_cached:
-                    b_ram = b_val[start:end] # b_val is already in RAM
+                    b_ram = b_val[start:end]
                 else:
-                    b_ram = b_val[start:end].copy() # Force slice to RAM
+                    b_ram = b_val[start:end].copy()
             else:
                 b_ram = b_val
             
@@ -104,18 +101,25 @@ class SOE:
                 # a_ram: data, b_ram: mask, extra: value
                 out_ram[:] = a_ram
                 out_ram[b_ram > 0.5] = extra
-            
+                
             # 3. Write back to SSD/Disk (memmap)
             res.arr[start:end] = out_ram
 
         offsets = range(0, n, tile_len)
+        total_tiles = len(offsets)
+        futures = []
+        
         with ThreadPoolExecutor(max_workers=SOE.MAX_THREADS) as executor:
-            # We use a sliding window of futures to control memory precisely
             for i, start in enumerate(offsets):
                 end = min(start + tile_len, n)
-                executor.submit(process_tile, start, end)
-        
-        print(f"    Done in {time.perf_counter()-t0:.2f}s")
+                futures.append(executor.submit(process_tile, start, end))
+                
+        # CRITICAL: Wait for all processing to finish and catch errors
+        for f in futures:
+            f.result()
+            
+        import sys
+        sys.stdout.flush()
         return res
 
     @staticmethod
