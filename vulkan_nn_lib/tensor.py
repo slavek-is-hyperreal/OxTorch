@@ -141,7 +141,7 @@ class Tensor:
         elif data is not None:
             if self.dtype == 'int4':
                 # Packed in-RAM
-                val = np.array(data, dtype=np.int8).flatten()
+                val = (np.array(data, dtype=np.float32).flatten() + 8.0).clip(0, 15).astype(np.uint8)
                 self.np_arr = (val[0::2] & 0x0F) | ((val[1::2] & 0x0F) << 4)
             elif isinstance(data, np.ndarray):
                 if data.dtype == self.dtype:
@@ -307,13 +307,22 @@ class Tensor:
 
     def to_numpy(self):
         """Unified data retrieval."""
+        if self.dtype == 'int4':
+            # Unpack bytes to f32
+            n = self.total_size
+            unpacked = np.zeros(n, dtype=np.float32)
+            packed = self.arr
+            unpacked[0::2] = (packed & 0x0F).astype(np.float32) - 8.0
+            unpacked[1::2] = ((packed >> 4) & 0x0F).astype(np.float32) - 8.0
+            return unpacked.reshape(self.shape)
+
         if self.device == 'vulkan':
             if not hasattr(self.arr, 'to_numpy'):
                 # Fallback if device set to vulkan but data still on CPU
                 return self.arr.reshape(self.shape)
             ti.sync()
             return self.arr.to_numpy().reshape(self.shape)
-        
+
         # CPU Mode: self.arr is already a numpy array
         if isinstance(self.arr, np.ndarray):
             return self.arr.reshape(self.shape)

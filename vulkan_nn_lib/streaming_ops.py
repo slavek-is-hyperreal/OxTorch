@@ -28,7 +28,8 @@ class TilePrefetcher:
         self.n = tensor.total_size
         # For Greedy Mode, look_ahead is effectively dynamic based on RAM
         self.num_consumers = num_consumers
-        self.queue = queue.Queue() # Unbounded for greedy prefetching
+        # Set maxsize to look_ahead or a safe default to prevent unbounded RAM usage
+        self.queue = queue.Queue(maxsize=look_ahead or 4) 
         self.stop_event = threading.Event()
         self.executor = ThreadPoolExecutor(max_workers=12) # Saturate ZFS RAID-0
         self.thread = threading.Thread(target=self._orchestrator)
@@ -464,29 +465,50 @@ class SOE:
                 process_tile_vulkan(start, end, a_ram)
 
         if use_hybrid:
+            futures = []
             with ThreadPoolExecutor(max_workers=SOE.MAX_THREADS - 1) as cpu_executor:
                 g_thread = threading.Thread(target=gpu_worker)
                 g_thread.start()
                 while True:
+                    while len(futures) >= SOE.MAX_THREADS * 2:
+                        f = futures.pop(0)
+                        f.result()
+
                     item = prefetcher_a.get_tile()
                     if item is None: break
                     start, end, a_ram = item
-                    cpu_executor.submit(process_tile_cpu, start, end, a_ram)
+                    futures.append(cpu_executor.submit(process_tile_cpu, start, end, a_ram))
+                
+                for f in futures: f.result()
                 g_thread.join()
         elif use_vulkan:
+            futures = []
             with ThreadPoolExecutor(max_workers=1) as executor:
                 while True:
+                    while len(futures) >= 4:
+                        f = futures.pop(0)
+                        f.result()
+
                     item = prefetcher_a.get_tile()
                     if item is None: break
                     start, end, a_ram = item
-                    executor.submit(process_tile_vulkan, start, end, a_ram)
+                    futures.append(executor.submit(process_tile_vulkan, start, end, a_ram))
+                
+                for f in futures: f.result()
         else:
+            futures = []
             with ThreadPoolExecutor(max_workers=SOE.MAX_THREADS) as executor:
                 while True:
+                    while len(futures) >= SOE.MAX_THREADS * 2:
+                        f = futures.pop(0)
+                        f.result()
+
                     item = prefetcher_a.get_tile()
                     if item is None: break
                     start, end, a_ram = item
-                    executor.submit(process_tile_cpu, start, end, a_ram)
+                    futures.append(executor.submit(process_tile_cpu, start, end, a_ram))
+                
+                for f in futures: f.result()
                 
         if reduction_type == 'mean':
             total_sum /= n
@@ -537,12 +559,21 @@ class SOE:
 
                 t0 = time.perf_counter()
                 print(f"  [DRAS v4] Tiled Sum on {n*item_size/1e6:.1f}MB (MaxUsage: {MemoryManager.MAX_TOTAL_USAGE_PCT*100:.0f}%)")
+                futures = []
                 with ThreadPoolExecutor(max_workers=SOE.MAX_THREADS) as executor:
                     while True:
+                        # Manage backpressure on submitted tasks
+                        while len(futures) >= SOE.MAX_THREADS * 2:
+                            f = futures.pop(0)
+                            f.result()
+
                         item = prefetcher.get_tile()
                         if item is None: break
                         _, _, a_ram = item
-                        executor.submit(reduce_tile, a_ram)
+                        futures.append(executor.submit(reduce_tile, a_ram))
+                
+                # Wait for remaining
+                for f in futures: f.result()
                 
                 t_end = time.perf_counter()
                 final_speed = (n * item_size / (t_end - t0)) / 1e6

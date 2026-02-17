@@ -87,7 +87,8 @@ def main():
     print("=== VNN COMPREHENSIVE VERIFICATION MATRIX (Standardized Data) ===")
     
     # Setup SSD Cache
-    Tensor.setup_ssd_storage("/vectorlegis_ssd_pool/vnn_cache")
+    cache_path = os.path.join(os.getcwd(), ".vnn_cache_bench")
+    Tensor.setup_ssd_storage(cache_path)
     
     # 1. 128MB (RAM) - CPU Baseline
     run_bench("Small-RAM-CPU", 128*1024*1024, 'cpu', 'sum')
