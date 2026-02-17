@@ -9,7 +9,19 @@ class Linear(Module):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.weight = Tensor(np.random.randn(in_features, out_features).astype(np.float32) * 0.02, requires_grad=True)
+        
+        # Virtual Initialization: Choose device based on size
+        from ..torch_shim import _should_stream
+        device = 'ssd' if _should_stream((in_features, out_features), 'float32', 'auto') else 'cpu'
+        
+        if device == 'ssd':
+            # Create on SSD directly with random values (using our SSD factory)
+            # Actually, for now let's just use zeros or a dedicated random factory
+            from .. import torch_shim as vtorch
+            self.weight = vtorch.randn(in_features, out_features, device='ssd', requires_grad=True)
+        else:
+            self.weight = Tensor(np.random.randn(in_features, out_features).astype(np.float32) * 0.02, requires_grad=True)
+            
         self.has_bias = bias
         if bias:
             self.bias = Tensor(np.zeros(out_features, dtype=np.float32), requires_grad=True)
@@ -118,7 +130,14 @@ class Upsample(Module):
 class Embedding(Module):
     def __init__(self, num_embeddings, embedding_dim):
         super().__init__()
-        self.weight = Tensor(np.random.randn(num_embeddings, embedding_dim).astype(np.float32) * 0.02, requires_grad=True)
+        from ..torch_shim import _should_stream
+        device = 'ssd' if _should_stream((num_embeddings, embedding_dim), 'float32', 'auto') else 'cpu'
+        
+        if device == 'ssd':
+            from .. import torch_shim as vtorch
+            self.weight = vtorch.randn(num_embeddings, embedding_dim, device='ssd', requires_grad=True)
+        else:
+            self.weight = Tensor(np.random.randn(num_embeddings, embedding_dim).astype(np.float32) * 0.02, requires_grad=True)
 
     def forward(self, x: Tensor) -> Tensor:
         B, L = x.shape

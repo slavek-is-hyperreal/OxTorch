@@ -58,6 +58,36 @@ def k_div(A: ti.types.ndarray(), B: ti.types.ndarray(), Total: int, B_Total: int
         A[i] /= B[i % B_Total]
 
 @ti.kernel
+def k_gt(A: ti.types.ndarray(), B: ti.types.ndarray(), Out: ti.types.ndarray(), Total: int, B_Total: int):
+    for i in range(Total):
+        Out[i] = 1.0 if A[i] > B[i % B_Total] else 0.0
+
+@ti.kernel
+def k_lt(A: ti.types.ndarray(), B: ti.types.ndarray(), Out: ti.types.ndarray(), Total: int, B_Total: int):
+    for i in range(Total):
+        Out[i] = 1.0 if A[i] < B[i % B_Total] else 0.0
+
+@ti.kernel
+def k_ge(A: ti.types.ndarray(), B: ti.types.ndarray(), Out: ti.types.ndarray(), Total: int, B_Total: int):
+    for i in range(Total):
+        Out[i] = 1.0 if A[i] >= B[i % B_Total] else 0.0
+
+@ti.kernel
+def k_le(A: ti.types.ndarray(), B: ti.types.ndarray(), Out: ti.types.ndarray(), Total: int, B_Total: int):
+    for i in range(Total):
+        Out[i] = 1.0 if A[i] <= B[i % B_Total] else 0.0
+
+@ti.kernel
+def k_eq(A: ti.types.ndarray(), B: ti.types.ndarray(), Out: ti.types.ndarray(), Total: int, B_Total: int):
+    for i in range(Total):
+        Out[i] = 1.0 if A[i] == B[i % B_Total] else 0.0
+
+@ti.kernel
+def k_ne(A: ti.types.ndarray(), B: ti.types.ndarray(), Out: ti.types.ndarray(), Total: int, B_Total: int):
+    for i in range(Total):
+        Out[i] = 1.0 if A[i] != B[i % B_Total] else 0.0
+
+@ti.kernel
 def k_scale(X: ti.types.ndarray(), Scale: float, Total: int):
     for i in range(Total):
         X[i] *= Scale

@@ -73,19 +73,25 @@ def ones(*size, dtype=None, device='auto', requires_grad=False):
     if len(size) == 1 and isinstance(size[0], (list, tuple)): size = size[0]
     if _should_stream(size, dtype, device):
         t = Tensor(None, shape=size, dtype=dtype, device='ssd', requires_grad=requires_grad)
-        # Parallel chunked fill with 1.0
         n = t.total_size
-        chunk = 128 * 1024 * 1024 # 128M elements
-        print(f"  [Factory] Parallel initializing SSD 'ones' ({n*np.dtype(t.dtype).itemsize/1e6:.1f}MB)...")
+        item_size = np.dtype(t.dtype).itemsize
+        
+        # Greedy Allocation: Use 512MB chunks for explicit RAM buffering
+        chunk_size_bytes = 512 * 1024 * 1024
+        chunk_len = chunk_size_bytes // item_size
+        
+        print(f"  [Factory] Greedy SSD 'ones' ({n*item_size/1e6:.1f}MB)...")
         t0 = time.perf_counter()
         
         def fill_chunk(start, end):
-            t.arr[start:end] = 1.0
+            # Explicitly allocate in resident RAM to bypass ZFS ARC limits
+            buf = np.ones(end - start, dtype=t.dtype)
+            t.arr[start:end] = buf
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            offsets = range(0, n, chunk)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            offsets = range(0, n, chunk_len)
             for start in offsets:
-                end = min(start + chunk, n)
+                end = min(start + chunk_len, n)
                 executor.submit(fill_chunk, start, end)
         
         print(f"    Done in {time.perf_counter()-t0:.2f}s")
@@ -98,19 +104,23 @@ def randn(*size, dtype=None, device='auto', requires_grad=False):
     if _should_stream(size, dtype, device):
         t = Tensor(None, shape=size, dtype=dtype, device='ssd', requires_grad=requires_grad)
         n = t.total_size
-        chunk = 32 * 1024 * 1024
-        print(f"  [Factory] Parallel initializing SSD 'randn' ({n*np.dtype(t.dtype).itemsize/1e6:.1f}MB)...")
+        item_size = np.dtype(t.dtype).itemsize
+        
+        # Greedy Allocation
+        chunk_size_bytes = 256 * 1024 * 1024
+        chunk_len = chunk_size_bytes // item_size
+        
+        print(f"  [Factory] Greedy SSD 'randn' ({n*item_size/1e6:.1f}MB)...")
         t0 = time.perf_counter()
         
         def fill_chunk(start, end):
-            t.arr[start:end] = np.random.randn(end-start).astype(t.dtype)
+            buf = np.random.randn(end - start).astype(t.dtype)
+            t.arr[start:end] = buf
 
-        # Note: np.random is not truly thread-safe for high speed, 
-        # but for initialization it's okay or we use one seed per thread.
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            offsets = range(0, n, chunk)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            offsets = range(0, n, chunk_len)
             for start in offsets:
-                end = min(start + chunk, n)
+                end = min(start + chunk_len, n)
                 executor.submit(fill_chunk, start, end)
         
         print(f"    Done in {time.perf_counter()-t0:.2f}s")
@@ -121,6 +131,70 @@ def randn(*size, dtype=None, device='auto', requires_grad=False):
 def arange(end, dtype=None, device='auto'):
     return Tensor(np.arange(end, dtype=np.float32 if dtype is None else dtype),
                   dtype=dtype, device=device)
+
+def from_binary(path, shape, dtype=np.float32, requires_grad=False):
+    """Zero-copy load: Mount an existing binary file as an SSD-native Tensor."""
+    return Tensor(None, shape=shape, dtype=dtype, device='ssd', requires_grad=requires_grad, external_path=path)
+
+def cat(tensors, dim=0):
+    if len(tensors) == 0: return None
+    # Check if any tensor is on SSD
+    is_ssd = any([t.device == 'ssd' for t in tensors])
+    
+    # Calculate output shape
+    out_shape = list(tensors[0].shape)
+    for t in tensors[1:]:
+        out_shape[dim] += t.shape[dim]
+    
+    if is_ssd or _should_stream(out_shape, tensors[0].dtype, 'auto'):
+        # SSD-Native Concatenation
+        res = Tensor(None, shape=out_shape, device='ssd', dtype=tensors[0].dtype)
+        # We need to copy slices. Since we have __setitem__ now, we can use it!
+        # But for SSD it's faster to do it in SOE for better tile management.
+        # For now, let's use the greedy __setitem__ logic.
+        current_pos = 0
+        print(f"  [torch.cat] Concatenating {len(tensors)} tensors to SSD ({np.prod(out_shape)*4/1e6:.1f}MB)...")
+        for t in tensors:
+            length = t.shape[dim]
+            # Create a full-dim slice object
+            slc = [slice(None)] * len(out_shape)
+            slc[dim] = slice(current_pos, current_pos + length)
+            res[tuple(slc)] = t
+            current_pos += length
+        return res
+    else:
+        # Standard CPU cat
+        np_arrs = [t.to_numpy() for t in tensors]
+        return Tensor(np.concatenate(np_arrs, axis=dim))
+
+def stack(tensors, dim=0):
+    # Unsqueeze each and cat
+    unsqueezed = [t.unsqueeze(dim) for t in tensors]
+    return cat(unsqueezed, dim=dim)
+
+def split(tensor, split_size_or_sections, dim=0):
+    # Basic implementation using slices
+    if isinstance(split_size_or_sections, int):
+        sections = range(0, tensor.shape[dim], split_size_or_sections)
+        indices = [slice(i, min(i + split_size_or_sections, tensor.shape[dim])) for i in sections]
+    else:
+        # List of sizes
+        curr = 0
+        indices = []
+        for s in split_size_or_sections:
+            indices.append(slice(curr, curr + s))
+            curr += s
+            
+    res = []
+    for slc in indices:
+        full_slc = [slice(None)] * len(tensor.shape)
+        full_slc[dim] = slc
+        res.append(tensor[tuple(full_slc)])
+    return res
+
+def chunk(tensor, chunks, dim=0):
+    size = (tensor.shape[dim] + chunks - 1) // chunks
+    return split(tensor, size, dim=dim)
 
 # Global settings
 def manual_seed(s):

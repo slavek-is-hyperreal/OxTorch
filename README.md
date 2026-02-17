@@ -9,27 +9,24 @@ VNN is a high-performance tensor library designed to run massive AI models (Gemm
 ## 📁 Repository Structure
 
 -   **[vulkan_nn_lib/](vulkan_nn_lib/)**: Core library. A 1:1 replacement for `import torch`.
--   **[demos/gemma_chat/](demos/gemma_chat/)**: Chat with Gemma 3 models using SSD-native streaming.
+-   **[vulkan_nn_lib/](vulkan_nn_lib/)**: Core library. A 1:1 replacement for `import torch`.
 -   **[demos/splat_studio/](demos/splat_studio/)**: 3D Gaussian Splatting and depth refinement demo (Optimized with VNN).
 -   **[tests/](tests/)**: Comprehensive verification suite.
 
 ---
 
-## 🚀 Quick Start (Chat with Gemma 3)
+## 🚀 Quick Start (Verification)
 
 1.  **Setup Environment**:
     ```bash
     python3 -m venv venv
     source venv/bin/activate
-    pip install taichi numpy transformers
+    pip install taichi numpy tqdm
     ```
 
-2.  **Download Weights**:
-    Follow the instructions in `demos/gemma_chat/README.md`.
-
-3.  **Run Chat**:
+2.  **Run ARAS Benchmark**:
     ```bash
-    python3 demos/gemma_chat/chat_gemma.py
+    PYTHONPATH=. python3 tests/test_phase3_aras.py
     ```
 
 ---

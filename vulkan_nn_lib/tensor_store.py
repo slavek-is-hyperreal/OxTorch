@@ -18,11 +18,11 @@ class TensorStore:
     def _get_path(self, name):
         return os.path.join(self.base_path, f"{name}.bin")
         
-    def zeros(self, name, shape, dtype=np.float32):
+    def zeros(self, name, shape, dtype=np.float32, external_path=None):
         """Create or open a zero-initialized memmap tensor."""
-        path = self._get_path(name)
+        path = external_path if external_path else self._get_path(name)
         # Calculate total size in bytes
-        size = np.prod(shape) * np.dtype(dtype).itemsize
+        size = int(np.prod(shape)) * np.dtype(dtype).itemsize
         
         # Create empty file of required size if it doesn't exist
         if not os.path.exists(path):
@@ -34,9 +34,9 @@ class TensorStore:
         m = np.memmap(path, dtype=dtype, mode='r+', shape=shape)
         return m
         
-    def open(self, name, shape, dtype=np.float32):
+    def open(self, name, shape, dtype=np.float32, external_path=None):
         """Open existing memmap tensor."""
-        path = self._get_path(name)
+        path = external_path if external_path else self._get_path(name)
         if not os.path.exists(path):
             raise FileNotFoundError(f"Tensor {name} not found at {path}")
         return np.memmap(path, dtype=dtype, mode='r+', shape=shape)
