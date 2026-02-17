@@ -4,7 +4,7 @@ The `Tensor` class is the heart of VNN. It is designed to behave like a `torch.T
 
 ## Initialization
 
-### `__init__(data=None, shape=None, device='auto', dtype=None, external_path=None)`
+### `__init__(data=None, shape=None, requires_grad=False, device='auto', dtype=None, external_path=None)`
 - **`data`**: Initial data (NumPy array, list, or scalar).
 - **`device`**: 
     - `'vulkan'`: Taichi acceleration.

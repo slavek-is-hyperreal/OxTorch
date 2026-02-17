@@ -9,8 +9,8 @@ graph TD
     Tensor --> Decision{"Size & Device?"}
     
     Decision -- "< 128MB (FP32)" --> Vulkan["Taichi/Vulkan (GPU)"]
-    Decision -- "< 40% RAM Budget" --> Hybrid["PyTorch Fast-Path (CPU/Shared)"]
-    Decision -- "> 40% RAM Budget" --> ARAS["SOE Engine (SSD/Tiled)"]
+    Decision -- "< Safe RAM Budget" --> Hybrid["PyTorch Fast-Path (CPU/Shared)"]
+    Decision -- "> Safe RAM Budget" --> ARAS["SOE Engine (SSD/Tiled)"]
     
     ARAS --> Tiled["Tiled Math Engine"]
     Tiled --> SSD["SSD Binary Storage"]
@@ -25,14 +25,16 @@ VNN automatically routes every operation through the most efficient backend base
 *   **Limitation**: Limited by physical VRAM. 
 
 ### B. PyTorch Hybrid (Fast Path)
-*   **Target**: Tensors that fit in RAM (<40% of safe budget).
+*   **Target**: Tensors that fit in RAM (< Safe RAM Budget, scales linearly with system RAM).
 *   **Innovation**: **Zero-Copy Shared Memory**. Uses `torch.from_numpy(self.arr)` to perform math directly on VNN's CPU memory using PyTorch's optimized BLAS/MKL kernels.
 *   **Benefit**: Extremely low overhead (**1.09x vs Torch** for Add, **1.36x** for MatMul). 
 *   **Limitation**: Synchronous execution.
 
 ### C. SOE/ARAS (Streaming Operator Engine)
 *   **Target**: "Monster Scale" tensors (34GB+ on systems with limited RAM).
-*   **Innovation**: **Adaptive Tiling**. Automatically breaks operations into tiles that fit within a safe budget (default 512MB). 
+*   **Innovation**: **Adaptive Tiling & Backpressure**. 
+    - **Adaptive Tiling**: Automatically breaks operations into tiles that fit within a safe budget (default 512MB).
+    - **Bounded Backpressure**: The engine uses a bounded prefetch queue and future-tracking to ensure the SSD doesn't overwhelm RAM. This prevents system hangs during 30GB+ operations by pausing disk I/O when the processing pipeline is full.
 *   **SSD Native**: Resulting tensors are created directly on SSD via `memmap`, ensuring RAM usage remains flat regardless of total tensor size.
 
 ## 2. Autograd & Unified Gradient Accumulation

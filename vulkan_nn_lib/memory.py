@@ -9,11 +9,13 @@ class SafetyViolationError(Exception):
 class MemoryManager:
     """Centralized RAM awareness for VNN."""
     
-    # User-specified hardware constraints: 20GB usable, 80% cap. 5GB ZFS fixed.
-    SYSTEM_RESERVE_BYTES = 5 * 1024 * 1024 * 1024 # 5GB Reserve (ZFS + Safety)
+    # User-specified hardware constraints: Default 5GB for ZFS/Safety.
+    # Can be overridden via environment variable VNN_RESERVE_GB
+    _system_reserve_bytes = int(os.getenv('VNN_RESERVE_GB', 5)) * 1024**3
+    
     MAX_TOTAL_USAGE_PCT = 0.80 # 80% of usable RAM
-    HARD_FLOOR_BYTES = 3 * 1024 * 1024 * 1024 # Raised to 3GB for ZFS and DRAS v4 stability
-    CRITICAL_SYSTEM_USAGE_BYTES = 21 * 1024 * 1024 * 1024 # 21GB: Near user's 22GB limit
+    HARD_FLOOR_BYTES = 3 * 1024 * 1024 * 1024 # 3GB "Freeze Protection" floor
+    CRITICAL_SYSTEM_USAGE_BYTES = 21 * 1024 * 1024 * 1024 # Overwritten if total RAM is different
     
     _mem_info_cache = None
     _mem_info_time = 0.0
@@ -42,7 +44,10 @@ class MemoryManager:
         cls._mem_info_cache = info
         cls._mem_info_time = now
         if cls._mem_total_cached is None:
-            cls._mem_total_cached = info.get('MemTotal', 8 * 1024 * 1024 * 1024)
+            total = info.get('MemTotal', 8 * 1024**3)
+            cls._mem_total_cached = total
+            # Adjust critical thresholds based on actual RAM
+            cls.CRITICAL_SYSTEM_USAGE_BYTES = total - (1 * 1024**3) # 1GB Margin of Error
         return info
 
     @staticmethod
@@ -90,17 +95,16 @@ class MemoryManager:
     @classmethod
     def get_safe_budget(cls):
         info = cls.get_mem_info()
-        total = info.get('MemTotal', 8 * 1024 * 1024 * 1024)
+        total = info.get('MemTotal', 8 * 1024**3)
         available = info.get('MemAvailable', total // 2)
         
         # Strategy:
-        # 1. We assume ~20GB are available for apps (after ZFS).
-        # 2. We take 80% of what's reported as available, BUT cap at 16GB.
-        usable_from_avail = available * cls.MAX_TOTAL_USAGE_PCT
+        # 1. Respect the static reservation floor (e.g. ZFS, OS overhead).
+        # 2. We use max(0, available - reservation) as the starting point.
+        usable_available = max(0, available - cls._system_reserve_bytes)
         
-        # Budget cap at 16GB per user spec
-        max_vnn_budget = 16 * 1024 * 1024 * 1024
-        budget = min(usable_from_avail, max_vnn_budget)
+        # 3. Take 80% of the truly usable available RAM.
+        budget = usable_available * cls.MAX_TOTAL_USAGE_PCT
         
         return int(max(256 * 1024 * 1024, budget))
 

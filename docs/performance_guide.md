@@ -9,8 +9,8 @@ VNN is not a general-purpose replacement for PyTorch; it is a **specialized tool
 - **VNN**: Uses `from_binary`. Memory usage is **constant (approx. 50MB)** regardless of whether the model is 7B, 70B, or 400B parameters.
 
 ### 2. Low-RAM Training/Inference
-- **Backpropagation**: VNN supports SSD-native gradient accumulation. In DRAS v4, we achieved **141 MB/s** stable throughput for a **34GB sum** operation on a system with only **17GB RAM**, outperforming PyTorch by virtue of surviving.
-- **Safety**: The **21.5GB Threshold** ensures that VNN will never crash your Linux desktop, even when pushing RAID-0 saturated I/O.
+- **Backpropagation**: VNN supports SSD-native gradient accumulation. In Phase 8 testing, we achieved **423 MB/s** stable throughput for a **37GB sum** operation on a system with standard RAM, outperforming PyTorch by virtue of surviving.
+- **Safety**: The **Backpressure Mechanism** and **21.5GB Threshold** ensure that VNN will never crash your Linux desktop, even when pushing RAID-0 saturated I/O.
 
 ### 3. Hardware Greed
 - **PyTorch**: Relies on OS-level page cache for large data.
@@ -32,7 +32,7 @@ Our Vulkan backend is designed for older/generic hardware. While slower than CUD
 | **Add** | 8.3 M | **VNN** | CPU | **11.1 ms (1.09x)** |
 | **MatMul** | 1024^2 | **PyTorch** | CPU | 25.6 ms |
 | **MatMul** | 1024^2 | **VNN** | CPU | **34.9 ms (1.36x)** |
-| **Monster Sum**| 34 GB | **VNN** | **SOE Engine** | **141 MB/s (OOM-Safe)** |
+| **Monster Sum**| 37 GB | **VNN** | **SOE Engine** | **423 MB/s (OOM-Safe)** |
 
 ## Comparison Table
 

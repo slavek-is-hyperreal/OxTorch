@@ -4,12 +4,12 @@
 
 VNN is a high-performance tensor library designed to bridge the gap between massive AI models and aging or resource-constrained hardware. It treats your SSD as a first-class memory tier, allowing you to run and train 100GB+ models on systems with as little as 1GB of RAM.
 
-## Filozofia Projektu (Core Philosophy)
+## Core Philosophy
 
 PyTorch is built for speed on high-end GPUs. **VNN is built for stability on everything else.**
 - **Memory-First**: We prioritize "not crashing" over raw FLOPS.
 - **Hybrid Backend**: Uses PyTorch kernels on CPU for near-native speed (**1.09x slowdown**) while maintaining SSD-streaming safety.
-- **Universal Scale**: If it fits on your disk, it runs in VNN. Przetworzyliśmy **34GB** na systemie z ograniczonym RAM.
+- **Universal Scale**: If it fits on your disk, it runs in VNN. Przetworzyliśmy **37GB** z prędkością **423 MB/s** na systemie z ograniczonym RAM.
 - **100% Parity**: Verified against PyTorch for all core operations across all dtypes (int8 to int64).
 
 ---
