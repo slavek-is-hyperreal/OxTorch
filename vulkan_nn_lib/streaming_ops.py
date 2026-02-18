@@ -150,6 +150,15 @@ class SOE:
         if a.device == 'ssd': out_device = 'ssd'
             
         Tensor = get_tensor_class()
+        
+        # KAGGLE MODE REDIRECT
+        from .config import get_kaggle_enabled, get_kaggle_threshold
+        if get_kaggle_enabled() and (total_size_bytes > get_kaggle_threshold()):
+            from .kaggle_executor import KaggleExecutor
+            executor = KaggleExecutor()
+            print(f"  [VNN] Offloading {op_type} to Kaggle...")
+            return executor.submit_operation(op_type, a, b, extra)
+
         # Output is usually float32 for compute safety unless explicitly requested
         res_dtype = a.dtype if a.dtype != 'int4' else np.float32
         if op_type == 'div' or op_type == 'truediv': res_dtype = np.float32
@@ -378,6 +387,14 @@ class SOE:
 
         prefetcher_a = TilePrefetcher(a, tile_len, num_consumers=(2 if use_hybrid else 1))
         torch = _get_torch()
+
+        # KAGGLE MODE REDIRECT
+        from .config import get_kaggle_enabled, get_kaggle_threshold
+        if get_kaggle_enabled() and (total_size_bytes > get_kaggle_threshold()):
+            from .kaggle_executor import KaggleExecutor
+            executor = KaggleExecutor()
+            print(f"  [VNN] Offloading {op_type}+{reduction_type} to Kaggle...")
+            return executor.submit_operation(f"{op_type}_{reduction_type}", a, b, extra)
 
         ti_a = None
         ti_b = None
@@ -613,6 +630,14 @@ class SOE:
         Tensor = get_tensor_class()
         res = Tensor(None, shape=(M, N), device=out_device, dtype=a.dtype)
         
+        # KAGGLE MODE REDIRECT
+        from .config import get_kaggle_enabled, get_kaggle_threshold
+        if get_kaggle_enabled() and (a.total_size * a.item_size + b.total_size * b.item_size > get_kaggle_threshold()):
+            from .kaggle_executor import KaggleExecutor
+            executor = KaggleExecutor()
+            print(f"  [VNN] Offloading MatMul to Kaggle...")
+            return executor.submit_operation("matmul", a, b)
+
         b_size_bytes = b.total_size * b.item_size
         b_val = b.to_numpy() if b_size_bytes < safe_budget * 0.25 else b.arr.reshape(K2, N)
         

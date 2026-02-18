@@ -198,6 +198,12 @@ def chunk(tensor, chunks, dim=0):
     size = (tensor.shape[dim] + chunks - 1) // chunks
     return split(tensor, size, dim=dim)
 
+def sum(input):
+    return input.sum()
+
+def matmul(input, other):
+    return input.matmul(other)
+
 # Global settings
 def manual_seed(s):
     np.random.seed(s)

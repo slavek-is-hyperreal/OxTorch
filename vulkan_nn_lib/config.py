@@ -14,3 +14,15 @@ def get_ssd_path():
     2. Default universal path ./vnn_cache
     """
     return os.getenv("VNN_CACHE_DIR", "./vnn_cache")
+
+def get_kaggle_enabled():
+    """Returns True if VNN_KAGGLE_MODE is set to '1'."""
+    return os.getenv("VNN_KAGGLE_MODE", "0") == "1"
+
+def get_kaggle_user():
+    """Returns the Kaggle username from environment or defaults to 'vnn_user'."""
+    return os.getenv("KAGGLE_USERNAME", "vnn_user")
+
+def get_kaggle_threshold():
+    """Returns the size threshold in bytes to trigger Kaggle offload."""
+    return int(os.getenv("VNN_KAGGLE_THRESHOLD", "1000000000")) # Default 1GB

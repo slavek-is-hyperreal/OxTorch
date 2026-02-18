@@ -503,6 +503,13 @@ class Tensor:
             from . import streaming_ops as SOE
             res = SOE.SOE.matmul(self, other)
         else:
+            # KAGGLE MODE REDIRECT
+            from .config import get_kaggle_enabled, get_kaggle_threshold
+            if get_kaggle_enabled() and (self.total_size * self.item_size + other.total_size * other.item_size > get_kaggle_threshold()):
+                from .kaggle_executor import KaggleExecutor
+                executor = KaggleExecutor()
+                return executor.submit_operation("matmul", self, other)
+
             if self.device == 'cpu' and other.device == 'cpu' and (not MemoryManager.should_tile(self.total_size * self.item_size)):
                 a_t = torch.from_numpy(self.to_numpy())
                 b_t = torch.from_numpy(other.to_numpy())
@@ -534,6 +541,13 @@ class Tensor:
         from .memory import MemoryManager
         size_bytes = self.total_size * self.item_size
         
+        # KAGGLE MODE REDIRECT
+        from .config import get_kaggle_enabled, get_kaggle_threshold
+        if get_kaggle_enabled() and (size_bytes > get_kaggle_threshold()):
+            from .kaggle_executor import KaggleExecutor
+            executor = KaggleExecutor()
+            return executor.submit_operation('add', self, other)
+
         # FAST PATH: CPU & RAM-resident -> Use PT directly
         if self.device == 'cpu' and other.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
             res_t = torch.from_numpy(self.to_numpy()) + torch.from_numpy(other.to_numpy())
@@ -570,6 +584,15 @@ class Tensor:
             other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
             
         from .memory import MemoryManager
+        size_bytes = self.total_size * self.item_size
+        
+        # KAGGLE MODE REDIRECT
+        from .config import get_kaggle_enabled, get_kaggle_threshold
+        if get_kaggle_enabled() and (size_bytes > get_kaggle_threshold()):
+            from .kaggle_executor import KaggleExecutor
+            executor = KaggleExecutor()
+            return executor.submit_operation('sub', self, other)
+
         if self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'sub')
@@ -601,6 +624,15 @@ class Tensor:
             other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
             
         from .memory import MemoryManager
+        size_bytes = self.total_size * self.item_size
+        
+        # KAGGLE MODE REDIRECT
+        from .config import get_kaggle_enabled, get_kaggle_threshold
+        if get_kaggle_enabled() and (size_bytes > get_kaggle_threshold()):
+            from .kaggle_executor import KaggleExecutor
+            executor = KaggleExecutor()
+            return executor.submit_operation('mul', self, other)
+
         if self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'mul')
@@ -629,6 +661,15 @@ class Tensor:
             other = Tensor(np.array([other], dtype=self.dtype), shape=(), device=self.device)
             
         from .memory import MemoryManager
+        size_bytes = self.total_size * self.item_size
+        
+        # KAGGLE MODE REDIRECT
+        from .config import get_kaggle_enabled, get_kaggle_threshold
+        if get_kaggle_enabled() and (size_bytes > get_kaggle_threshold()):
+            from .kaggle_executor import KaggleExecutor
+            executor = KaggleExecutor()
+            return executor.submit_operation('div', self, other)
+
         if self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'div')
@@ -709,6 +750,13 @@ class Tensor:
             from . import streaming_ops as SOE
             res = SOE.SOE.mean(self)
         else:
+            # KAGGLE MODE REDIRECT
+            from .config import get_kaggle_enabled, get_kaggle_threshold
+            if get_kaggle_enabled() and (self.total_size * self.item_size > get_kaggle_threshold()):
+                from .kaggle_executor import KaggleExecutor
+                executor = KaggleExecutor()
+                return executor.submit_operation('mean', self)
+
             res = Tensor(float(np.mean(self.to_numpy())), device=self.device)
             
         res._prev = {self}
@@ -854,6 +902,13 @@ class Tensor:
         from .memory import MemoryManager
         size_bytes = self.total_size * self.item_size
         
+        # KAGGLE MODE REDIRECT
+        from .config import get_kaggle_enabled, get_kaggle_threshold
+        if get_kaggle_enabled() and (size_bytes > get_kaggle_threshold()):
+            from .kaggle_executor import KaggleExecutor
+            executor = KaggleExecutor()
+            return executor.submit_operation('sum', self)
+
         # FAST PATH: CPU & RAM-resident
         if self.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
             torch = _get_torch()

@@ -17,6 +17,9 @@ VNN Legacy Edition has achieved 100% PyTorch parity and verified performance. Th
 - [ ] **Advanced Fusion Logic**: Group multiple element-wise operations into a single SSD stream pass to eliminate redundant I/O cycles.
 
 ## 🌌 Long-Term (Ecosystem & Deployment)
+- [ ] **Kaggle-Powered Remote Compute**:
+    - Implement a "Kaggle Mode" where intensive tiled operations (e.g. full-model training steps) are offloaded to Kaggle GPU kernels via the Kaggle API.
+    - Leverage Kaggle's free GPU/VRAM for environments with zero local GPU acceleration.
 - [ ] **Distributed VNN**: Support for multi-system training where SSD storage is shared over a 10GbE network.
 - [ ] **ONNX Integration**: Tooling to import ONNX models directly into VNN SSD format.
 - [ ] **Web Integration**: Explore WebGPU (via Taichi-JS) to bring VNN's SSD-streaming capabilities to high-end browser applications.
