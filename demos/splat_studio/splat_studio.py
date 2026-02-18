@@ -1,22 +1,22 @@
 import os
 import sys
-# Add project root to path so we can import vulkan_nn_lib
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
-
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 import subprocess
 import threading
-import os
-import sys
 import queue
 import json
 from datetime import datetime
-
+import signal
 import zipfile
 import shutil
 import tempfile
 import hashlib
+
+# Add project root to path so we can import vulkan_nn_lib
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+
+from vulkan_nn_lib.memory import MemoryManager
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "../../"))
@@ -25,20 +25,20 @@ class ProjectManager:
     """Manages the .splatproj container (ZIP) and its temporary working directory."""
     def __init__(self, log_callback):
         self.log = log_callback
-        self.project_path = None # Path to .splatproj file
-        self.work_dir = None # Path to temp working folder
+        self.project_path = None
+        self.work_dir = None
         self.data = self._get_empty_data()
         self._temp_dir_obj = None
 
     def _get_empty_data(self):
         return {
             "name": "Untitled Project",
-            "videos": [], # list of { "path": ..., "name": ..., "size": ..., "mtime": ... }
-            "fps_caches": {}, # fps: { "stage": "done/dirty" }
+            "videos": [],
+            "fps_caches": {},
             "completed_stages": [],
             "iterations": 2000,
             "ai_enabled": False,
-            "research_mode": "classic",
+            "research_mode": "nebula",
             "last_updated": ""
         }
 
@@ -59,7 +59,7 @@ class ProjectManager:
         self.log(f"New project created: {save_path}")
 
     def load_project(self, splatproj_path):
-        """Opens an existing .splatproj container."""
+        """Opens an existing .splatproj container lazily."""
         if not zipfile.is_zipfile(splatproj_path):
             raise Exception("Selected file is not a valid .splatproj (ZIP) container.")
             
@@ -67,8 +67,15 @@ class ProjectManager:
         self._temp_dir_obj = tempfile.TemporaryDirectory(prefix="splat_")
         self.work_dir = self._temp_dir_obj.name
         
+        # Only extract metadata initially
         with zipfile.ZipFile(splatproj_path, 'r') as zip_ref:
-            zip_ref.extractall(self.work_dir)
+            if "project.json" in zip_ref.namelist():
+                zip_ref.extract("project.json", self.work_dir)
+            
+        # Ensure minimal directory structure
+        os.makedirs(os.path.join(self.work_dir, "source"), exist_ok=True)
+        os.makedirs(os.path.join(self.work_dir, "cache/frames"), exist_ok=True)
+        os.makedirs(os.path.join(self.work_dir, "output"), exist_ok=True)
             
         # Load metadata
         proj_json = os.path.join(self.work_dir, "project.json")
@@ -76,25 +83,70 @@ class ProjectManager:
             with open(proj_json, "r") as f:
                 self.data = json.load(f)
         
-        self.log(f"Project loaded: {os.path.basename(splatproj_path)}")
+        self.log(f"Project opened (Lazy Mode): {os.path.basename(splatproj_path)}")
         return self.data
 
+    def exists_in_zip(self, folder_prefix):
+        """Checks if a folder/prefix exists in the ZIP container without extracting."""
+        if not self.project_path or not os.path.exists(self.project_path):
+            return False
+        with zipfile.ZipFile(self.project_path, 'r') as zip_ref:
+            for member in zip_ref.namelist():
+                if member.startswith(folder_prefix):
+                    return True
+        return False
+
+    def ensure_extracted(self, folder_prefix):
+        """Ensures a specific folder is extracted from the container."""
+        if not self.project_path or not os.path.exists(self.project_path):
+            return
+            
+        # Check if we already have files in this folder in work_dir
+        # Simple check: if the directory is empty or doesn't exist, extract
+        target_path = os.path.join(self.work_dir, folder_prefix)
+        if os.path.exists(target_path) and os.listdir(target_path):
+            return # Already extracted
+            
+        self.log(f"Extracting {folder_prefix} from project container...")
+        with zipfile.ZipFile(self.project_path, 'r') as zip_ref:
+            for member in zip_ref.namelist():
+                if member.startswith(folder_prefix):
+                    zip_ref.extract(member, self.work_dir)
+
     def save(self):
-        """Syncs all data from work_dir back into the .splatproj ZIP container."""
+        """Syncs data back, merging work_dir with original ZIP to preserve unextracted files."""
         if not self.work_dir or not self.project_path: return
         
         self.data["last_updated"] = datetime.now().isoformat()
         with open(os.path.join(self.work_dir, "project.json"), "w") as f:
             json.dump(self.data, f, indent=4)
             
-        # Create ZIP from work_dir
-        with zipfile.ZipFile(self.project_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
-            for root, dirs, files in os.walk(self.work_dir):
-                for file in files:
-                    abs_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(abs_path, self.work_dir)
-                    zip_ref.write(abs_path, rel_path)
-        self.log("Project changes synced to container.")
+        # Non-destructive save: merge work_dir with what's already in the ZIP
+        temp_proj = self.project_path + ".tmp"
+        
+        # Files currently in work_dir
+        work_files = {}
+        for root, dirs, files in os.walk(self.work_dir):
+            for file in files:
+                abs_path = os.path.join(root, file)
+                rel_path = os.path.relpath(abs_path, self.work_dir)
+                work_files[rel_path] = abs_path
+                
+        # Create new ZIP mirroring original + work_dir updates
+        with zipfile.ZipFile(temp_proj, 'w', zipfile.ZIP_DEFLATED) as new_zip:
+            # 1. Write everything from work_dir
+            for rel, abs_p in work_files.items():
+                new_zip.write(abs_p, rel)
+                
+            # 2. Extract and write everything from original ZIP that is NOT in work_dir
+            if os.path.exists(self.project_path):
+                with zipfile.ZipFile(self.project_path, 'r') as old_zip:
+                    for item in old_zip.infolist():
+                        if item.filename not in work_files:
+                            new_zip.writestr(item, old_zip.read(item.filename))
+                            
+        os.replace(temp_proj, self.project_path)
+        self.log("Project changes synced to container (Preserving unextracted assets).")
 
     def add_video(self, video_path, src_fps=30.0):
         """Copies a video into the project and updates metadata."""
@@ -143,66 +195,201 @@ class ProjectManager:
         except:
             return 30.0 # Fallback
 
+class SplatEngine:
+    """Handles the heavy lifting: COLMAP, Training, and Reconstruction."""
+    def __init__(self, project_manager, log_callback, status_callback):
+        self.pm = project_manager
+        self.log = log_callback
+        self.set_status = status_callback
+        self.process = None
+        self.is_running = False
+
+    def run_command(self, cmd, status_prefix, progress_start, progress_end, cwd=None):
+        self.log(f"Running: {' '.join(cmd)}")
+        env = os.environ.copy()
+        env["PYTHONPATH"] = PROJECT_ROOT + os.pathsep + env.get("PYTHONPATH", "")
+        
+        self.process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+            text=True, bufsize=1, cwd=cwd or self.pm.work_dir, env=env,
+            preexec_fn=os.setsid
+        )
+        
+        for line in self.process.stdout:
+            self.log(line.strip())
+            if "Iteration" in line:
+                try:
+                    parts = line.split("/")
+                    current = int(parts[0].split()[-1])
+                    total = int(parts[1].split()[0])
+                    p = progress_start + (current / total) * (progress_end - progress_start)
+                    self.set_status(f"{status_prefix} ({current}/{total})", p)
+                except: pass
+            else:
+                self.set_status(status_prefix)
+
+        self.process.wait()
+        if self.process.returncode != 0:
+            raise Exception(f"Command failed with return code {self.process.returncode}")
+
+    def stop(self):
+        if self.process:
+            try:
+                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+            except:
+                self.process.terminate()
+            self.log("\n!!! Stopped !!!")
+        self.is_running = False
+
+    def run_pipeline(self, fps, iterations, ai_enabled):
+        try:
+            self.is_running = True
+            self.set_status("Initializing Project & Saving State...", 0)
+            self.pm.save()
+            w = self.pm.work_dir
+            frames_dir = self.pm.get_frames_dir(fps)
+            
+            # Detect existing work
+            has_frames = os.listdir(frames_dir) or self.pm.exists_in_zip(f"cache/frames/{fps}")
+            has_colmap = os.path.exists(os.path.join(w, "cache/colmap/sparse/0/points3D.bin")) or \
+                         self.pm.exists_in_zip("cache/colmap/sparse/0/points3D.bin")
+            has_training = os.path.exists(os.path.join(w, "output/trained_splats.ply")) or \
+                           self.pm.exists_in_zip("output/trained_splats.ply")
+
+            # 1. Extraction
+            if has_frames:
+                self.log(f"Cache hit: Found frames for {fps} FPS.")
+            else:
+                self.pm.ensure_extracted("source")
+                self.set_status("Stage 1/4: Extracting Frames...", 0)
+                src_vids = [os.path.join(w, "source", v["name"]) for v in self.pm.data["videos"]]
+                for i, vid in enumerate(src_vids):
+                    cmd = [sys.executable, os.path.join(SCRIPT_DIR, "extract_frames.py"), "--video", vid, "--output", frames_dir, "--fps", str(fps), "--prefix", f"v{i}"]
+                    self.run_command(cmd, f"Extracting {os.path.basename(vid)}", (i/len(src_vids))*20, ((i+1)/len(src_vids))*20)
+                self.pm.save()
+
+            # 2. COLMAP
+            colmap_path = os.path.join(w, "cache/colmap")
+            if has_colmap:
+                self.log("Cache hit: COLMAP exists.")
+            else:
+                self.pm.ensure_extracted("cache/frames")
+                self.set_status("Stage 2/4: SfM Reconstruction...", 20)
+                os.makedirs(colmap_path, exist_ok=True)
+                cmd = [sys.executable, os.path.join(SCRIPT_DIR, "run_colmap.py"), "--images", frames_dir, "--output", colmap_path]
+                self.run_command(cmd, "COLMAP", 20, 45)
+                self.pm.save()
+
+            # 3. AI Depth
+            if ai_enabled:
+                ai_out = os.path.join(colmap_path, "sparse/0/ai_points.ply")
+                if os.path.exists(ai_out) or self.pm.exists_in_zip("cache/colmap/sparse/0/ai_points.ply"):
+                    self.log("Cache hit: AI points found.")
+                else:
+                    self.pm.ensure_extracted("cache/colmap")
+                    self.pm.ensure_extracted("cache/frames")
+                    self.set_status("Stage 3/4: AI Depth Enhancement...", 45)
+                    cmd = [sys.executable, os.path.join(SCRIPT_DIR, "align_depth.py"), "--colmap_path", "cache/colmap/sparse/0", "--img_path", f"cache/frames/{fps}", "--output", ai_out]
+                    self.run_command(cmd, "AI Depth", 45, 75)
+                    self.pm.save()
+
+            # 4. Training
+            self.pm.ensure_extracted("cache/colmap")
+            self.pm.ensure_extracted("cache/frames")
+            self.set_status("Stage 4/4: GS Training...", 75)
+            cmd = [sys.executable, os.path.join(SCRIPT_DIR, "train_gs.py"), "--colmap_path", "cache/colmap/sparse/0", "--img_path", f"cache/frames/{fps}", "--iterations", str(iterations)]
+            self.run_command(cmd, "Training", 75, 100)
+            
+            self.pm.data["completed_stages"].append("training")
+            self.pm.save()
+            return True
+        except Exception as e:
+            self.log(f"\nERROR: {str(e)}")
+            return False
+        finally:
+            self.is_running = False
+
+    def run_reconstruction(self, mode):
+        try:
+            self.is_running = True
+            self.set_status(f"Researching {mode}...", 0)
+            self.pm.ensure_extracted("output")
+            out_file = f"output/research_{mode}.ply"
+            cmd = [sys.executable, os.path.join(SCRIPT_DIR, "gs_to_mesh.py"), "--input", "output/trained_splats.ply", "--mode", mode, "--output", out_file, "--live"]
+            self.run_command(cmd, f"Reconstructing ({mode})", 0, 100)
+            self.pm.save()
+            return out_file
+        except Exception as e:
+            self.log(f"Failed: {e}")
+            return None
+        finally:
+            self.is_running = False
+
 class SplatEditor:
-    def __init__(self, root):
+    def __init__(self, root, verbose=False):
         self.root = root
-        self.root.title("Splat Studio Professional")
+        self.verbose = verbose
+        self.root.title("Splat Projekt")
         self.root.geometry("850x700")
         
         self.queue = queue.Queue()
-        self.process = None
-        self.is_running = False
+        self.is_loading = False
         
         self.pm = ProjectManager(self.log)
+        self.engine = SplatEngine(self.pm, self.log, self.set_status)
         
         self.setup_ui()
+        self.refresh_ui()
         self.check_queue()
+        self.update_hardware_health()
         
     def setup_ui(self):
         # Header
-        header = tk.Label(self.root, text="SPLAT STUDIO", font=("Helvetica", 28, "bold"), fg="#2196F3")
+        header = tk.Label(self.root, text="SPLAT PROJEKT", font=("Helvetica", 28, "bold"), fg="#2196F3")
         header.pack(pady=10)
 
         # FILE OPS
-        file_frame = tk.Frame(self.root)
-        file_frame.pack(fill="x", padx=20)
-        tk.Button(file_frame, text="New Project", command=self.new_project).pack(side="left", padx=5)
-        tk.Button(file_frame, text="Open Project", command=self.load_project_manual).pack(side="left", padx=5)
-        self.proj_label = tk.Label(file_frame, text="No Project Loaded", fg="grey")
+        self.file_frame = tk.Frame(self.root)
+        self.file_frame.pack(fill="x", padx=20)
+        self.new_btn = tk.Button(self.file_frame, text="New Project", command=self.new_project)
+        self.new_btn.pack(side="left", padx=5)
+        self.open_btn = tk.Button(self.file_frame, text="Open Project", command=self.load_project_manual)
+        self.open_btn.pack(side="left", padx=5)
+        self.proj_label = tk.Label(self.file_frame, text="No Project Loaded", fg="grey")
         self.proj_label.pack(side="left", padx=20)
 
         # Input Section
-        input_frame = tk.LabelFrame(self.root, text="Project Videos (Stored inside .splatproj)", padx=10, pady=10)
-        input_frame.pack(fill="x", padx=20, pady=5)
+        self.input_frame = tk.LabelFrame(self.root, text="Project Videos (Stored inside .splatproj)", padx=10, pady=10)
+        self.input_frame.pack(fill="x", padx=20, pady=5)
 
-        self.video_listbox = tk.Listbox(input_frame, height=4)
+        self.video_listbox = tk.Listbox(self.input_frame, height=4)
         self.video_listbox.pack(side="left", fill="both", expand=True)
 
-        btn_frame = tk.Frame(input_frame)
+        btn_frame = tk.Frame(self.input_frame)
         btn_frame.pack(side="right", fill="y", padx=5)
 
         tk.Button(btn_frame, text="Add Video", command=self.add_videos).pack(fill="x")
         tk.Button(btn_frame, text="Clear Project", command=self.clear_videos, fg="red").pack(fill="x", pady=2)
 
         # Config Section
-        config_frame = tk.LabelFrame(self.root, text="Pipeline Configuration", padx=10, pady=10)
-        config_frame.pack(fill="x", padx=20, pady=5)
+        self.config_frame = tk.LabelFrame(self.root, text="Pipeline Configuration", padx=10, pady=10)
+        self.config_frame.pack(fill="x", padx=20, pady=5)
 
-        tk.Label(config_frame, text="Target FPS (Multi-Cached):").grid(row=0, column=0, sticky="w")
+        tk.Label(self.config_frame, text="Target FPS (Multi-Cached):").grid(row=0, column=0, sticky="w")
         self.fps_var = tk.IntVar(value=24)
-        self.fps_slider = tk.Scale(config_frame, from_=1, to=60, orient="horizontal", variable=self.fps_var, state="disabled")
+        self.fps_slider = tk.Scale(self.config_frame, from_=1, to=60, orient="horizontal", variable=self.fps_var, state="disabled")
         self.fps_slider.grid(row=0, column=1, sticky="ew")
 
-        tk.Label(config_frame, text="Training Iterations:").grid(row=1, column=0, sticky="w")
+        tk.Label(self.config_frame, text="Training Iterations:").grid(row=1, column=0, sticky="w")
         self.iter_var = tk.IntVar(value=2000)
-        tk.Entry(config_frame, textvariable=self.iter_var).grid(row=1, column=1, sticky="w")
+        tk.Entry(self.config_frame, textvariable=self.iter_var).grid(row=1, column=1, sticky="w")
 
         self.ai_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(config_frame, text="Enable AI Depth Auto-Density", variable=self.ai_var).grid(row=2, column=0, columnspan=2, sticky="w")
+        tk.Checkbutton(self.config_frame, text="Enable AI Depth Auto-Density", variable=self.ai_var).grid(row=2, column=0, columnspan=2, sticky="w")
 
         # Research Section
-        research_frame = tk.LabelFrame(self.root, text="Research Reconstruction (Level 10.1 Crystal Nebula Enabled)", padx=10, pady=10)
-        research_frame.pack(fill="x", padx=20, pady=5)
+        self.research_frame = tk.LabelFrame(self.root, text="Research Reconstruction (Level 10.1 Crystal Nebula Enabled)", padx=10, pady=10)
+        self.research_frame.pack(fill="x", padx=20, pady=5)
         
         self.reconstruct_mode = tk.StringVar(value="nebula")
         modes = [
@@ -216,9 +403,9 @@ class SplatEditor:
         for i, (name, val) in enumerate(modes):
             row = i // 3
             col = i % 3
-            tk.Radiobutton(research_frame, text=name, variable=self.reconstruct_mode, value=val).grid(row=row, column=col, sticky="w")
+            tk.Radiobutton(self.research_frame, text=name, variable=self.reconstruct_mode, value=val).grid(row=row, column=col, sticky="w")
         
-        reconstruct_btn = tk.Button(research_frame, text="RUN RESEARCH ON CURRENT SPLATS", command=self.run_reconstruction_manual, bg="#FF9800", fg="white", font=("Helvetica", 9, "bold"))
+        reconstruct_btn = tk.Button(self.research_frame, text="RUN RESEARCH ON CURRENT SPLATS", command=self.run_reconstruction_manual, bg="#FF9800", fg="white", font=("Helvetica", 9, "bold"))
         reconstruct_btn.grid(row=3, column=0, columnspan=3, pady=5, sticky="ew")
 
         # Controls
@@ -237,6 +424,15 @@ class SplatEditor:
 
         self.status_label = tk.Label(progress_frame, text="No Project Active", font=("Helvetica", 10, "italic"))
         self.status_label.pack(anchor="w")
+
+        # Hardware Health / RAM Risk (DRAS v4)
+        health_frame = tk.Frame(progress_frame)
+        health_frame.pack(fill="x", pady=2)
+        tk.Label(health_frame, text="Hardware Health:", font=("Helvetica", 9)).pack(side="left")
+        self.health_bar = ttk.Progressbar(health_frame, orient="horizontal", length=200, mode="determinate")
+        self.health_bar.pack(side="left", padx=10)
+        self.health_status = tk.Label(health_frame, text="Safe", font=("Helvetica", 9, "bold"), fg="green")
+        self.health_status.pack(side="left")
 
         self.progress = ttk.Progressbar(progress_frame, orient="horizontal", length=100, mode="determinate")
         self.progress.pack(fill="x", pady=5)
@@ -265,6 +461,7 @@ class SplatEditor:
             # We fetch FPS before adding to project
             fps = self.pm.get_video_fps(f)
             self.pm.add_video(f, src_fps=fps)
+        self.save_project()
         self.refresh_ui()
 
     def clear_videos(self):
@@ -272,14 +469,41 @@ class SplatEditor:
             self.pm.data["videos"] = []
             self.pm.data["completed_stages"] = []
             self.pm.data["fps_caches"] = {}
-            self.pm.save()
+            self.save_project()
             self.refresh_ui()
 
     def load_project_manual(self):
         path = filedialog.askopenfilename(filetypes=[("Splat Project", "*.splatproj")])
         if path:
-            data = self.pm.load_project(path)
-            self.proj_label.config(text=os.path.basename(path), fg="green")
+            self.is_loading = True
+            self.set_status(f"Loading {os.path.basename(path)}...", 0)
+            self.refresh_ui() 
+            self.log_text.config(state="normal")
+            self.log_text.delete(1.0, tk.END)
+            self.log_text.config(state="disabled")
+            threading.Thread(target=self._load_worker, args=(path,), daemon=True).start()
+
+    def _load_worker(self, path):
+        try:
+            self.pm.load_project(path)
+            self.queue.put(("loaded", path))
+        except Exception as e:
+            self.queue.put(("error", str(e)))
+
+    def save_project(self):
+        """Threaded save wrapper."""
+        threading.Thread(target=self._save_worker, daemon=True).start()
+
+    def _save_worker(self):
+        try:
+            self.is_loading = True
+            self.refresh_ui()
+            self.set_status("Saving project...", None)
+            self.pm.save()
+            self.log("Project saved to container.")
+            self.set_status("Project Saved.", 100)
+        finally:
+            self.is_loading = False
             self.refresh_ui()
 
     def refresh_ui(self):
@@ -307,9 +531,43 @@ class SplatEditor:
         self.iter_var.set(data.get("iterations", 2000))
         self.ai_var.set(data.get("ai_enabled", False))
         self.reconstruct_mode.set(data.get("research_mode", "nebula"))
+        
+        has_project = self.pm.work_dir is not None
+        has_data = False
+        if has_project:
+            splats_done = os.path.exists(os.path.join(self.pm.work_dir, "output/trained_splats.ply")) or \
+                          self.pm.exists_in_zip("output/trained_splats.ply")
+            has_data = splats_done
+
+        if self.is_loading:
+            self.set_ui_state(self.file_frame, "disabled")
+            self.set_ui_state(self.input_frame, "disabled")
+            self.set_ui_state(self.config_frame, "disabled")
+            self.set_ui_state(self.research_frame, "disabled")
+            self.start_btn.config(state="disabled")
+            return
+
+        self.set_ui_state(self.file_frame, "normal")
+        self.set_ui_state(self.input_frame, "normal" if has_project else "disabled")
+        self.set_ui_state(self.config_frame, "normal" if has_project else "disabled")
+        self.set_ui_state(self.research_frame, "normal" if has_data else "disabled")
+        
+        is_running = self.engine.is_running
+        self.start_btn.config(state="normal" if has_project and not is_running else "disabled")
+        self.stop_btn.config(state="normal" if is_running else "disabled")
+
+    def set_ui_state(self, widget, state):
+        """Recursively sets state for a widget and its children."""
+        try:
+            widget.configure(state=state)
+        except: pass
+        for child in widget.winfo_children():
+            self.set_ui_state(child, state)
 
     def log(self, message):
         self.queue.put(("log", message + "\n"))
+        if self.verbose:
+            print(message)
 
     def set_status(self, status, progress=None):
         self.queue.put(("status", (status, progress)))
@@ -328,45 +586,56 @@ class SplatEditor:
                     self.status_label.config(text=status)
                     if progress is not None:
                         self.progress["value"] = progress
+                elif msg_type == "loaded":
+                    path = data
+                    self.is_loading = False
+                    self.proj_label.config(text=os.path.basename(path), fg="green")
+                    self.refresh_ui()
+                    self.set_status("Project loaded.", 100)
+                elif msg_type == "error":
+                    self.is_loading = False
+                    messagebox.showerror("Error", data)
+                    self.refresh_ui()
+                    self.set_status(f"Error: {data}", 0)
                 elif msg_type == "done":
                     self.pipeline_finished()
         except queue.Empty:
             pass
         self.root.after(100, self.check_queue)
 
-    def run_command(self, cmd, status_prefix, progress_start, progress_end, cwd=None):
-        self.log(f"Running: {' '.join(cmd)}")
-        env = os.environ.copy()
-        # Ensure subprocesses can find vulkan_nn_lib even if cwd changes
-        env["PYTHONPATH"] = PROJECT_ROOT + os.pathsep + env.get("PYTHONPATH", "")
-        
-        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
-                                        text=True, bufsize=1, cwd=cwd or self.pm.work_dir, env=env)
-        
-        for line in self.process.stdout:
-            self.log(line.strip())
-            # Progress heuristics
-            if "Iteration" in line:
-                try:
-                    parts = line.split("/")
-                    current = int(parts[0].split()[-1])
-                    total = int(parts[1].split()[0])
-                    p = progress_start + (current / total) * (progress_end - progress_start)
-                    self.set_status(f"{status_prefix} ({current}/{total})", p)
-                except: pass
-            else:
-                self.set_status(status_prefix)
+        self.start_btn.config(state="normal" if has_project and not is_running else "disabled")
+        self.stop_btn.config(state="normal" if is_running else "disabled")
 
-        self.process.wait()
-        if self.process.returncode != 0:
-            raise Exception(f"Command failed with return code {self.process.returncode}")
+    def start_pipeline(self):
+        if not self.pm.work_dir or not self.pm.data["videos"]:
+            messagebox.showwarning("Warning", "Project is empty.")
+            return
+        
+        self.log_text.config(state="normal")
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.config(state="disabled")
+        
+        self.pm.data.update({
+            "fps": self.fps_var.get(),
+            "iterations": self.iter_var.get(),
+            "ai_enabled": self.ai_var.get(),
+            "research_mode": self.reconstruct_mode.get()
+        })
+        threading.Thread(target=self._run_pipeline_worker, daemon=True).start()
+        self.refresh_ui()
+
+    def _run_pipeline_worker(self):
+        fps = self.fps_var.get()
+        iters = self.iter_var.get()
+        ai = self.ai_var.get()
+        if self.engine.run_pipeline(fps, iters, ai):
+            self.queue.put(("done", None))
+        else:
+            self.queue.put(("error", "Pipeline failed. Check logs."))
 
     def pipeline_finished(self):
-        self.is_running = False
-        self.start_btn.config(state="normal")
-        self.stop_btn.config(state="disabled")
+        self.refresh_ui()
         self.set_status("Pipeline Completed!", 100)
-        self.pm.save()
         
         if messagebox.askyesno("Success", "Processing finished! Export results?"):
             save_path = filedialog.asksaveasfilename(defaultextension=".ply", filetypes=[("PLY files", "*.ply")])
@@ -375,130 +644,75 @@ class SplatEditor:
                 if os.path.exists(src):
                     shutil.copy(src, save_path)
                     self.log(f"Model exported to {save_path}")
-                
-                subprocess.Popen([sys.executable, os.path.join(SCRIPT_DIR, "train_gs.py"), "--view"], cwd=self.pm.work_dir)
-            
+                fps = self.fps_var.get()
+                cmd = [sys.executable, os.path.join(SCRIPT_DIR, "train_gs.py"), "--view", "--colmap_path", "cache/colmap/sparse/0", "--img_path", f"cache/frames/{fps}"]
+                subprocess.Popen(cmd, cwd=self.pm.work_dir)
+
     def run_reconstruction_manual(self):
         if not self.pm.work_dir: return
-        mode = self.reconstruct_mode.get()
         splat_path = os.path.join(self.pm.work_dir, "output/trained_splats.ply")
-        if not os.path.exists(splat_path):
+        if not os.path.exists(splat_path) and not self.pm.exists_in_zip("output/trained_splats.ply"):
             messagebox.showwarning("Incomplete", "Run Training phase first.")
             return
         
-        self.log(f"Starting {mode} research reconstruction...")
-        threading.Thread(target=self.run_reconstruction_thread, args=(mode,), daemon=True).start()
+        mode = self.reconstruct_mode.get()
+        threading.Thread(target=self._run_reconstruct_worker, args=(mode,), daemon=True).start()
 
-    def run_reconstruction_thread(self, mode):
-        try:
-            self.set_status(f"Researching {mode}...", 0)
-            out_file = f"output/research_{mode}.ply"
-            cmd = [sys.executable, os.path.join(SCRIPT_DIR, "gs_to_mesh.py"), "--input", "output/trained_splats.ply", "--mode", mode, "--output", out_file, "--live"]
-            self.run_command(cmd, f"Reconstructing ({mode})", 0, 100)
-            self.pm.save()
-            self.log(f"Success! Result synced to .splatproj")
-            self.set_status("Reconstruction Done!", 100)
-            
-            if messagebox.askyesno("Complete", f"Generated. Open Viewer?"):
-                subprocess.Popen([sys.executable, os.path.join(SCRIPT_DIR, "view_mesh.py"), "--input", out_file], cwd=self.pm.work_dir)
-        except Exception as e:
-            self.log(f"Failed: {e}")
+    def _run_reconstruct_worker(self, mode):
+        out_file = self.engine.run_reconstruction(mode)
+        if out_file and messagebox.askyesno("Complete", f"Generated. Open Viewer?"):
+            subprocess.Popen([sys.executable, os.path.join(SCRIPT_DIR, "view_mesh.py"), "--input", out_file], cwd=self.pm.work_dir)
+        self.queue.put(("status", ("Reconstruction Done", 100)))
 
     def stop_pipeline(self):
-        if self.process:
-            self.process.terminate()
-            self.log("\n!!! Stopped by user !!!")
-            self.set_status("Stopped", 0)
-        self.is_running = False
-        self.start_btn.config(state="normal")
-        self.stop_btn.config(state="disabled")
+        self.engine.stop()
+        self.set_status("Stopped", 0)
+        self.refresh_ui()
+
+class SplatCLI:
+    def __init__(self, project_path, verbose=False):
+        self.verbose = verbose
+        self.pm = ProjectManager(self.log)
+        self.engine = SplatEngine(self.pm, self.log, self.set_status)
+        self.pm.load_project(project_path)
+
+    def log(self, message):
+        print(message if not message.endswith("\n") else message[:-1], flush=True)
+
+    def set_status(self, status, progress=None):
+        if self.verbose:
+            prog_str = f" [{progress}%]" if progress is not None else ""
+            print(f"STATUS: {status}{prog_str}", flush=True)
 
     def start_pipeline(self):
-        if not self.pm.work_dir or not self.pm.data["videos"]:
-            messagebox.showwarning("Warning", "Project is empty.")
-            return
-        
-        self.is_running = True
-        self.start_btn.config(state="disabled")
-        self.stop_btn.config(state="normal")
-        self.log_text.config(state="normal")
-        self.log_text.delete(1.0, tk.END)
-        self.log_text.config(state="disabled")
-        
-        # Save current config to project meta
-        self.pm.data.update({
-            "fps": self.fps_var.get(),
-            "iterations": self.iter_var.get(),
-            "ai_enabled": self.ai_var.get(),
-            "research_mode": self.reconstruct_mode.get()
-        })
-        self.pm.save()
-        threading.Thread(target=self.run_pipeline_thread, daemon=True).start()
+        print(f"--- Starting Pipeline for {self.pm.data['name']} ---")
+        fps = self.pm.data.get("fps", 24)
+        iters = self.pm.data.get("iterations", 2000)
+        ai = self.pm.data.get("ai_enabled", False)
+        self.engine.run_pipeline(fps, iters, ai)
+        print("--- Pipeline Finished ---")
 
-    def run_pipeline_thread(self):
-        try:
-            w = self.pm.work_dir
-            fps = self.fps_var.get()
-            frames_dir = self.pm.get_frames_dir(fps)
-            
-            # Check for existing work
-            has_frames = len(os.listdir(frames_dir)) > 0
-            has_colmap = os.path.exists(os.path.join(w, "cache/colmap/sparse/0/points3D.bin"))
-            has_training = os.path.exists(os.path.join(w, "output/trained_splats.ply"))
-
-            # 1. Extraction (Multi-FPS aware)
-            if has_frames:
-                self.log(f"Cache hit: Found existing extraction for {fps} FPS. Skipping Stage 1.")
-            else:
-                self.set_status("Stage 1/4: Extracting (New FPS Cache)...", 0)
-                # Use internal source videos
-                src_vids = [os.path.join(w, "source", v["name"]) for v in self.pm.data["videos"]]
-                for i, vid in enumerate(src_vids):
-                    cmd = [sys.executable, os.path.join(SCRIPT_DIR, "extract_frames.py"), "--video", vid, "--output", frames_dir, "--fps", str(fps), "--prefix", f"v{i}"]
-                    self.run_command(cmd, f"Extracting {os.path.basename(vid)}", (i/len(src_vids))*20, ((i+1)/len(src_vids))*20)
-                self.pm.data["fps_caches"][str(fps)] = "frames_done"
-                self.pm.save()
-
-            # 2. COLMAP
-            colmap_path = os.path.join(w, "cache/colmap")
-            if has_colmap:
-                self.log("Cache hit: COLMAP already exists. Skipping Stage 2.")
-            else:
-                self.set_status("Stage 2/4: SfM Reconstruction...", 20)
-                os.makedirs(colmap_path, exist_ok=True)
-                cmd = [sys.executable, os.path.join(SCRIPT_DIR, "run_colmap.py"), "--images", frames_dir, "--output", colmap_path]
-                self.run_command(cmd, "COLMAP", 20, 45)
-                self.pm.save()
-
-            # 3. AI (If enabled)
-            if self.ai_var.get():
-                ai_out = os.path.join(colmap_path, "sparse/0/ai_points.ply")
-                if os.path.exists(ai_out):
-                    self.log("Cache hit: AI points found. Skipping Stage 3.")
-                else:
-                    self.set_status("Stage 3/4: AI Depth Enhancement...", 45)
-                    cmd = [sys.executable, os.path.join(SCRIPT_DIR, "align_depth.py"), "--colmap_path", f"cache/colmap/sparse/0", "--img_path", f"cache/frames/{fps}"]
-                    self.run_command(cmd, "AI Depth", 45, 75)
-                    self.pm.save()
-
-            # 4. Training
-            if has_training:
-                self.log("Note: Training result exists. Re-training with current iterations...")
-            
-            self.set_status("Stage 4/4: GS Training...", 75)
-            # train_gs.py writes to output/
-            cmd = [sys.executable, os.path.join(SCRIPT_DIR, "train_gs.py"), "--colmap_path", "cache/colmap/sparse/0", "--iterations", str(self.iter_var.get())]
-            self.run_command(cmd, "Training", 75, 100)
-            
-            self.pm.data["completed_stages"].append("training")
-            self.pm.save()
-            self.queue.put(("done", None))
-            
-        except Exception as e:
-            self.log(f"\nERROR: {str(e)}")
-            self.set_status(f"Error: {e}", 0)
+    def run_reconstruction(self, mode=None):
+        mode = mode or self.pm.data.get("research_mode", "nebula")
+        print(f"--- Starting Reconstruction ({mode}) ---")
+        self.engine.run_reconstruction(mode)
+        print("--- Reconstruction Finished ---")
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = SplatEditor(root)
-    root.mainloop()
+    import argparse
+    parser = argparse.ArgumentParser(description="Splat Projekt")
+    parser.add_argument("--project", type=str, help="Path to .splatproj file (Starts CLI mode)")
+    parser.add_argument("--action", type=str, choices=["run", "reconstruct"], help="Action to perform in CLI mode")
+    parser.add_argument("--mode", type=str, help="Research mode for reconstruction")
+    parser.add_argument("--verbose", action="store_true", help="Mirror logs to terminal")
+    args = parser.parse_args()
+
+    if args.project:
+        cli = SplatCLI(args.project, verbose=args.verbose)
+        if args.action == "run": cli.start_pipeline()
+        elif args.action == "reconstruct": cli.run_reconstruction(args.mode)
+        else: print("Please specify --action [run|reconstruct]")
+    else:
+        root = tk.Tk()
+        app = SplatEditor(root, verbose=args.verbose)
+        root.mainloop()

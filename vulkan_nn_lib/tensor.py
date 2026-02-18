@@ -25,15 +25,6 @@ class Tensor:
         """Zero-copy: Share memory with existing numpy array."""
         return Tensor(data, requires_grad=requires_grad, device='cpu')
 
-    def _get_available_ram(self):
-        try:
-            with open('/proc/meminfo', 'r') as f:
-                for line in f:
-                    if line.startswith('MemAvailable:'):
-                        return int(line.split()[1]) * 1024
-        except:
-            return 8 * 1024 * 1024 * 1024
-
     def __init__(self, data=None, shape=None, requires_grad=False, device='auto', dtype=None, external_path=None):
         self._shape = shape
         self._requires_grad = False

@@ -231,6 +231,7 @@ class GaussianModel:
     def export_ply(self, path):
         pos = self.pos.to_numpy()
         color = self.display_color.to_numpy()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(b"ply\nformat binary_little_endian 1.0\n")
             f.write(f"element vertex {self.num_points}\n".encode())

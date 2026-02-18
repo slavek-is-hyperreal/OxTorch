@@ -11,6 +11,15 @@ def get_tensor_class():
     from .tensor import Tensor
     return Tensor
 
+def _get_available_ram():
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except:
+        return 8 * 1024 * 1024 * 1024
+
 def _get_torch():
     try:
         import torch
