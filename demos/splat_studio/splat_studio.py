@@ -96,16 +96,33 @@ class ProjectManager:
                     return True
         return False
 
+    def get_file(self, rel_path):
+        """Returns the local SSD path for a project file, extracting it if needed."""
+        if not self.work_dir: return None
+        dest = os.path.join(self.work_dir, rel_path)
+        
+        if not os.path.exists(dest):
+            if self.project_path and zipfile.is_zipfile(self.project_path):
+                with zipfile.ZipFile(self.project_path, 'r') as zip_ref:
+                    if rel_path in zip_ref.namelist():
+                        os.makedirs(os.path.dirname(dest), exist_ok=True)
+                        zip_ref.extract(rel_path, self.work_dir)
+                        self.log(f"Streamed: {rel_path} -> SSD")
+        
+        return dest if os.path.exists(dest) else None
+
     def ensure_extracted(self, folder_prefix):
         """Ensures a specific folder is extracted from the container."""
         if not self.project_path or not os.path.exists(self.project_path):
             return
             
-        # Check if we already have files in this folder in work_dir
-        # Simple check: if the directory is empty or doesn't exist, extract
         target_path = os.path.join(self.work_dir, folder_prefix)
-        if os.path.exists(target_path) and os.listdir(target_path):
-            return # Already extracted
+        # If the path is a file, check if it exists
+        if os.path.isfile(target_path):
+            return
+        # If the path is a directory, check if it exists and has content
+        if os.path.isdir(target_path) and os.listdir(target_path):
+            return
             
         self.log(f"Extracting {folder_prefix} from project container...")
         with zipfile.ZipFile(self.project_path, 'r') as zip_ref:
@@ -133,15 +150,21 @@ class ProjectManager:
                 work_files[rel_path] = abs_path
                 
         # Create new ZIP mirroring original + work_dir updates
+        file_count = len(work_files)
+        self.log(f"Syncing {file_count} files to project container...")
+        
         with zipfile.ZipFile(temp_proj, 'w', zipfile.ZIP_DEFLATED) as new_zip:
             # 1. Write everything from work_dir
-            for rel, abs_p in work_files.items():
+            for i, (rel, abs_p) in enumerate(work_files.items()):
                 new_zip.write(abs_p, rel)
+                if i % 100 == 0 and i > 0:
+                    self.log(f"Writing updated assets... ({i}/{file_count})")
                 
             # 2. Extract and write everything from original ZIP that is NOT in work_dir
             if os.path.exists(self.project_path):
                 with zipfile.ZipFile(self.project_path, 'r') as old_zip:
-                    for item in old_zip.infolist():
+                    old_info = old_zip.infolist()
+                    for item in old_info:
                         if item.filename not in work_files:
                             new_zip.writestr(item, old_zip.read(item.filename))
                             
@@ -244,17 +267,23 @@ class SplatEngine:
     def run_pipeline(self, fps, iterations, ai_enabled):
         try:
             self.is_running = True
-            self.set_status("Initializing Project & Saving State...", 0)
+            self.set_status("Initializing Project State...", 0)
+            self.log("Consolidating project data and merging assets...")
             self.pm.save()
             w = self.pm.work_dir
             frames_dir = self.pm.get_frames_dir(fps)
             
             # Detect existing work
-            has_frames = os.listdir(frames_dir) or self.pm.exists_in_zip(f"cache/frames/{fps}")
+            self.log("Checking project cache status...")
+            has_frames = os.path.exists(frames_dir) and (os.listdir(frames_dir) or self.pm.exists_in_zip(f"cache/frames/{fps}"))
             has_colmap = os.path.exists(os.path.join(w, "cache/colmap/sparse/0/points3D.bin")) or \
                          self.pm.exists_in_zip("cache/colmap/sparse/0/points3D.bin")
             has_training = os.path.exists(os.path.join(w, "output/trained_splats.ply")) or \
                            self.pm.exists_in_zip("output/trained_splats.ply")
+            
+            self.log(f" - Frames cache: {'FOUND' if has_frames else 'MISSING'}")
+            self.log(f" - SfM cache: {'FOUND' if has_colmap else 'MISSING'}")
+            self.log(f" - Training cache: {'FOUND' if has_training else 'MISSING'}")
 
             # 1. Extraction
             if has_frames:
@@ -273,7 +302,7 @@ class SplatEngine:
             if has_colmap:
                 self.log("Cache hit: COLMAP exists.")
             else:
-                self.pm.ensure_extracted("cache/frames")
+                self.pm.ensure_extracted(f"cache/frames/{fps}")
                 self.set_status("Stage 2/4: SfM Reconstruction...", 20)
                 os.makedirs(colmap_path, exist_ok=True)
                 cmd = [sys.executable, os.path.join(SCRIPT_DIR, "run_colmap.py"), "--images", frames_dir, "--output", colmap_path]
@@ -287,7 +316,7 @@ class SplatEngine:
                     self.log("Cache hit: AI points found.")
                 else:
                     self.pm.ensure_extracted("cache/colmap")
-                    self.pm.ensure_extracted("cache/frames")
+                    self.pm.ensure_extracted(f"cache/frames/{fps}")
                     self.set_status("Stage 3/4: AI Depth Enhancement...", 45)
                     cmd = [sys.executable, os.path.join(SCRIPT_DIR, "align_depth.py"), "--colmap_path", "cache/colmap/sparse/0", "--img_path", f"cache/frames/{fps}", "--output", ai_out]
                     self.run_command(cmd, "AI Depth", 45, 75)
@@ -295,7 +324,7 @@ class SplatEngine:
 
             # 4. Training
             self.pm.ensure_extracted("cache/colmap")
-            self.pm.ensure_extracted("cache/frames")
+            self.pm.ensure_extracted(f"cache/frames/{fps}")
             self.set_status("Stage 4/4: GS Training...", 75)
             cmd = [sys.executable, os.path.join(SCRIPT_DIR, "train_gs.py"), "--colmap_path", "cache/colmap/sparse/0", "--img_path", f"cache/frames/{fps}", "--iterations", str(iterations)]
             self.run_command(cmd, "Training", 75, 100)
@@ -602,9 +631,27 @@ class SplatEditor:
         except queue.Empty:
             pass
         self.root.after(100, self.check_queue)
-
+        
+        has_project = self.pm.work_dir is not None
+        is_running = self.engine.is_running
         self.start_btn.config(state="normal" if has_project and not is_running else "disabled")
         self.stop_btn.config(state="normal" if is_running else "disabled")
+
+    def update_hardware_health(self):
+        """Update the DRAS v4 RAM risk indicator."""
+        try:
+            risk = MemoryManager.get_usage_risk()
+            percent = int(risk * 100)
+            self.health_bar["value"] = percent
+            
+            if risk < 0.6:
+                self.health_status.config(text="Safe", fg="green")
+            elif risk < 0.85:
+                self.health_status.config(text="Warning", fg="orange")
+            else:
+                self.health_status.config(text="CRITICAL", fg="red")
+        except: pass
+        self.root.after(1000, self.update_hardware_health)
 
     def start_pipeline(self):
         if not self.pm.work_dir or not self.pm.data["videos"]:
@@ -636,17 +683,12 @@ class SplatEditor:
     def pipeline_finished(self):
         self.refresh_ui()
         self.set_status("Pipeline Completed!", 100)
+        self.log("Training finished. Results saved inside .splatproj container.")
         
-        if messagebox.askyesno("Success", "Processing finished! Export results?"):
-            save_path = filedialog.asksaveasfilename(defaultextension=".ply", filetypes=[("PLY files", "*.ply")])
-            if save_path:
-                src = os.path.join(self.pm.work_dir, "output/trained_splats.ply")
-                if os.path.exists(src):
-                    shutil.copy(src, save_path)
-                    self.log(f"Model exported to {save_path}")
-                fps = self.fps_var.get()
-                cmd = [sys.executable, os.path.join(SCRIPT_DIR, "train_gs.py"), "--view", "--colmap_path", "cache/colmap/sparse/0", "--img_path", f"cache/frames/{fps}"]
-                subprocess.Popen(cmd, cwd=self.pm.work_dir)
+        # Automatically launch viewer
+        fps = self.fps_var.get()
+        cmd = [sys.executable, os.path.join(SCRIPT_DIR, "train_gs.py"), "--view", "--colmap_path", "cache/colmap/sparse/0", "--img_path", f"cache/frames/{fps}"]
+        subprocess.Popen(cmd, cwd=self.pm.work_dir)
 
     def run_reconstruction_manual(self):
         if not self.pm.work_dir: return
@@ -660,7 +702,9 @@ class SplatEditor:
 
     def _run_reconstruct_worker(self, mode):
         out_file = self.engine.run_reconstruction(mode)
-        if out_file and messagebox.askyesno("Complete", f"Generated. Open Viewer?"):
+        if out_file:
+            self.log(f"Reconstruction ({mode}) saved inside .splatproj.")
+            # Automatically launch viewer for research result
             subprocess.Popen([sys.executable, os.path.join(SCRIPT_DIR, "view_mesh.py"), "--input", out_file], cwd=self.pm.work_dir)
         self.queue.put(("status", ("Reconstruction Done", 100)))
 

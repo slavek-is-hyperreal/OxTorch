@@ -6,12 +6,19 @@ import struct
 from PIL import Image
 import random
 
-# Initialize Taichi with Vulkan backend
-ti.init(arch=ti.vulkan, device_memory_GB=1.5)
+# Add project root to path so we can import vulkan_nn_lib
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
 import vulkan_nn_lib.torch_shim as torch
 import vulkan_nn_lib.core as vnn
 from vulkan_nn_lib.optimizers import AutoAdam
+from vulkan_nn_lib.memory import MemoryManager
+
+# Dynamic VRAM budget for Taichi
+vram_budget_gb = MemoryManager.get_vram_budget() / 1024**3
+ti.init(arch=ti.vulkan, device_memory_GB=max(0.5, vram_budget_gb))
 
 def read_next_bytes(fid, num_bytes, format_char_sequence, endian_character="<"):
     data = fid.read(num_bytes)

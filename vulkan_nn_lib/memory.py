@@ -82,16 +82,16 @@ class MemoryManager:
             )
             total, free = map(int, res.decode().split(','))
             
-            # If VRAM is very low (< 2GB), be extremely paranoid to avoid driver timeouts
-            if total < 2048:
-                return int(free * 1024 * 1024 * 0.4) 
-            return int(free * 1024 * 1024 * 0.7)
+            # If VRAM is very low (< 2GB), be slightly more aggressive to avoid wasting precious MBs
+            if total < 2048 * 1024 * 1024:
+                return int(free * 1024 * 1024 * 0.75) 
+            return int(free * 1024 * 1024 * 0.85)
         except:
             # Fallback to sysfs if nvidia-smi fails
             info = cls.get_vram_info()
             total = info.get('Total', 1024 * 1024 * 1024)
             available = info.get('Available', total // 2)
-            return int(available * 0.6)
+            return int(available * 0.8) # increased from 0.6
     @classmethod
     def get_safe_budget(cls):
         info = cls.get_mem_info()
