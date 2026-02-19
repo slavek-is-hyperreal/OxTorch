@@ -94,8 +94,16 @@ class TilePrefetcher:
 
     def _read_tile(self, start, end):
         try:
-            # Explicitly copy to resident RAM
-            raw = self.tensor.arr[start:end].copy()
+            # Unified storage access: if not SSD, we MUST use np_arr shadow
+            if self.tensor.device == 'ssd':
+                storage = self.tensor.arr
+            else:
+                # Restoration: ensure np_arr exists or fallback to full download
+                if not hasattr(self.tensor, 'np_arr') or self.tensor.np_arr is None:
+                     self.tensor.np_arr = self.tensor.to_numpy().flatten()
+                storage = self.tensor.np_arr
+            
+            raw = storage[start:end].copy()
             if self.tensor.dtype == 'int4':
                 # Dequantize on-the-fly during prefetch
                 n = end - start
@@ -127,26 +135,30 @@ class SOE:
     def mean(a):
         """OOM-safe tiled mean using prefetched sum."""
         s = SOE.sum(a)
-        m = s.to_numpy()[0] / a.total_size
+        val = s.to_numpy()
+        m = (val[0] if val.ndim > 0 else val.item()) / a.total_size
         Tensor = get_tensor_class()
         return Tensor([m], shape=(), device='cpu')
 
     @staticmethod
     def elementwise_op(a, b, op_type, out_device='auto', extra=None):
         """Adaptive component-wise op using ParallelTilePrefetcher and PyTorch backend."""
-        n = a.total_size
+        n_a = a.total_size
+        n_b = b.total_size if isinstance(b, get_tensor_class()) else 1
+        n = max(n_a, n_b)
         item_size = a.item_size
         total_size_bytes = int(n * item_size)
         
         safe_budget = MemoryManager.get_safe_budget()
         
         if out_device == 'auto':
-            if a.device == 'ssd' or total_size_bytes > safe_budget:
+            # Default to primary operand's device
+            out_device = a.device
+            # But if too large for RAM, force SSD
+            if a.device != 'ssd' and total_size_bytes > safe_budget:
                 out_device = 'ssd'
-            else:
-                out_device = 'cpu'
         
-        # FINAL GUARD: If a is on SSD, result MUST be on SSD for komponenent-wise
+        # FINAL GUARD: If a is on SSD, result MUST be on SSD for component-wise
         if a.device == 'ssd': out_device = 'ssd'
             
         Tensor = get_tensor_class()
@@ -162,192 +174,286 @@ class SOE:
         # Output is usually float32 for compute safety unless explicitly requested
         res_dtype = a.dtype if a.dtype != 'int4' else np.float32
         if op_type == 'div' or op_type == 'truediv': res_dtype = np.float32
-        res = Tensor(None, shape=a.shape, device=out_device, dtype=res_dtype)
+        # Determine master tensor for tiling (prefetch the large one)
+        master = a if n_a >= n_b else b
         
         look_ahead = 12
         total_overlap = SOE.MAX_THREADS + look_ahead
         tile_len = max(1000, min(n, (safe_budget // total_overlap) // item_size))
+        
+        # 1. Thaw operands: Ensure operands have valid RAM shadows BEFORE resolve and prefetch
+        def thaw(t):
+            if not isinstance(t, get_tensor_class()): return
+            if t.device in ['vulkan', 'hybrid']:
+                if not hasattr(t, 'np_arr') or t.np_arr is None:
+                    t.np_arr = t.to_numpy().flatten()
+        
+        thaw(a); thaw(b); thaw(extra)
+
+        # 2. Extract constant if one operand is scalar
+        const_val = 0.0
+        if n_a != n_b:
+            other = b if n_a > n_b else a
+            if other is not None:
+                if isinstance(other, get_tensor_class()):
+                    const_val = float(other.to_numpy().flatten()[0])
+                else:
+                    const_val = float(other)
+
+        # 3. Resolve Backend & Master
+        eff_device = out_device if out_device != 'auto' else a.device
+        if out_device == 'auto' and a.device == 'ssd': eff_device = 'ssd'
+        
+        use_vulkan = (eff_device == 'vulkan')
+        use_hybrid = (eff_device == 'hybrid' or eff_device == 'ssd')
+        use_kaggle = (eff_device == 'kaggle')
+        
+        master = a if n_a >= n_b else b
+        swapped = (n_a < n_b)
+        n_extra = extra.total_size if isinstance(extra, get_tensor_class()) else 1
+        a_is_cached = (n_a < safe_budget * 0.4)
+        b_is_cached = (n_b < safe_budget * 0.4)
+        extra_is_cached = (n_extra < safe_budget * 0.4) if extra is not None else True
+
+        # 4. Result Initialization (with RAM shadow for tiling)
+        if eff_device in ['vulkan', 'hybrid']:
+            res = Tensor(np.zeros(master.shape, dtype=res_dtype), device=eff_device)
+        else:
+            res = Tensor(None, shape=master.shape, device=eff_device, dtype=res_dtype)
+        
+        write_target = res.np_arr if hasattr(res, 'np_arr') else res.arr
+
+        # 5. Resolve Storage for workers (Prioritize RAM shadow to avoid GPU sync)
+        def get_storage(t):
+            if t is None: return None
+            # If not SSD, MUST have np_arr (ensured by thaw)
+            if t.device != 'ssd':
+                if not hasattr(t, 'np_arr') or t.np_arr is None:
+                     from .tensor import Tensor
+                     if isinstance(t, Tensor):
+                         if isinstance(t.arr, np.ndarray):
+                             t.np_arr = t.arr.flatten()
+                         else:
+                             t.np_arr = t.arr.to_numpy().flatten()
+                return t.np_arr
+            return t.arr
 
         b_val = b
         b_is_cached = False
         if isinstance(b, Tensor):
             if b.total_size * b.item_size < safe_budget * 0.2:
-                b_val = b.to_numpy().flatten()
+                # Small tensor: Cache as flat numpy for workers
+                b_raw = get_storage(b)
+                # Force f32 for Vulkan compatibility if needed, but here it's for workers
+                b_val = b_raw.flatten().astype(np.float32) if use_vulkan or use_hybrid else b_raw.flatten()
                 b_is_cached = True
             else:
-                b_val = b.arr
+                b_val = get_storage(b)
         
-        prefetcher_a = TilePrefetcher(a, tile_len, look_ahead=look_ahead)
-        torch = _get_torch()
-        
-        # Automatic Heterogeneous Acceleration
-        vram_budget = MemoryManager.get_vram_budget()
-        can_vulkan = vram_budget > (tile_len * item_size * 3)
-        
-        # Decide if we should go Hybrid
-        use_vulkan = False
-        use_hybrid = False
-        
-        # Determine effective device
-        eff_device = out_device if out_device != 'auto' else a.device
-        
-        # SSD tensors should use Vulkan/Hybrid if VRAM budget allows
-        is_ssd_backed = (eff_device == 'ssd')
-        
-        if eff_device == 'hybrid' or (is_ssd_backed and can_vulkan and total_size_bytes > 1e9):
-            use_hybrid = True
-        elif eff_device == 'vulkan' or (is_ssd_backed and can_vulkan):
-            use_vulkan = True
-
-        ti_a = None
-        ti_b = None
-        ti_out = None
+        prefetcher_m = TilePrefetcher(master, tile_len, look_ahead=look_ahead, num_consumers=(2 if use_hybrid else 1))
+ 
+        ti_a = None; ti_b = None; ti_out = None; ti_extra = None
         if use_vulkan or use_hybrid:
             import taichi as ti
             ti_a = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
             ti_out = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
-            # Only use ti_b if b is an array of SAME total size as a (for 1:1 tiling)
-            if isinstance(b, get_tensor_class()) and b.total_size == a.total_size:
+            if n_a == n_b == n:
                 ti_b = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
+            if extra is not None:
+                ti_extra = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
 
-        prefetcher_a = TilePrefetcher(a, tile_len, num_consumers=(2 if use_hybrid else 1))
-
-        def process_tile_vulkan(start, end, a_ram):
+        # 2. Extract constant logic moved up for cleanliness
+ 
+        def process_tile_vulkan(start, end, m_ram):
             try:
-                if isinstance(b, get_tensor_class()):
-                    if b.total_size == 1: 
-                        b_ram = float(b.to_numpy().flatten()[0])
-                    elif b.total_size == a.total_size:
-                        b_ram = b_val[start:end] if b_is_cached else b_val[start:end].copy()
-                    else:
-                        # Broadcasting: fall back to CPU or specialized kernels (not implemented here)
-                        raise ValueError(f"Broadcasting tiling (a:{a.total_size}, b:{b.total_size}) not supported in Vulkan.")
-                else: b_ram = b_val
+                # 1. Prepare ti_a/ti_b based on broadcasting
+                # We normalize: ti_a is ALWAYS the master (the one being prefetched)
+                # If swapped, we use specialized 'reverse' kernels if needed
                 
-                # Taichi from_numpy requires exact shape match. Pad if tile is smaller (happens on last block)
-                if len(a_ram) < tile_len:
-                    a_pad = np.zeros(tile_len, dtype=np.float32)
-                    a_pad[:len(a_ram)] = a_ram
-                    ti_a.from_numpy(a_pad)
-                else:
-                    ti_a.from_numpy(a_ram)
-                
+                # Padding last tile
+                m_pad = m_ram
+                if len(m_ram) < tile_len:
+                    m_pad = np.zeros(tile_len, dtype=np.float32)
+                    m_pad[:len(m_ram)] = m_ram
+                ti_a.from_numpy(m_pad.astype(np.float32))
+ 
                 if ti_b is not None:
-                    if len(b_ram) < tile_len:
-                        b_pad = np.zeros(tile_len, dtype=np.float32)
-                        b_pad[:len(b_ram)] = b_ram
-                        ti_b.from_numpy(b_pad)
-                    else:
-                        ti_b.from_numpy(b_ram)
+                    # Same-shape case (m_ram is master, other_ram is slave)
+                    storage_b = get_storage(b) if n_a >= n_b else get_storage(a)
+                    other_ram = storage_b[start:end].copy() if hasattr(storage_b, '__getitem__') else storage_b
+                    if len(other_ram) < tile_len:
+                        p = np.zeros(tile_len, dtype=np.float32)
+                        p[:len(other_ram)] = other_ram; other_ram = p
+                    ti_b.from_numpy(other_ram.astype(np.float32))
+                # const_val is already extracted in parent scope
 
+                if ti_extra is not None:
+                    if isinstance(extra, get_tensor_class()):
+                        storage_extra = get_storage(extra)
+                        extra_ram = storage_extra[start:end].copy()
+                        if len(extra_ram) < tile_len:
+                            p = np.zeros(tile_len, dtype=np.float32)
+                            p[:len(extra_ram)] = extra_ram; extra_ram = p
+                        ti_extra.from_numpy(extra_ram.astype(np.float32))
+                    else:
+                        # Extra is a scalar
+                        e_pad = np.full(tile_len, float(extra), dtype=np.float32)
+                        ti_extra.from_numpy(e_pad)
+
+                # 3. Dispatch kernel
+                is_swapped = (n_a < n_b) # True if b is master
+                
                 if ti_b is not None:
+                    # Same shape array-array
                     if op_type == 'add': K.k_add(ti_a, ti_b, end-start, end-start)
-                    elif op_type == 'sub': K.k_sub(ti_a, ti_b, end-start, end-start)
+                    elif op_type == 'sub': 
+                        if not is_swapped: K.k_sub(ti_a, ti_b, end-start, end-start)
+                        else: 
+                            # swapping handles res = ti_b - ti_a = a - b
+                            K.k_sub(ti_b, ti_a, end-start, end-start)
+                            # Copy from b to a to keep final copy logic unified if possible, or just copy to out
+                            K.k_copy(ti_b, ti_out, end-start)
                     elif op_type == 'mul': K.k_mul(ti_a, ti_b, end-start, end-start)
-                    elif op_type == 'div': K.k_div(ti_a, ti_b, end-start, end-start)
+                    elif op_type == 'div' or op_type == 'truediv': 
+                        if not is_swapped: K.k_div(ti_a, ti_b, end-start, end-start)
+                        else:
+                            K.k_div(ti_b, ti_a, end-start, end-start)
+                            K.k_copy(ti_b, ti_out, end-start)
                     elif op_type == 'gt': K.k_gt(ti_a, ti_b, ti_out, end-start, end-start)
                     elif op_type == 'lt': K.k_lt(ti_a, ti_b, ti_out, end-start, end-start)
                     elif op_type == 'ge': K.k_ge(ti_a, ti_b, ti_out, end-start, end-start)
                     elif op_type == 'le': K.k_le(ti_a, ti_b, ti_out, end-start, end-start)
                     elif op_type == 'eq': K.k_eq(ti_a, ti_b, ti_out, end-start, end-start)
                     elif op_type == 'ne': K.k_ne(ti_a, ti_b, ti_out, end-start, end-start)
-                    import taichi as ti
-                    ti.sync()
-                    if op_type in ['add', 'sub', 'mul', 'div']: K.k_copy(ti_a, ti_out, end-start)
+                    import taichi as ti; ti.sync()
+                    if op_type in ['add', 'mul'] or (op_type in ['sub', 'div', 'truediv'] and not is_swapped):
+                         K.k_copy(ti_a, ti_out, end-start)
                 else:
-                    if op_type == 'add': K.k_add_scalar(ti_a, b_ram, end-start); K.k_copy(ti_a, ti_out, end-start)
-                    elif op_type == 'mul': K.k_scale(ti_a, b_ram, end-start); K.k_copy(ti_a, ti_out, end-start)
-                    elif op_type == 'gt': K.k_gt_scalar(ti_a, b_ram, ti_out, end-start)
-                    elif op_type == 'lt': K.k_lt_scalar(ti_a, b_ram, ti_out, end-start)
-                    elif op_type == 'ge': K.k_ge_scalar(ti_a, b_ram, ti_out, end-start)
-                    elif op_type == 'le': K.k_le_scalar(ti_a, b_ram, ti_out, end-start)
-                    elif op_type == 'eq': K.k_eq_scalar(ti_a, b_ram, ti_out, end-start)
-                    elif op_type == 'ne': K.k_ne_scalar(ti_a, b_ram, ti_out, end-start)
-                    elif op_type == 'exp': K.k_exp(ti_a, ti_out, end-start)
-                    elif op_type == 'log': K.k_log(ti_a, ti_out, end-start)
-                    elif op_type == 'sqrt': K.k_sqrt(ti_a, ti_out, end-start)
-                    elif op_type == 'tanh': K.k_tanh(ti_a, ti_out, end-start)
+                    # Scalar-Array broadcasting
+                    if op_type == 'add': K.k_add_scalar(ti_a, const_val, end-start); K.k_copy(ti_a, ti_out, end-start)
+                    elif op_type == 'mul': K.k_scale(ti_a, const_val, end-start); K.k_copy(ti_a, ti_out, end-start)
+                    elif op_type == 'sub':
+                        if not is_swapped: # a - const
+                            K.k_add_scalar(ti_a, -const_val, end-start); K.k_copy(ti_a, ti_out, end-start)
+                        else: # const - b
+                            K.k_rsub_scalar(ti_a, const_val, ti_out, end-start)
+                    elif op_type == 'div' or op_type == 'truediv':
+                        if not is_swapped: # a / const
+                            K.k_scale(ti_a, 1.0/const_val, end-start); K.k_copy(ti_a, ti_out, end-start)
+                        else: # const / b
+                            K.k_rdiv_scalar(ti_a, const_val, ti_out, end-start)
+                    elif op_type == 'gt': K.k_gt_scalar(ti_a, const_val, ti_out, end-start)
+                    elif op_type == 'lt': K.k_lt_scalar(ti_a, const_val, ti_out, end-start)
+                    elif op_type == 'ge': K.k_ge_scalar(ti_a, const_val, ti_out, end-start)
+                    elif op_type == 'le': K.k_le_scalar(ti_a, const_val, ti_out, end-start)
+                    elif op_type == 'eq': K.k_eq_scalar(ti_a, const_val, ti_out, end-start)
+                    elif op_type == 'ne': K.k_ne_scalar(ti_a, const_val, ti_out, end-start)
                     elif op_type == 'relu': K.k_copy(ti_a, ti_out, end-start); K.k_relu_1d(ti_out, end-start)
+                    elif op_type == 'sigmoid': K.k_sigmoid_1d(ti_a, end-start); K.k_copy(ti_a, ti_out, end-start)
                     elif op_type == 'silu': K.k_copy(ti_a, ti_out, end-start); K.k_silu_1d(ti_out, end-start)
-                    elif op_type == 'gelu_tanh': K.k_copy(ti_a, ti_out, end-start); K.k_gelu_tanh(ti_out, end-start)
-                    import taichi as ti
-                    ti.sync()
+                    elif op_type == 'sigmoid_backward': K.k_sigmoid_backward(ti_a, ti_extra, ti_out, end-start)
+                    elif op_type == 'silu_backward_direct': K.k_silu_backward_direct(ti_a, ti_extra, ti_out, end-start)
+                    import taichi as ti; ti.sync()
                 
                 ti.sync()
                 res_tile = ti_out.to_numpy()
-                res.arr[start:end] = res_tile[:end-start]
+                write_target[start:end] = res_tile[:end-start]
             except Exception as e:
-                print(f"    [SOE] Vulkan Panic in elementwise_op: {e} | Falling back to CPU.")
-                process_tile_cpu(start, end, a_ram)
+                print(f"    [SOE] Vulkan Panic in elementwise_op: {e}")
+                raise
 
-        def process_tile_cpu(start, end, a_ram):
+        def process_tile_cpu(start, end, m_ram):
             try:
-                if isinstance(b, get_tensor_class()):
-                    if b.total_size == 1: b_ram = float(b.to_numpy().flatten()[0])
-                    elif b_is_cached: b_ram = b_val[start:end]
-                    else: b_ram = b_val[start:end].copy()
-                else: b_ram = b_val
+                # m_ram is master, const_val/other_ram is slave
+                _torch = _get_torch()
+                if ti_b is not None:
+                    # other is also a large tensor (same shape)
+                    storage_other = get_storage(b) if not swapped else get_storage(a)
+                    o_cached = b_is_cached if not swapped else a_is_cached
+                    if not o_cached and hasattr(storage_other, '__getitem__'):
+                        other_ram = storage_other[start:end].copy()
+                    else:
+                        other_ram = storage_other if o_cached else storage_other[start:end]
+                    a_t = _torch.from_numpy(m_ram if not swapped else other_ram)
+                    b_t = _torch.from_numpy(other_ram if not swapped else m_ram)
+                else:
+                    # other is scalar (const_val)
+                    a_t = _torch.from_numpy(m_ram) if not swapped else const_val
+                    b_t = const_val if not swapped else _torch.from_numpy(m_ram)
                 
-                if torch:
-                    a_t = torch.from_numpy(a_ram)
-                    b_t = torch.from_numpy(b_ram) if isinstance(b_ram, np.ndarray) else b_ram
+                _torch = _get_torch()
+                extra_t = None
+                if extra is not None:
+                    if hasattr(extra, 'arr') and hasattr(extra.arr, '__getitem__') and not extra_is_cached:
+                        extra_t = _torch.from_numpy(extra.arr[start:end].copy())
+                    elif isinstance(extra, (int, float)):
+                        extra_t = extra
+                    elif hasattr(extra, 'to_numpy'):
+                        extra_t = _torch.from_numpy(extra.to_numpy())
+                    else:
+                        extra_t = _torch.from_numpy(get_storage(extra))
+
+                if _torch is not None:
+                    # a_t and b_t are now correctly ordered regardless of who is master
                     if op_type == 'add': r_t = a_t + b_t
                     elif op_type == 'sub': r_t = a_t - b_t
                     elif op_type == 'mul': r_t = a_t * b_t
-                    elif op_type == 'div': r_t = a_t / b_t
+                    elif op_type == 'div' or op_type == 'truediv': r_t = a_t / (b_t + 1e-12)
                     elif op_type == 'gt': r_t = (a_t > b_t).float()
                     elif op_type == 'lt': r_t = (a_t < b_t).float()
                     elif op_type == 'ge': r_t = (a_t >= b_t).float()
                     elif op_type == 'le': r_t = (a_t <= b_t).float()
                     elif op_type == 'eq': r_t = (a_t == b_t).float()
                     elif op_type == 'ne': r_t = (a_t != b_t).float()
-                    elif op_type == 'exp': r_t = torch.exp(a_t)
-                    elif op_type == 'log': r_t = torch.log(a_t)
-                    elif op_type == 'sqrt': r_t = torch.sqrt(a_t)
-                    elif op_type == 'tanh': r_t = torch.tanh(a_t)
-                    elif op_type == 'pow': r_t = torch.pow(a_t, b_t)
-                    elif op_type == 'relu': r_t = torch.relu(a_t)
-                    elif op_type == 'leaky_relu': r_t = torch.nn.functional.leaky_relu(a_t, negative_slope=extra if extra else 0.01)
-                    elif op_type == 'silu': r_t = torch.nn.functional.silu(a_t)
-                    elif op_type == 'gelu_tanh': 
-                        # GELU Tanh approximation parity
-                        r_t = 0.5 * a_t * (1.0 + torch.tanh(0.7978845608 * (a_t + 0.044715 * a_t**3)))
+                    elif op_type == 'exp': r_t = _torch.exp(a_t)
+                    elif op_type == 'log': r_t = _torch.log(a_t + 1e-12)
+                    elif op_type == 'sqrt': r_t = _torch.sqrt(a_t)
+                    elif op_type == 'tanh': r_t = _torch.tanh(a_t)
+                    elif op_type == 'pow': r_t = _torch.pow(a_t, b_t)
+                    elif op_type == 'relu': r_t = _torch.relu(a_t)
+                    elif op_type == 'leaky_relu': r_t = _torch.nn.functional.leaky_relu(a_t, negative_slope=extra if extra else 0.01)
+                    elif op_type == 'sigmoid': r_t = _torch.sigmoid(a_t)
+                    elif op_type == 'silu': r_t = _torch.nn.functional.silu(a_t)
+                    elif op_type == 'sigmoid_backward':
+                        sig = _torch.sigmoid(a_t)
+                        r_t = extra_t * sig * (1.0 - sig)
+                    elif op_type == 'silu_backward_direct':
+                        # sig = 1 / (1 + exp(-x)), deriv = sig * (1 + x * (1 - sig))
+                        sig = _torch.sigmoid(a_t)
+                        r_t = extra_t * sig * (1.0 + a_t * (1.0 - sig))
+                    elif op_type == 'leaky_relu_backward':
+                        mask = (a_t > 0).float()
+                        r_t = extra_t * (mask + (1.0 - mask) * extra) 
+                    elif op_type == 'gelu_tanh_backward':
+                        # Precise GELU derivative
+                        r_t = extra_t * (0.5 * (1.0 + _torch.tanh(0.7978845608 * (a_t + 0.044715 * a_t**3))) + 
+                                         0.5 * a_t * (1.0 - _torch.tanh(0.7978845608 * (a_t + 0.044715 * a_t**3))**2) * 
+                                         0.7978845608 * (1.0 + 3.0 * 0.044715 * a_t**2))
+                    elif op_type == 'gelu_tanh':
+                        r_t = 0.5 * a_t * (1.0 + _torch.tanh(0.7978845608 * (a_t + 0.044715 * a_t**3)))
                     elif op_type == 'masked_fill':
                         r_t = a_t.clone()
                         r_t[b_t > 0.5] = extra
                     else: r_t = a_t
-                    res_np = r_t.numpy()
-                else:
-                    out_ram = np.empty_like(a_ram)
-                    if op_type == 'add': np.add(a_ram, b_ram, out=out_ram)
-                    elif op_type == 'sub': np.subtract(a_ram, b_ram, out=out_ram)
-                    elif op_type == 'mul': np.multiply(a_ram, b_ram, out=out_ram)
-                    elif op_type == 'div': np.divide(a_ram, b_ram, out=out_ram)
-                    elif op_type == 'exp': np.exp(a_ram, out=out_ram)
-                    elif op_type == 'log': np.log(a_ram, out=out_ram)
-                    elif op_type == 'sqrt': np.sqrt(a_ram, out=out_ram)
-                    elif op_type == 'pow': np.power(a_ram, b_ram, out=out_ram)
-                    elif op_type == 'masked_fill':
-                        out_ram[:] = a_ram
-                        out_ram[b_ram > 0.5] = extra
-                    res_np = out_ram
-
-                res.arr[start:end] = res_np
+                res_np = r_t.numpy()
+                write_target[start:end] = res_np.flatten()
+                if hasattr(write_target, 'flush'): 
+                    # Coherence: Flush each tile if writing directly to SSD memmap
+                    write_target.flush()
             except Exception as e:
                 print(f"    [SOE] process_tile_cpu ERROR: {e}")
                 raise
 
         print(f"  [ARAS] Elementwise {op_type} on {total_size_bytes/1e6:.1f}MB tensor ({'Hybrid' if use_hybrid else 'Vulkan' if use_vulkan else 'CPU'})")
-        print(f"    [DEBUG] b_is_cached={b_is_cached}, use_vulkan={use_vulkan}, tile_len={tile_len}")
         
         gpu_lock = threading.Lock()
         def gpu_worker():
             while True:
-                item = prefetcher_a.get_tile()
+                item = prefetcher_m.get_tile()
                 if item is None: break
-                start, end, a_ram = item
+                s_v, e_v, m_v = item
                 with gpu_lock:
-                    process_tile_vulkan(start, end, a_ram)
+                    process_tile_vulkan(s_v, e_v, m_v)
 
         t_start = time.perf_counter()
         if use_hybrid:
@@ -357,27 +463,39 @@ class SOE:
                 g_thread.start()
                 
                 while True:
-                    item = prefetcher_a.get_tile()
-                    if item is None: break
-                    start, end, a_ram = item
-                    cpu_executor.submit(process_tile_cpu, start, end, a_ram)
+                    item_cpu = prefetcher_m.get_tile()
+                    if item_cpu is None: break
+                    sc, ec, mc = item_cpu
+                    cpu_executor.submit(process_tile_cpu, sc, ec, mc)
                 
-                # prefetcher_a.get_tile() willEventually return None for the gpu_worker too
                 g_thread.join()
         elif use_vulkan:
             with ThreadPoolExecutor(max_workers=1) as executor: # GPU is serial per card
                 while True:
-                    item = prefetcher_a.get_tile()
-                    if item is None: break
-                    start, end, a_ram = item
-                    executor.submit(process_tile_vulkan, start, end, a_ram)
+                    item_v = prefetcher_m.get_tile()
+                    if item_v is None: break
+                    sv, ev, mv = item_v
+                    executor.submit(process_tile_vulkan, sv, ev, mv)
         else:
             with ThreadPoolExecutor(max_workers=SOE.MAX_THREADS) as executor:
                 while True:
-                    item = prefetcher_a.get_tile()
-                    if item is None: break
-                    start, end, a_ram = item
-                    executor.submit(process_tile_cpu, start, end, a_ram)
+                    item_c = prefetcher_m.get_tile()
+                    if item_c is None: break
+                    s_c, e_c, m_c = item_c
+                    executor.submit(process_tile_cpu, s_c, e_c, m_c)
+
+        # Final Sync & Persistence
+        if res.device in ['vulkan', 'hybrid'] and hasattr(res, 'np_arr'):
+            # Convert to f32 for Taichi (default) and sync
+            res.arr.from_numpy(res.np_arr.astype(np.float32))
+            import taichi as ti
+            ti.sync()
+            
+        if a.device == 'ssd' or out_device == 'ssd':
+            if hasattr(res.arr, 'flush'):
+                 res.arr.flush()
+                 try: os.fsync(res.arr.fileno())
+                 except: pass
             
         t_end = time.perf_counter()
         final_speed = (n * item_size / (t_end - t_start)) / 1e6
@@ -469,19 +587,32 @@ class SOE:
                 if isinstance(b, get_tensor_class()):
                     if b.total_size == 1: b_ram = float(b.to_numpy().flatten()[0])
                     elif b_is_cached: b_ram = b_val[start:end]
-                    else: b_ram = b_val[start:end].copy()
-                else: b_ram = b_val
+                    if b.total_size == 1: 
+                        b_val_current = float(b.to_numpy().flatten()[0])
+                        is_b_scalar = True
+                    elif b_is_cached: 
+                        b_val_current = b_val[start:end]
+                        is_b_scalar = False
+                    else: 
+                        b_val_current = b_val[start:end].copy()
+                        is_b_scalar = False
+                else: 
+                    b_val_current = b_val # b_val is already the scalar
+                    is_b_scalar = True
                 
                 ti_a.from_numpy(a_ram)
-                if ti_b is not None:
-                    ti_b.from_numpy(b_ram)
+                
+                if not is_b_scalar: # b is a tensor
+                    ti_b.from_numpy(b_val_current)
                     if op_type == 'add': K.k_add(ti_a, ti_b, end-start, end-start)
                     elif op_type == 'sub': K.k_sub(ti_a, ti_b, end-start, end-start)
                     elif op_type == 'mul': K.k_mul(ti_a, ti_b, end-start, end-start)
                     elif op_type == 'div': K.k_div(ti_a, ti_b, end-start, end-start)
-                else:
-                    if op_type == 'add': K.k_add_scalar(ti_a, b_ram, end-start)
-                    elif op_type == 'mul': K.k_scale(ti_a, b_ram, end-start)
+                else: # b is a scalar
+                    if op_type == 'add': K.k_add_scalar(ti_a, b_val_current, end-start)
+                    elif op_type == 'sub': K.k_sub_scalar(ti_a, b_val_current, end-start) # a - scalar
+                    elif op_type == 'mul': K.k_scale(ti_a, b_val_current, end-start)
+                    elif op_type == 'div': K.k_div_scalar(ti_a, b_val_current, end-start) # a / scalar
                 
                 import taichi as ti
                 ti.sync() # Synchronize before reading result to prevent Device Lost

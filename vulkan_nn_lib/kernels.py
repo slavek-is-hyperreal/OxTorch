@@ -98,6 +98,16 @@ def k_add_scalar(A: ti.types.ndarray(), B: float, size: int):
         A[i] += B
 
 @ti.kernel
+def k_rsub_scalar(A: ti.types.ndarray(), Scalar: float, Out: ti.types.ndarray(), size: int):
+    for i in range(size):
+        Out[i] = Scalar - A[i]
+
+@ti.kernel
+def k_rdiv_scalar(A: ti.types.ndarray(), Scalar: float, Out: ti.types.ndarray(), size: int):
+    for i in range(size):
+        Out[i] = Scalar / A[i]
+
+@ti.kernel
 def k_gt_scalar(A: ti.types.ndarray(), B: float, Out: ti.types.ndarray(), size: int):
     for i in range(size):
         Out[i] = 1.0 if A[i] > B else 0.0
@@ -238,6 +248,25 @@ def k_silu_1d(X: ti.types.ndarray(), Total: int):
     for i in range(Total):
         x = X[i]
         X[i] = x / (1.0 + ti.exp(-x))
+
+@ti.kernel
+def k_sigmoid_1d(X: ti.types.ndarray(), Total: int):
+    for i in range(Total):
+        X[i] = 1.0 / (1.0 + ti.exp(-X[i]))
+
+@ti.kernel
+def k_sigmoid_backward(X: ti.types.ndarray(), Grad_Out: ti.types.ndarray(), Grad_X: ti.types.ndarray(), Total: int):
+    for i in range(Total):
+        s = 1.0 / (1.0 + ti.exp(-X[i]))
+        Grad_X[i] += Grad_Out[i] * s * (1.0 - s)
+
+@ti.kernel
+def k_silu_backward_direct(X: ti.types.ndarray(), Grad_Out: ti.types.ndarray(), Grad_X: ti.types.ndarray(), Total: int):
+    for i in range(Total):
+        x = X[i]
+        sig = 1.0 / (1.0 + ti.exp(-x))
+        # d(x*sig)/dx = sig + x*sig*(1-sig) = sig * (1 + x*(1-sig))
+        Grad_X[i] += Grad_Out[i] * sig * (1.0 + x * (1.0 - sig))
 
 @ti.kernel
 def k_gelu_tanh(X: ti.types.ndarray(), Total: int):

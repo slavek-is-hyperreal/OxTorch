@@ -76,18 +76,14 @@ class Tensor:
         if device == 'auto':
             if external_path:
                 device = 'ssd'
-            # 1. Try Vulkan (only for float32 for now)
-            elif self.dtype == np.float32 and size_bytes <= 128 * 1024 * 1024:
-                device = 'vulkan'
             else:
-                safe_budget = MemoryManager.get_safe_budget()
-                if size_bytes <= safe_budget: 
-                    device = 'cpu'
-                else:
+                if MemoryManager.should_offload_to_ssd(size_bytes):
                     device = 'ssd'
-
-        if device == 'vulkan' and size_bytes > 2e8: # Prevent huge Vulkan allocations that crash
-             device = 'ssd'
+                elif self.dtype == np.float32 and size_bytes <= 128 * 1024 * 1024:
+                    # Small float32 tensors default to vulkan in 'auto' mode
+                    device = 'vulkan'
+                else:
+                    device = 'cpu'
         
         self.device = device
         
@@ -126,6 +122,9 @@ class Tensor:
                     self.arr[:] = np.array(data, dtype=self.dtype).flatten()
                 else: # scalar
                     self.arr.fill(data)
+                
+                if hasattr(self.arr, 'flush'): 
+                    self.arr.flush()
             
             # CRITICAL: Do not fall through to CPU/VULKAN init!
             self.requires_grad = requires_grad
@@ -313,37 +312,30 @@ class Tensor:
         return self.to_numpy().flatten()[indices]
 
     def to_numpy(self):
-        """Unified data retrieval."""
-        if self.dtype == 'int4':
-            # Unpack bytes to f32
-            n = self.total_size
-            unpacked = np.zeros(n, dtype=np.float32)
-            packed = self.arr
-            unpacked[0::2] = (packed & 0x0F).astype(np.float32) - 8.0
-            unpacked[1::2] = ((packed >> 4) & 0x0F).astype(np.float32) - 8.0
-            return unpacked.reshape(self.shape)
+        """Unified data retrieval with robust shape handling."""
+        def safe_reshape(arr, target_shape):
+            try:
+                return arr.reshape(target_shape if target_shape else (int(np.prod(arr.shape)),))
+            except:
+                return arr.flatten()
 
         if self.device == 'vulkan':
-            if not hasattr(self.arr, 'to_numpy'):
-                # Fallback if device set to vulkan but data still on CPU
-                return self.arr.reshape(self.shape)
+            if hasattr(self, 'np_arr') and self.np_arr is not None:
+                return safe_reshape(self.np_arr, self.shape)
             ti.sync()
-            return self.arr.to_numpy().reshape(self.shape)
+            return safe_reshape(self.arr.to_numpy(), self.shape)
 
-        # CPU Mode: self.arr is already a numpy array
-        if isinstance(self.arr, np.ndarray):
-            return self.arr.reshape(self.shape)
-        
+        # CPU/SSD Mode: self.arr is already a numpy-like array
         if self.dtype == 'int4':
             # Unpack bytes to f32
             n = self.total_size
-            unpacked = np.zeros(n, dtype=np.float32)
             packed = self.arr
+            unpacked = np.zeros(n, dtype=np.float32)
             unpacked[0::2] = (packed & 0x0F).astype(np.float32) - 8.0
             unpacked[1::2] = ((packed >> 4) & 0x0F).astype(np.float32) - 8.0
-            return unpacked.reshape(self.shape)
+            return safe_reshape(unpacked, self.shape)
             
-        return self.arr.reshape(self.shape)
+        return safe_reshape(self.arr, self.shape)
 
     def numpy(self):
         """PyTorch parity alias."""
@@ -477,25 +469,21 @@ class Tensor:
         return res
 
     def relu(self):
-        size_bytes = self.total_size * self.item_size
-        if self.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
-            res_t = torch.relu(torch.from_numpy(self.to_numpy()))
-            res = Tensor(res_t.numpy(), device='cpu', dtype=self.dtype, shape=self.shape)
-        elif self.device == 'ssd' or MemoryManager.should_tile(size_bytes):
-            from . import streaming_ops as SOE
-            res = SOE.SOE.elementwise_op(self, None, 'relu')
-        else:
-            res = Tensor(None, shape=self.shape, device=self.device)
-            K.k_copy(self.arr, res.arr, self.total_size)
-            K.k_relu_1d(res.arr, self.total_size)
-            if self.device == 'vulkan': ti.sync()
+        from . import functional as F
+        return F.relu(self)
             
         res._prev = {self}
         res.requires_grad = self.requires_grad
         def _backward():
             if self.requires_grad:
-                mask = self > 0
-                self._acc_grad(res.grad * mask)
+                if self.device == 'cpu':
+                    mask = self.to_numpy() > 0
+                    self._acc_grad(res.grad * mask)
+                else:
+                    from . import streaming_ops as SOE
+                    # Use SOE for masked gradient to avoid heavy Autograd chain
+                    mask = (self > 0)
+                    self._acc_grad(res.grad * mask)
         res._backward_fn = _backward
         return res
 
@@ -504,66 +492,16 @@ class Tensor:
         return F.leaky_relu(self, alpha)
 
     def silu(self):
-        size_bytes = self.total_size * self.item_size
-        if self.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
-            res_t = torch.nn.functional.silu(torch.from_numpy(self.to_numpy()))
-            res = Tensor(res_t.numpy(), device='cpu', dtype=self.dtype, shape=self.shape)
-        elif self.device == 'ssd' or MemoryManager.should_tile(size_bytes):
-            from . import streaming_ops as SOE
-            res = SOE.SOE.elementwise_op(self, None, 'silu')
-        else:
-            from . import functional as F
-            res = F.silu(self)
-            
-        res._prev = {self}
-        res.requires_grad = self.requires_grad
-        def _backward():
-            if self.requires_grad:
-                # d(silu(x))/dx = silu(x) + sigmoid(x)*(1-silu(x))
-                sig = self.sigmoid()
-                self._acc_grad(res.grad * (res + sig * (1.0 - res)))
-        res._backward_fn = _backward
-        return res
+        from . import functional as F
+        return F.silu(self)
 
     def gelu_tanh(self):
-        size_bytes = self.total_size * self.item_size
-        if self.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
-            res_t = torch.nn.functional.gelu(torch.from_numpy(self.to_numpy()), approximate='tanh')
-            res = Tensor(res_t.numpy(), device='cpu', dtype=self.dtype, shape=self.shape)
-        elif self.device == 'ssd' or MemoryManager.should_tile(size_bytes):
-            from . import streaming_ops as SOE
-            res = SOE.SOE.elementwise_op(self, None, 'gelu_tanh')
-        else:
-            from . import functional as F
-            res = F.gelu_tanh(self)
-            
-        res._prev = {self}
-        res.requires_grad = self.requires_grad
-        def _backward():
-            if self.requires_grad:
-                self._acc_grad(res.grad * (res / (self + 1e-6) + 0.5)) 
-        res._backward_fn = _backward
-        return res
+        from . import functional as F
+        return F.gelu_tanh(self)
 
     def softmax(self, dim=-1):
-        size_bytes = self.total_size * self.item_size
-        if self.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
-            res_t = torch.nn.functional.softmax(torch.from_numpy(self.to_numpy().reshape(self.shape)), dim=dim)
-            res = Tensor(res_t.numpy().flatten(), device='cpu', dtype=self.dtype, shape=self.shape)
-        else:
-            from . import functional as F
-            res = F.softmax(self, dim)
-            
-        res._prev = {self}
-        res.requires_grad = self.requires_grad
-        def _backward():
-            if self.requires_grad:
-                s = res
-                grad = res.grad
-                sum_grad_s = (grad * s).sum(dim=dim, keepdim=True)
-                self._acc_grad(s * (grad - sum_grad_s))
-        res._backward_fn = _backward
-        return res
+        from . import functional as F
+        return F.softmax(self, dim)
 
     def matmul(self, other):
         """Matrix multiplication with ARAS/Vulkan support."""
@@ -616,19 +554,15 @@ class Tensor:
             executor = KaggleExecutor()
             return executor.submit_operation('add', self, other)
 
-        if self.device == 'cpu' and other.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
-            res_t = torch.from_numpy(self.to_numpy()) + torch.from_numpy(other.to_numpy())
-            res = Tensor(res_t.numpy(), device='cpu', dtype=self.dtype, shape=self.shape)
-        elif self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
+        if self.device in ['ssd', 'vulkan', 'hybrid', 'kaggle'] or (isinstance(other, Tensor) and other.device in ['ssd', 'vulkan', 'hybrid', 'kaggle']) or MemoryManager.should_tile(size_bytes):
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'add')
         else:
+            # Fast in-RAM path for small CPU tensors
             a_t = torch.from_numpy(self.to_numpy())
             b_t = torch.from_numpy(other.to_numpy())
             res_t = a_t + b_t
-            res_np = res_t.numpy()
-            out_device = self.device if self.device != 'cpu' else 'cpu'
-            res = Tensor(res_np, device=out_device, dtype=self.dtype, shape=self.shape)
+            res = Tensor(res_t.numpy(), device='cpu', dtype=self.dtype, shape=self.shape)
             
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
@@ -652,17 +586,15 @@ class Tensor:
             executor = KaggleExecutor()
             return executor.submit_operation('sub', self, other)
 
-        if self.device == 'cpu' and other.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
-            res_t = torch.from_numpy(self.to_numpy()) - torch.from_numpy(other.to_numpy())
-            res = Tensor(res_t.numpy(), device='cpu', dtype=self.dtype, shape=self.shape)
-        elif self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
+        if self.device in ['ssd', 'vulkan', 'hybrid', 'kaggle'] or (isinstance(other, Tensor) and other.device in ['ssd', 'vulkan', 'hybrid', 'kaggle']) or MemoryManager.should_tile(size_bytes):
             from . import streaming_ops as SOE
             res = SOE.SOE.elementwise_op(self, other, 'sub')
         else:
+            # Fast in-RAM path for small CPU tensors
             a_t = torch.from_numpy(self.to_numpy())
             b_t = torch.from_numpy(other.to_numpy())
             res_t = a_t - b_t
-            res = Tensor(res_t.numpy(), device=self.device if self.device != 'cpu' else 'cpu', dtype=self.dtype, shape=self.shape)
+            res = Tensor(res_t.numpy(), device='cpu', dtype=self.dtype, shape=self.shape)
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
         def _backward():
@@ -685,19 +617,15 @@ class Tensor:
             executor = KaggleExecutor()
             return executor.submit_operation('mul', self, other)
 
-        if self.device == 'cpu' and other.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
+        if self.device in ['ssd', 'vulkan', 'hybrid', 'kaggle'] or (isinstance(other, Tensor) and other.device in ['ssd', 'vulkan', 'hybrid', 'kaggle']) or MemoryManager.should_tile(size_bytes):
+            from . import streaming_ops as SOE
+            res = SOE.SOE.elementwise_op(self, other, 'mul')
+        else:
+            # Fast in-RAM path for small CPU tensors
             a_t = torch.from_numpy(self.to_numpy())
             b_t = torch.from_numpy(other.to_numpy())
             res_t = a_t * b_t
             res = Tensor(res_t.numpy(), device='cpu', dtype=self.dtype, shape=self.shape)
-        elif self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
-            from . import streaming_ops as SOE
-            res = SOE.SOE.elementwise_op(self, other, 'mul')
-        else:
-            a_t = torch.from_numpy(self.to_numpy())
-            b_t = torch.from_numpy(other.to_numpy())
-            res_t = a_t * b_t
-            res = Tensor(res_t.numpy(), device=self.device if self.device != 'cpu' else 'cpu', dtype=self.dtype, shape=self.shape)
             
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
@@ -721,19 +649,15 @@ class Tensor:
             executor = KaggleExecutor()
             return executor.submit_operation('div', self, other)
 
-        if self.device == 'cpu' and other.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
+        if self.device in ['ssd', 'vulkan', 'hybrid', 'kaggle'] or (isinstance(other, Tensor) and other.device in ['ssd', 'vulkan', 'hybrid', 'kaggle']) or MemoryManager.should_tile(size_bytes):
+            from . import streaming_ops as SOE
+            res = SOE.SOE.elementwise_op(self, other, 'div')
+        else:
+            # Fast in-RAM path for small CPU tensors
             a_t = torch.from_numpy(self.to_numpy())
             b_t = torch.from_numpy(other.to_numpy())
             res_t = a_t / b_t
             res = Tensor(res_t.numpy(), device='cpu', dtype=np.float32, shape=self.shape)
-        elif self.device == 'ssd' or (isinstance(other, Tensor) and other.device == 'ssd') or MemoryManager.should_tile(self.total_size * self.item_size):
-            from . import streaming_ops as SOE
-            res = SOE.SOE.elementwise_op(self, other, 'div')
-        else:
-            a_t = torch.from_numpy(self.to_numpy())
-            b_t = torch.from_numpy(other.to_numpy())
-            res_t = a_t / b_t
-            res = Tensor(res_t.numpy(), device=self.device if self.device != 'cpu' else 'cpu', dtype=np.float32, shape=self.shape)
             
         res._prev = {self, other}
         res.requires_grad = self.requires_grad or other.requires_grad
@@ -937,9 +861,29 @@ class Tensor:
         return res
 
     def sigmoid(self):
-        # res = 1 / (1 + exp(-x))
-        neg_x = self * -1.0
-        return 1.0 / (1.0 + neg_x.exp())
+        size_bytes = self.total_size * self.item_size
+        if self.device == 'cpu' and not MemoryManager.should_tile(size_bytes):
+            res_t = torch.sigmoid(torch.from_numpy(self.to_numpy()))
+            res = Tensor(res_t.numpy(), device='cpu', dtype=self.dtype, shape=self.shape)
+        elif self.device == 'ssd' or MemoryManager.should_tile(size_bytes):
+            from . import streaming_ops as SOE
+            res = SOE.SOE.elementwise_op(self, None, 'sigmoid')
+        else:
+            res = Tensor(None, shape=self.shape, device=self.device)
+            K.k_copy(self.arr, res.arr, self.total_size)
+            K.k_sigmoid_1d(res.arr, self.total_size)
+            if self.device == 'vulkan': ti.sync()
+            
+        res._prev = {self}
+        res.requires_grad = self.requires_grad
+        def _backward():
+            if self.requires_grad:
+                from . import streaming_ops as SOE
+                # Unified sigmoid backward kernel
+                grad_val = SOE.SOE.elementwise_op(self, None, 'sigmoid_backward', extra=res.grad)
+                self._acc_grad(grad_val)
+        res._backward_fn = _backward
+        return res
 
     def masked_fill(self, mask, value):
         if self.device == 'ssd':
