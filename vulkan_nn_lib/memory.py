@@ -14,6 +14,7 @@ class MemoryManager:
     _system_reserve_bytes = int(os.getenv('VNN_RESERVE_GB', 5)) * 1024**3
     
     MAX_TOTAL_USAGE_PCT = 0.80 # 80% of usable RAM
+    _force_budget_bytes = None # Debug override for testing tiling
     HARD_FLOOR_BYTES = 3 * 1024 * 1024 * 1024 # 3GB "Freeze Protection" floor
     CRITICAL_SYSTEM_USAGE_BYTES = 21 * 1024 * 1024 * 1024 # Overwritten if total RAM is different
     
@@ -94,6 +95,9 @@ class MemoryManager:
             return int(available * 0.8) # increased from 0.6
     @classmethod
     def get_safe_budget(cls):
+        if cls._force_budget_bytes is not None:
+            return cls._force_budget_bytes
+            
         info = cls.get_mem_info()
         total = info.get('MemTotal', 8 * 1024**3)
         available = info.get('MemAvailable', total // 2)

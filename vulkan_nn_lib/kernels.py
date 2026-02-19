@@ -98,6 +98,36 @@ def k_add_scalar(A: ti.types.ndarray(), B: float, size: int):
         A[i] += B
 
 @ti.kernel
+def k_gt_scalar(A: ti.types.ndarray(), B: float, Out: ti.types.ndarray(), size: int):
+    for i in range(size):
+        Out[i] = 1.0 if A[i] > B else 0.0
+
+@ti.kernel
+def k_lt_scalar(A: ti.types.ndarray(), B: float, Out: ti.types.ndarray(), size: int):
+    for i in range(size):
+        Out[i] = 1.0 if A[i] < B else 0.0
+
+@ti.kernel
+def k_ge_scalar(A: ti.types.ndarray(), B: float, Out: ti.types.ndarray(), size: int):
+    for i in range(size):
+        Out[i] = 1.0 if A[i] >= B else 0.0
+
+@ti.kernel
+def k_le_scalar(A: ti.types.ndarray(), B: float, Out: ti.types.ndarray(), size: int):
+    for i in range(size):
+        Out[i] = 1.0 if A[i] <= B else 0.0
+
+@ti.kernel
+def k_eq_scalar(A: ti.types.ndarray(), B: float, Out: ti.types.ndarray(), size: int):
+    for i in range(size):
+        Out[i] = 1.0 if A[i] == B else 0.0
+
+@ti.kernel
+def k_ne_scalar(A: ti.types.ndarray(), B: float, Out: ti.types.ndarray(), size: int):
+    for i in range(size):
+        Out[i] = 1.0 if A[i] != B else 0.0
+
+@ti.kernel
 def k_exp(In: ti.types.ndarray(), Out: ti.types.ndarray(), size: int):
     for i in range(size):
         Out[i] = ti.exp(In[i])

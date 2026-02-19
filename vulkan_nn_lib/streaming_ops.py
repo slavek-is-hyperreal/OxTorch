@@ -191,9 +191,12 @@ class SOE:
         # Determine effective device
         eff_device = out_device if out_device != 'auto' else a.device
         
-        if eff_device == 'hybrid' or (eff_device == 'auto' and can_vulkan and total_size_bytes > 1e9):
+        # SSD tensors should use Vulkan/Hybrid if VRAM budget allows
+        is_ssd_backed = (eff_device == 'ssd')
+        
+        if eff_device == 'hybrid' or (is_ssd_backed and can_vulkan and total_size_bytes > 1e9):
             use_hybrid = True
-        elif eff_device == 'vulkan' or (eff_device == 'auto' and can_vulkan):
+        elif eff_device == 'vulkan' or (is_ssd_backed and can_vulkan):
             use_vulkan = True
 
         ti_a = None
@@ -203,7 +206,8 @@ class SOE:
             import taichi as ti
             ti_a = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
             ti_out = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
-            if isinstance(b, get_tensor_class()) and b.total_size > 1:
+            # Only use ti_b if b is an array of SAME total size as a (for 1:1 tiling)
+            if isinstance(b, get_tensor_class()) and b.total_size == a.total_size:
                 ti_b = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
 
         prefetcher_a = TilePrefetcher(a, tile_len, num_consumers=(2 if use_hybrid else 1))
@@ -211,27 +215,58 @@ class SOE:
         def process_tile_vulkan(start, end, a_ram):
             try:
                 if isinstance(b, get_tensor_class()):
-                    if b.total_size == 1: b_ram = float(b.to_numpy().flatten()[0])
-                    elif b_is_cached: b_ram = b_val[start:end]
-                    else: b_ram = b_val[start:end].copy()
+                    if b.total_size == 1: 
+                        b_ram = float(b.to_numpy().flatten()[0])
+                    elif b.total_size == a.total_size:
+                        b_ram = b_val[start:end] if b_is_cached else b_val[start:end].copy()
+                    else:
+                        # Broadcasting: fall back to CPU or specialized kernels (not implemented here)
+                        raise ValueError(f"Broadcasting tiling (a:{a.total_size}, b:{b.total_size}) not supported in Vulkan.")
                 else: b_ram = b_val
                 
-                ti_a.from_numpy(a_ram)
+                # Taichi from_numpy requires exact shape match. Pad if tile is smaller (happens on last block)
+                if len(a_ram) < tile_len:
+                    a_pad = np.zeros(tile_len, dtype=np.float32)
+                    a_pad[:len(a_ram)] = a_ram
+                    ti_a.from_numpy(a_pad)
+                else:
+                    ti_a.from_numpy(a_ram)
+                
                 if ti_b is not None:
-                    ti_b.from_numpy(b_ram)
+                    if len(b_ram) < tile_len:
+                        b_pad = np.zeros(tile_len, dtype=np.float32)
+                        b_pad[:len(b_ram)] = b_ram
+                        ti_b.from_numpy(b_pad)
+                    else:
+                        ti_b.from_numpy(b_ram)
+
+                if ti_b is not None:
                     if op_type == 'add': K.k_add(ti_a, ti_b, end-start, end-start)
                     elif op_type == 'sub': K.k_sub(ti_a, ti_b, end-start, end-start)
                     elif op_type == 'mul': K.k_mul(ti_a, ti_b, end-start, end-start)
                     elif op_type == 'div': K.k_div(ti_a, ti_b, end-start, end-start)
+                    elif op_type == 'gt': K.k_gt(ti_a, ti_b, ti_out, end-start, end-start)
+                    elif op_type == 'lt': K.k_lt(ti_a, ti_b, ti_out, end-start, end-start)
+                    elif op_type == 'ge': K.k_ge(ti_a, ti_b, ti_out, end-start, end-start)
+                    elif op_type == 'le': K.k_le(ti_a, ti_b, ti_out, end-start, end-start)
+                    elif op_type == 'eq': K.k_eq(ti_a, ti_b, ti_out, end-start, end-start)
+                    elif op_type == 'ne': K.k_ne(ti_a, ti_b, ti_out, end-start, end-start)
                     import taichi as ti
                     ti.sync()
-                    K.k_copy(ti_a, ti_out, end-start)
+                    if op_type in ['add', 'sub', 'mul', 'div']: K.k_copy(ti_a, ti_out, end-start)
                 else:
                     if op_type == 'add': K.k_add_scalar(ti_a, b_ram, end-start); K.k_copy(ti_a, ti_out, end-start)
                     elif op_type == 'mul': K.k_scale(ti_a, b_ram, end-start); K.k_copy(ti_a, ti_out, end-start)
+                    elif op_type == 'gt': K.k_gt_scalar(ti_a, b_ram, ti_out, end-start)
+                    elif op_type == 'lt': K.k_lt_scalar(ti_a, b_ram, ti_out, end-start)
+                    elif op_type == 'ge': K.k_ge_scalar(ti_a, b_ram, ti_out, end-start)
+                    elif op_type == 'le': K.k_le_scalar(ti_a, b_ram, ti_out, end-start)
+                    elif op_type == 'eq': K.k_eq_scalar(ti_a, b_ram, ti_out, end-start)
+                    elif op_type == 'ne': K.k_ne_scalar(ti_a, b_ram, ti_out, end-start)
                     elif op_type == 'exp': K.k_exp(ti_a, ti_out, end-start)
                     elif op_type == 'log': K.k_log(ti_a, ti_out, end-start)
                     elif op_type == 'sqrt': K.k_sqrt(ti_a, ti_out, end-start)
+                    elif op_type == 'tanh': K.k_tanh(ti_a, ti_out, end-start)
                     elif op_type == 'relu': K.k_copy(ti_a, ti_out, end-start); K.k_relu_1d(ti_out, end-start)
                     elif op_type == 'silu': K.k_copy(ti_a, ti_out, end-start); K.k_silu_1d(ti_out, end-start)
                     elif op_type == 'gelu_tanh': K.k_copy(ti_a, ti_out, end-start); K.k_gelu_tanh(ti_out, end-start)
@@ -239,7 +274,8 @@ class SOE:
                     ti.sync()
                 
                 ti.sync()
-                res.arr[start:end] = ti_out.to_numpy()
+                res_tile = ti_out.to_numpy()
+                res.arr[start:end] = res_tile[:end-start]
             except Exception as e:
                 print(f"    [SOE] Vulkan Panic in elementwise_op: {e} | Falling back to CPU.")
                 process_tile_cpu(start, end, a_ram)
@@ -259,9 +295,16 @@ class SOE:
                     elif op_type == 'sub': r_t = a_t - b_t
                     elif op_type == 'mul': r_t = a_t * b_t
                     elif op_type == 'div': r_t = a_t / b_t
+                    elif op_type == 'gt': r_t = (a_t > b_t).float()
+                    elif op_type == 'lt': r_t = (a_t < b_t).float()
+                    elif op_type == 'ge': r_t = (a_t >= b_t).float()
+                    elif op_type == 'le': r_t = (a_t <= b_t).float()
+                    elif op_type == 'eq': r_t = (a_t == b_t).float()
+                    elif op_type == 'ne': r_t = (a_t != b_t).float()
                     elif op_type == 'exp': r_t = torch.exp(a_t)
                     elif op_type == 'log': r_t = torch.log(a_t)
                     elif op_type == 'sqrt': r_t = torch.sqrt(a_t)
+                    elif op_type == 'tanh': r_t = torch.tanh(a_t)
                     elif op_type == 'pow': r_t = torch.pow(a_t, b_t)
                     elif op_type == 'relu': r_t = torch.relu(a_t)
                     elif op_type == 'leaky_relu': r_t = torch.nn.functional.leaky_relu(a_t, negative_slope=extra if extra else 0.01)
@@ -376,13 +419,14 @@ class SOE:
 
         # Determine effective device
         eff_device = a.device if a.device in ['cpu', 'vulkan', 'hybrid'] else 'auto'
-        
+        is_ssd_backed = (a.device == 'ssd')
+
         # Decide if we should go Hybrid
         use_vulkan = False
         use_hybrid = False
-        if eff_device == 'hybrid' or (eff_device == 'auto' and can_vulkan and total_size_bytes > 1e9):
+        if eff_device == 'hybrid' or (is_ssd_backed and can_vulkan and total_size_bytes > 1e9):
             use_hybrid = True
-        elif eff_device == 'vulkan' or (eff_device == 'auto' and can_vulkan):
+        elif eff_device == 'vulkan' or (is_ssd_backed and can_vulkan):
             use_vulkan = True
 
         prefetcher_a = TilePrefetcher(a, tile_len, num_consumers=(2 if use_hybrid else 1))
