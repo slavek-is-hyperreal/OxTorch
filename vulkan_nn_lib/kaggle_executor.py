@@ -207,15 +207,20 @@ if __name__ == "__main__":
             for row_start in range(0, M, super_tile_rows):
                 row_end = min(row_start + super_tile_rows, M)
                 
-                # We need to slice A by rows
-                a_part = a_tensor.to_numpy()[row_start:row_end, :]
+                # We need to slice A by rows safely without loading the whole matrix 
+                if hasattr(a_tensor, 'arr') and hasattr(a_tensor.arr, 'shape'):
+                    a_part = a_tensor.arr[row_start:row_end, :].copy()
+                else:
+                    a_part = a_tensor.to_numpy()[row_start:row_end, :]
                 
                 slug = f"vnn-matmul-{int(time.time()*100)}"
                 ds_slug = f"vnn-data-{int(time.time()*100)}"
                 
                 with tempfile.TemporaryDirectory() as tmpdir:
                     np.save(os.path.join(tmpdir, 'input_a.npy'), a_part)
-                    np.save(os.path.join(tmpdir, 'input_b.npy'), b_tensor.to_numpy())
+                    
+                    b_view = b_tensor.arr if hasattr(b_tensor, 'arr') else b_tensor.to_numpy()
+                    np.save(os.path.join(tmpdir, 'input_b.npy'), b_view)
                     
                     self._ensure_dataset(ds_slug, tmpdir)
                     script = self._generate_execution_script(op_type, 'input_a.npy', 'input_b.npy', extra)
@@ -247,18 +252,26 @@ if __name__ == "__main__":
         ds_slug = f"vnn-data-{int(time.time()*100)}"
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Use to_numpy to avoid Taichi slicing issues
-            a_data = a_tensor.to_numpy().flatten()[start:end]
+            # Use safe views instead of to_numpy().flatten() to prevent 20GB+ OOM
+            if hasattr(a_tensor, 'arr') and hasattr(a_tensor.arr, 'reshape'):
+                a_data = a_tensor.arr.reshape(-1)[start:end].copy()
+            else:
+                a_data = a_tensor.to_numpy().reshape(-1)[start:end].copy()
+                
             np.save(os.path.join(tmpdir, 'input_a.npy'), a_data)
             b_path = None
             if b_tensor is not None:
                 if hasattr(b_tensor, 'arr'):
                     # Handle if B should be sliced or is a constant matrix
                     if b_tensor.total_size == a_tensor.total_size:
-                        b_data = b_tensor.to_numpy().flatten()[start:end]
+                        if hasattr(b_tensor.arr, 'reshape'):
+                            b_data = b_tensor.arr.reshape(-1)[start:end].copy()
+                        else:
+                            b_data = b_tensor.to_numpy().reshape(-1)[start:end].copy()
                         np.save(os.path.join(tmpdir, 'input_b.npy'), b_data)
                     else:
-                        np.save(os.path.join(tmpdir, 'input_b.npy'), b_tensor.to_numpy())
+                        b_view = b_tensor.arr if hasattr(b_tensor, 'arr') else b_tensor.to_numpy()
+                        np.save(os.path.join(tmpdir, 'input_b.npy'), b_view)
                     b_path = 'input_b.npy'
 
             self._ensure_dataset(ds_slug, tmpdir)
