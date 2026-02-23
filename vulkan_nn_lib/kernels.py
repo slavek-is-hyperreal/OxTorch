@@ -569,3 +569,67 @@ def k_unpack_int4(Packed: ti.types.ndarray(), Unpacked: ti.types.ndarray(), Tota
         byte = ti.u8(Packed[i])
         Unpacked[i*2]   = ti.f32(byte & 0x0F) - 8.0 # Range [-8, 7]
         Unpacked[i*2+1] = ti.f32(byte >> 4) - 8.0
+
+
+@ti.kernel
+def k_paged_attention_vulkan(
+    Q: ti.types.ndarray(),
+    K_pool: ti.types.ndarray(),
+    V_pool: ti.types.ndarray(),
+    block_tables: ti.types.ndarray(),
+    context_lens: ti.types.ndarray(),
+    scores_scratchpad: ti.types.ndarray(),
+    Out: ti.types.ndarray(),
+    batch_size: int,
+    num_heads: int,
+    head_dim: int,
+    block_size: int,
+    max_blocks_per_seq: int,
+    max_seq_len: int,
+    scale: float
+):
+    """
+    Computes PagedAttention for decoding phase (1 query token per sequence).
+    Uses a minimal scratchpad to cache attention scores to avoid O(N^2) head_dim loops.
+    """
+    for b, h in ti.ndrange(batch_size, num_heads):
+        seq_len = ti.cast(context_lens[b], ti.i32)
+        m_i = -1e20
+        
+        # Pass 1: Dot products & Max
+        for t in range(seq_len):
+            logical_block_idx = t // block_size
+            token_in_block = t % block_size
+            phys_block = ti.cast(block_tables[b * max_blocks_per_seq + logical_block_idx], ti.i32)
+            
+            score = 0.0
+            for d in range(head_dim):
+                q_val = Q[(b * num_heads + h) * head_dim + d]
+                k_val = K_pool[phys_block, h, token_in_block, d]
+                score += q_val * k_val
+            score *= scale
+            scores_scratchpad[(b * num_heads + h) * max_seq_len + t] = score
+            if score > m_i:
+                m_i = score
+                
+        # Pass 2: Sum Exp
+        sum_exp = 0.0
+        for t in range(seq_len):
+            score = scores_scratchpad[(b * num_heads + h) * max_seq_len + t]
+            exp_s = ti.exp(score - m_i)
+            scores_scratchpad[(b * num_heads + h) * max_seq_len + t] = exp_s
+            sum_exp += exp_s
+            
+        # Pass 3: Weighted Sum Values
+        for d in range(head_dim):
+            out_val = 0.0
+            for t in range(seq_len):
+                logical_block_idx = t // block_size
+                token_in_block = t % block_size
+                phys_block = ti.cast(block_tables[b * max_blocks_per_seq + logical_block_idx], ti.i32)
+                
+                exp_s = scores_scratchpad[(b * num_heads + h) * max_seq_len + t]
+                v_val = V_pool[phys_block, h, token_in_block, d]
+                out_val += exp_s * v_val
+            Out[(b * num_heads + h) * head_dim + d] = out_val / sum_exp
+

@@ -145,3 +145,51 @@ class Embedding(Module):
         out = Tensor(None, shape=(B, L, D))
         K.k_embedding_1d(x.arr, self.weight.arr, out.arr, B, L, D)
         return out
+
+class PagedAttention(Module):
+    def __init__(self, num_heads, head_dim, scale=None):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.scale = scale if scale is not None else (1.0 / (head_dim ** 0.5))
+
+    def forward(self, q: Tensor, kv_cache) -> Tensor:
+        # q shape: [batch_size, num_heads * head_dim]  -- single token (decoding phase)
+        batch_size = q.shape[0]
+        
+        out = Tensor(None, shape=q.shape, device='vulkan')
+        
+        max_seq_len = 4096
+        max_blocks_per_seq = max_seq_len // kv_cache.pool.block_size
+        scores_scratchpad = Tensor(None, shape=(batch_size, self.num_heads, max_seq_len), device='vulkan')
+        
+        # Flatten block_tables and context_lens into ti.ndarrays
+        block_tables_np = np.zeros((batch_size, max_blocks_per_seq), dtype=np.int32)
+        context_lens_np = np.zeros((batch_size,), dtype=np.int32)
+        
+        # Simplified batch=1 assumption for the KV cache for now
+        block_tables_np[0, :kv_cache.num_blocks()] = kv_cache.block_table.get_physical_blocks()
+        context_lens_np[0] = kv_cache.seq_len
+        
+        block_tables = Tensor(block_tables_np, device='vulkan')
+        context_lens = Tensor(context_lens_np, device='vulkan')
+        
+        K.k_paged_attention_vulkan(
+            q.arr,
+            kv_cache.pool.physical_k,
+            kv_cache.pool.physical_v,
+            block_tables.arr,
+            context_lens.arr,
+            scores_scratchpad.arr,
+            out.arr,
+            batch_size,
+            self.num_heads,
+            self.head_dim,
+            kv_cache.pool.block_size,
+            max_blocks_per_seq,
+            max_seq_len,
+            float(self.scale)
+        )
+        import taichi as ti
+        ti.sync()
+        return out
