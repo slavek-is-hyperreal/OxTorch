@@ -6,16 +6,22 @@ from .. import kernels as K
 
 class TiledLinear(Module):
     """A Linear layer that pages weights from RAM to VRAM in tiles."""
-    def __init__(self, in_features, out_features, bias=True, tile_size=2048):
+    def __init__(self, in_features, out_features, bias=True, tile_size=2048, quant_type=None):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.tile_size = tile_size
+        self.quant_type = quant_type
         self.weight = Tensor(np.zeros((in_features, out_features), dtype=np.float32), device='cpu', requires_grad=True)
         self.has_bias = bias
         if bias:
             self.bias = Tensor(np.zeros(out_features, dtype=np.float32), requires_grad=True)
+            
         self.weight_tile_vram = ti.ndarray(dtype=ti.f32, shape=(in_features * tile_size,))
+        if quant_type == 'q4_0':
+            # Q4_0 packs 32 elements into 18 bytes
+            self.raw_tile_vram = ti.ndarray(dtype=ti.u8, shape=(in_features * tile_size // 32 * 18,))
+            
         self.grad_tile_vram = ti.ndarray(dtype=ti.f32, shape=(in_features * tile_size,))
         self.grad_out_tile_vram = None # Will be allocated once
 
@@ -34,11 +40,31 @@ class TiledLinear(Module):
         
         for n_offset in range(0, N_out, self.tile_size):
             n_tile = min(self.tile_size, N_out - n_offset)
-            full_tile = np.zeros((K_active, self.tile_size), dtype=np.float32)
-            full_tile[:, :n_tile] = self.weight.to_numpy()[:K_active, n_offset : n_offset + n_tile]
-            self.weight_tile_vram.from_numpy(full_tile.flatten())
-            ti.sync()
-            _ = self.weight_tile_vram.to_numpy() # Force sync
+            
+            if self.quant_type == 'q4_0':
+                # Simplified dummy copy for Q4_0 Integration Testing.
+                # In real execution, `self.weight.arr` would be the zero-copy uint8 mmap.
+                # We slice the required blocks and send to VRAM.
+                blocks_needed = K_active * n_tile // 32
+                bytes_needed = blocks_needed * 18
+                raw_bytes = self.weight.arr[:bytes_needed] # Simplified slice
+                
+                # Fill the physical Vulkan buffer
+                padded_raw = np.zeros(self.raw_tile_vram.shape[0], dtype=np.uint8)
+                padded_raw[:len(raw_bytes)] = raw_bytes
+                self.raw_tile_vram.from_numpy(padded_raw)
+                
+                ti.sync()
+                # Run the dequantizer Shader to decode bits directly on the GPU registers
+                K.k_dequantize_q4_0(self.raw_tile_vram, self.weight_tile_vram, blocks_needed)
+                ti.sync()
+            else:
+                full_tile = np.zeros((K_active, self.tile_size), dtype=np.float32)
+                full_tile[:, :n_tile] = self.weight.to_numpy()[:K_active, n_offset : n_offset + n_tile]
+                self.weight_tile_vram.from_numpy(full_tile.flatten())
+                ti.sync()
+                _ = self.weight_tile_vram.to_numpy() # Force sync
+                
             K.k_matmul_tiled(x_flat.arr, self.weight_tile_vram, out.arr, M, N_out, K_A, K_active, n_offset, n_tile, self.tile_size)
             ti.sync()
             

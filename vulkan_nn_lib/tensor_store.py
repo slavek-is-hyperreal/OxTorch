@@ -68,3 +68,36 @@ class TensorStore:
         path = self._get_path(name)
         if os.path.exists(path):
             os.remove(path)
+
+class GGUFTensorStore:
+    """Direct mmap wrapper for standardized GGUF files.
+    
+    Reads the metadata layout via the python `gguf` library,
+    and exposes zero-copy numpy memmaps directly pointing into 
+    the unified large file. Bypass extracting or splitting files!
+    """
+    def __init__(self, gguf_path: str):
+        if not os.path.exists(gguf_path):
+            raise FileNotFoundError(f"GGUF file not found: {gguf_path}")
+            
+        import gguf
+        self.gguf_path = gguf_path
+        self.reader = gguf.GGUFReader(gguf_path)
+        self.tensors = {t.name: t for t in self.reader.tensors}
+        
+        # Map the entire file once. Slices of this memmap will still be zero-copy.
+        file_size = os.path.getsize(gguf_path)
+        self._mmap = np.memmap(gguf_path, dtype=np.uint8, mode='r', shape=(file_size,))
+        
+    def get_tensor(self, name: str) -> np.memmap:
+        """Returns a zero-copy numpy memmap pointing to the raw bytes of the tensor."""
+        if name not in self.tensors:
+            raise KeyError(f"Tensor {name} not found in {self.gguf_path}")
+            
+        tensor = self.tensors[name]
+        
+        # Absolute offset in the physical file
+        abs_offset = self.reader.data_offset + tensor.data_offset
+        end_offset = abs_offset + tensor.data.nbytes
+        
+        return self._mmap[abs_offset:end_offset]

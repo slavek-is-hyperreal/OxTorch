@@ -612,6 +612,57 @@ def k_unpack_int4(Packed: ti.types.ndarray(), Unpacked: ti.types.ndarray(), Tota
         Unpacked[i*2]   = ti.f32(byte & 0x0F) - 8.0 # Range [-8, 7]
         Unpacked[i*2+1] = ti.f32(byte >> 4) - 8.0
 
+@ti.kernel
+def k_dequantize_q4_0(Packed: ti.types.ndarray(), Unpacked: ti.types.ndarray(), num_blocks: int):
+    """
+    Q4_0 block size is 32 elements.
+    Physical layout per block (18 bytes):
+    - 2 bytes: float16 scale factor (d)
+    - 16 bytes: 32 quantized values (qs), stored as 4-bit nibbles.
+    The lower 4 bits of byte j are the value for index j.
+    The upper 4 bits of byte j are the value for index j + 16.
+    """
+    ti.loop_config(block_dim=256)
+    for b in range(num_blocks):
+        # 18 bytes per block
+        block_offset = b * 18
+        
+        # Read the FP16 scale by constructing it from 2 bytes
+        # Taichi currently lacks native f16 memory reading in pure u8 arrays, 
+        # so we interpret the bits manually or using ti.bit_cast
+        # We assume little-endian for GGUF: 
+        b0 = ti.cast(Packed[block_offset], ti.u16)
+        b1 = ti.cast(Packed[block_offset + 1], ti.u16)
+        u16_val = b0 | (b1 << 8)
+        
+        # Vulkan natively supports f16 operations via bitcast in taichi or
+        # manual float conversion (for compatibility, we use standard fp16 decompression math)
+        # However, for simplicity and cross-platform safety in this custom loop,
+        # we can use ti.math.f16_to_f32 or an equivalent bit unpacking.
+        # Let's write the standardized fp16 extraction:
+        sign = (u16_val >> 15) & 1
+        exp_val = (u16_val >> 10) & 0x1F
+        frac = u16_val & 0x3FF
+        
+        scale_f32 = 0.0
+        if exp_val == 0:
+            if frac != 0:
+                scale_f32 = ((-1.0)**sign) * (2.0**-14) * (frac / 1024.0)
+        elif exp_val == 31:
+            scale_f32 = 0.0 # Inf/NaN proxy
+        else:
+            scale_f32 = ((-1.0)**sign) * (2.0**(exp_val - 15)) * (1.0 + frac / 1024.0)
+            
+        # Unpack the 32 nibbles (16 bytes)
+        for j in range(16):
+            byte_val = ti.cast(Packed[block_offset + 2 + j], ti.i32)
+            
+            x0 = ti.cast(byte_val & 0x0F, ti.f32) - 8.0
+            x1 = ti.cast(byte_val >> 4, ti.f32) - 8.0
+            
+            Unpacked[b * 32 + j] = x0 * scale_f32
+            Unpacked[b * 32 + j + 16] = x1 * scale_f32
+
 
 @ti.kernel
 def k_paged_attention_vulkan(

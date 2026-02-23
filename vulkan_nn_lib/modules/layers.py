@@ -146,6 +146,25 @@ class Embedding(Module):
         K.k_embedding_1d(x.arr, self.weight.arr, out.arr, B, L, D)
         return out
 
+class FlashAttention(Module):
+    def __init__(self, num_heads, head_dim, scale=None):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.scale = scale if scale is not None else (1.0 / (head_dim ** 0.5))
+
+    def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
+        # q, k, v shape: [batch_size, seq_len, num_heads, head_dim]
+        B, L, H, D = q.shape
+        out = Tensor(None, shape=q.shape, device='vulkan')
+        K.k_flash_attention_vulkan(
+            q.arr, k.arr, v.arr, out.arr,
+            B, H, L, D, float(self.scale)
+        )
+        import taichi as ti
+        ti.sync()
+        return out
+
 class PagedAttention(Module):
     def __init__(self, num_heads, head_dim, scale=None):
         super().__init__()
