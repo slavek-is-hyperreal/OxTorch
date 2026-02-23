@@ -27,6 +27,9 @@ class TensorStore:
         # Calculate total size in bytes
         size = int(np.prod(shape)) * np.dtype(dtype).itemsize
         
+        # Ensure directory exists even if deleted mid-run
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        
         # Always ensure file is fresh and correct size
         with open(path, "wb") as f:
             if size > 0:

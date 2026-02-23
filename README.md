@@ -39,6 +39,7 @@ PyTorch is for the data center. **VNN is for the rest of us.**
 
 -   **SSD-Native Autograd**: The jewel of VNN. Backpropagation that streams directly to/from disk, enabling training on models weighing hundreds of gigabytes.
 -   **DRAS v4 (Adaptive RAM-Aware Streaming)**: Real-time memory monitoring with **Adaptive Backoff**. It pushes your hardware to the absolute limit without crossing the RAM "cliff," pausing I/O when the processing pipeline is saturated.
+-   **PagedAttention & KV Cache Management**: Native BlockTable abstractions combating contiguous memory fragmentation for continuous batched generation without OOM.
 -   **Vulkan/Taichi Engine**: Hardware-agnostic compute that runs on Intel, AMD, and NVIDIA alike.
 -   **Kaggle Offloading**: Zero-cost ephemeral supercomputing via Kaggle kernels.
 -   **100% Parity**: Mathematically verified against PyTorch for core operations.

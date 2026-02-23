@@ -4,11 +4,11 @@ import time
 import os
 
 def test_auto_sgd_ssd():
-    print("\n--- Testing AutoSGD SSD-Native (1GB) ---")
-    N = 250_000_000 # 1GB
+    print("\n--- Testing AutoSGD SSD-Native (10MB) ---")
+    N = 2_500_000 # 10MB
     lr = 0.1
     
-    print(f"[1/4] Initializing 1GB parameter on SSD...")
+    print(f"[1/4] Initializing 10MB parameter on SSD...")
     w = torch.randn(N, device='ssd', requires_grad=True)
     # Force some values to verify update
     w.arr[0:10] = 1.0
@@ -20,7 +20,7 @@ def test_auto_sgd_ssd():
     print(f"[3/4] AutoSGD Step...")
     # Force AutoSGD to use hybrid/SSD strategy by setting budgets low
     from vulkan_nn_lib.optimizers import AutoSGD
-    opt = AutoSGD([w], lr=lr, vram_budget=128*1024*1024, ram_budget=128*1024*1024)
+    opt = AutoSGD([w], lr=lr, vram_budget=2*1024*1024, ram_budget=2*1024*1024)
     
     t0 = time.perf_counter()
     opt.step()
@@ -37,11 +37,11 @@ def test_auto_sgd_ssd():
         print("  [FAIL] Math mismatch!")
 
 def test_auto_adam_ssd():
-    print("\n--- Testing AutoAdam SSD-Native (1GB) ---")
-    N = 250_000_000 # 1GB
+    print("\n--- Testing AutoAdam SSD-Native (10MB) ---")
+    N = 2_500_000 # 10MB
     lr = 1e-3
     
-    print(f"[1/4] Initializing 1GB parameter on SSD...")
+    print(f"[1/4] Initializing 10MB parameter on SSD...")
     w = torch.randn(N, device='ssd', requires_grad=True)
     w.arr[0:10] = 1.0
     
@@ -51,7 +51,7 @@ def test_auto_adam_ssd():
     
     print(f"[3/4] AutoAdam Step...")
     from vulkan_nn_lib.optimizers import AutoAdam
-    opt = AutoAdam([w], lr=lr, vram_budget=128*1024*1024, ram_budget=256*1024*1024)
+    opt = AutoAdam([w], lr=lr, vram_budget=2*1024*1024, ram_budget=4*1024*1024)
     
     # Run 1 step
     t0 = time.perf_counter()

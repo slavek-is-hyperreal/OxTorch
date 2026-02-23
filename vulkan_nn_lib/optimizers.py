@@ -24,7 +24,7 @@ class SGD(Optimizer):
     def step(self):
         for p in self.params:
             if p.grad is None: continue
-            K.k_sgd(p.arr, p.grad.arr, p.total_size, self.lr)
+            K.k_sgd(p.arr, p.grad.arr, self.lr, p.total_size)
         ti.sync()
 
 class Adam(Optimizer):

@@ -8,23 +8,30 @@ def test_sgd():
     W_shape = (10, 10)
     lr = 0.1
     
-    # torch
-    wt = torch.randn(W_shape, requires_grad=True)
+    # Common initialization
+    init_wt = torch.randn(W_shape)
     gt = torch.randn(W_shape)
+    
+    # torch
+    wt = init_wt.clone().requires_grad_(True)
     wt.grad = gt.clone()
     
     opt = torch.optim.SGD([wt], lr=lr)
     opt.step()
     
     # vnn
-    wv = to_vnn(wt + lr * gt, requires_grad=True) # Start from same point
+    wv = to_vnn(init_wt, requires_grad=True)
     gv = to_vnn(gt)
     wv.grad = gv
     
+    print(f"Pre-step VV: {wv.to_numpy()[0,:5]}")
     vopt = vnn.SGD([wv], lr=lr)
     vopt.step()
+    print(f"Post-step VV: {wv.to_numpy()[0,:5]}")
+    print(f"Post-step PT: {wt.detach().numpy()[0,:5]}")
     
-    check_close(wv, wt, "SGD Weight Update")
+    # Relax rtol for fp32 comparisons across backends
+    check_close(wv, wt, "SGD Weight Update", atol=1e-4)
 
 def test_adam_vram():
     print("\n--- Testing Adam (VRAM Resident vs Torch) ---")

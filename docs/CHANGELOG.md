@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pow Kernel Signature Mismatch**: Fixed missing Typecasting in `pow` operation within `tensor.py` where a parameter was incorrectly passed to Taichi kernel resulting in `AttributeError`.
 - **SystemExit Bug**: Removed hard-coded `sys.exit()` calls from PyTest suites to ensure they report clean `PASSED` status logs without triggering pipeline failures.
 - **Taichi Deprecation Warning**: Patched local virtual environment `taichi/_lib/utils.py` to prefer `locale.getencoding()` over the deprecated `locale.getdefaultlocale()` to prevent Python 3.12+ warnings.
+- **AutoOptimizer Arguments**: Fixed `AttributeError` during Taichi compilation in `AutoSGD` and `AutoAdam` due to argument signature mismatch (`p.total_size` passed as parameter to kernel float argument).
+- **Tensor.to_numpy() Cache Bug**: Fixed stale caching returning old references for updated Vulkan optimizers during parity training steps.
+- **TensorStore Missing Directory Crash**: Fixed a recurring `FileNotFoundError` during sequential integration tests by explicitly forcing recreating cache directories `os.makedirs()` when allocating SSD tensors.
 
 ---
 *Generated during Phase 1 (Memory Suballocation) sprint.*

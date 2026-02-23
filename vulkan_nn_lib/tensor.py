@@ -325,10 +325,11 @@ class Tensor:
                 return arr.flatten()
 
         if self.device == 'vulkan':
-            if hasattr(self, 'np_arr') and self.np_arr is not None:
-                return safe_reshape(self.np_arr, self.shape)
             ti.sync()
-            return safe_reshape(self.arr.to_numpy(), self.shape)
+            res = self.arr.to_numpy()
+            if hasattr(self, 'np_arr') and self.np_arr is not None:
+                self.np_arr = res
+            return safe_reshape(res, self.shape)
 
         # CPU/SSD Mode: self.arr is already a numpy-like array
         if self.dtype == 'int4':
