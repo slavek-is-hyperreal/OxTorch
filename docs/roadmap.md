@@ -11,9 +11,9 @@ VNN Legacy Edition has achieved 100% PyTorch parity and verified performance. Th
 ### 🛠️ Hardware-First Paradigms: The "Commodity Survival" Strategy
 Based on recent architectural research into extreme quantization and memory optimization for legacy platforms, the focus of VNN development is now prioritized into the following 5 strategic pillars:
 
-1. **Suballocation Architecture (Memory Foundation)**
+1. **[x] Suballocation Architecture (Memory Foundation)** (COMPLETED)
    - Eliminate direct buffer allocations (`vkAllocateMemory`) which exhaust application driver limits.
-   - Implement Slab/Buddy suballocation (`VulkanTensorPool`) directly inside `memory.py` to allow thousands of virtual tensors using only a few massive physical allocations.
+   - Implement suballocation (`VulkanTensorPool`) to allow thousands of virtual tensors using limited physical allocations.
 2. **PagedAttention & Context Management**
    - Address the staggering 80% VRAM waste of contiguous KV Caches.
    - Implement `BlockTable` based PagedAttention to map non-contiguous fragments memory seamlessly to physical VRAM blocks, achieving near-zero internal fragmentation on older cards caching massive contexts.

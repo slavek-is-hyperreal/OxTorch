@@ -353,7 +353,10 @@ class Tensor:
 
     def load_from_numpy(self, np_arr):
         if self.device == 'vulkan':
-            self.arr.from_numpy(np_arr.flatten())
+            flat_arr = np_arr.astype(self.dtype).flatten()
+            self.arr.from_numpy(flat_arr)
+            if hasattr(self, 'np_arr') and self.np_arr is not None:
+                self.np_arr = flat_arr
             ti.sync()
             _ = self.arr.to_numpy() # Force sync
         else:
@@ -702,7 +705,14 @@ class Tensor:
             res = SOE.SOE.elementwise_op(self, other, 'pow')
         else:
             res = Tensor(None, shape=self.shape, device=self.device)
-            K.k_pow(self.arr, other.arr, res.arr, self.total_size)
+            if other.total_size == 1:
+                p_val = float(other.to_numpy().flatten()[0])
+                K.k_pow(self.arr, res.arr, p_val, self.total_size)
+            else:
+                # Multi-element pow not implemented in Vulkan kernels natively. Drop to hybrid.
+                from . import streaming_ops as SOE
+                return SOE.SOE.elementwise_op(self, other, 'pow')
+                
             if self.device == 'vulkan': ti.sync()
             
         res._prev = {self, other}

@@ -192,13 +192,18 @@ class SOE:
 
         # 2. Extract constant if one operand is scalar
         const_val = 0.0
+        is_true_scalar = False
         if n_a != n_b:
             other = b if n_a > n_b else a
             if other is not None:
-                if isinstance(other, get_tensor_class()):
+                if isinstance(other, get_tensor_class()) and other.total_size == 1:
                     const_val = float(other.to_numpy().flatten()[0])
-                else:
+                    is_true_scalar = True
+                elif not isinstance(other, get_tensor_class()):
                     const_val = float(other)
+                    is_true_scalar = True
+            else:
+                is_true_scalar = True
 
         # 3. Resolve Backend & Master
         eff_device = out_device if out_device != 'auto' else a.device
@@ -207,6 +212,11 @@ class SOE:
         use_vulkan = (eff_device == 'vulkan')
         use_hybrid = (eff_device == 'hybrid' or eff_device == 'ssd')
         use_kaggle = (eff_device == 'kaggle')
+        
+        supported_vulkan_ops = {'add', 'sub', 'mul', 'div', 'truediv', 'gt', 'lt', 'ge', 'le', 'eq', 'ne', 'relu', 'sigmoid', 'silu', 'sigmoid_backward', 'silu_backward_direct'}
+        if op_type not in supported_vulkan_ops:
+            use_vulkan = False
+            use_hybrid = False
         
         master = a if n_a >= n_b else b
         swapped = (n_a < n_b)
@@ -257,7 +267,7 @@ class SOE:
             import taichi as ti
             ti_a = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
             ti_out = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
-            if n_a == n_b == n:
+            if not is_true_scalar and getattr(b, 'total_size', 1) <= getattr(a, 'total_size', 1):
                 ti_b = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
             if extra is not None:
                 ti_extra = ti.ndarray(dtype=ti.f32, shape=(tile_len,))
@@ -278,9 +288,17 @@ class SOE:
                 ti_a.from_numpy(m_pad.astype(np.float32))
  
                 if ti_b is not None:
-                    # Same-shape case (m_ram is master, other_ram is slave)
+                    # Same-shape or broadcasting
                     storage_b = get_storage(b) if n_a >= n_b else get_storage(a)
-                    other_ram = storage_b[start:end].copy() if hasattr(storage_b, '__getitem__') else storage_b
+                    n_min = min(n_a, n_b)
+                    
+                    if n_a != n_b:
+                        # Broadcast slicing
+                        idx = np.arange(start, end) % n_min
+                        other_ram = storage_b[idx]
+                    else:
+                        other_ram = storage_b[start:end].copy() if hasattr(storage_b, '__getitem__') else storage_b
+                        
                     if len(other_ram) < tile_len:
                         p = np.zeros(tile_len, dtype=np.float32)
                         p[:len(other_ram)] = other_ram; other_ram = p
@@ -366,18 +384,25 @@ class SOE:
             try:
                 # m_ram is master, const_val/other_ram is slave
                 _torch = _get_torch()
-                if n_a == n_b:
-                    # other is also a large tensor (same shape)
+                if not is_true_scalar:
+                    # other is an array (same shape or broadcast)
                     storage_other = get_storage(b) if not swapped else get_storage(a)
                     o_cached = b_is_cached if not swapped else a_is_cached
-                    if not o_cached and hasattr(storage_other, '__getitem__'):
-                        other_ram = storage_other[start:end].copy()
+                    n_min = min(n_a, n_b)
+                    
+                    if n_a != n_b:
+                        idx = np.arange(start, end) % n_min
+                        other_ram = storage_other[idx]
                     else:
-                        other_ram = storage_other[start:end]
+                        if not o_cached and hasattr(storage_other, '__getitem__'):
+                            other_ram = storage_other[start:end].copy()
+                        else:
+                            other_ram = storage_other[start:end]
+                            
                     a_t = _torch.from_numpy(m_ram if not swapped else other_ram)
                     b_t = _torch.from_numpy(other_ram if not swapped else m_ram)
                 else:
-                    # other is scalar (const_val)
+                    # other is true scalar
                     a_t = _torch.from_numpy(m_ram) if not swapped else const_val
                     b_t = const_val if not swapped else _torch.from_numpy(m_ram)
                 
@@ -426,7 +451,9 @@ class SOE:
                     elif op_type == 'tanh': r_t = _torch.tanh(a_t)
                     elif op_type == 'pow': r_t = _torch.pow(a_t, b_t)
                     elif op_type == 'relu': r_t = _torch.relu(a_t)
-                    elif op_type == 'leaky_relu': r_t = _torch.nn.functional.leaky_relu(a_t, negative_slope=extra if extra else 0.01)
+                    elif op_type == 'leaky_relu': 
+                        print(f"DEBUG: op_type={op_type}, extra={extra}")
+                        r_t = _torch.nn.functional.leaky_relu(a_t, negative_slope=extra if extra is not None else 0.01)
                     elif op_type == 'sigmoid': r_t = _torch.sigmoid(a_t)
                     elif op_type == 'silu': r_t = _torch.nn.functional.silu(a_t)
                     elif op_type == 'sigmoid_backward':

@@ -1,6 +1,8 @@
 from .tensor import Tensor
 from .streaming_ops import SOE
+from .tensor import Tensor
 import numpy as np
+import taichi as ti
 
 def relu(x: Tensor) -> Tensor:
     res = SOE.elementwise_op(x, None, 'relu')
@@ -44,7 +46,7 @@ def sigmoid(x: Tensor) -> Tensor:
     return res
 
 def leaky_relu(x: Tensor, alpha=0.01) -> Tensor:
-    res = SOE.elementwise_op(x, alpha, 'leaky_relu')
+    res = SOE.elementwise_op(x, None, 'leaky_relu', extra=alpha)
     res._prev = {x}
     res.requires_grad = x.requires_grad
     def _backward():

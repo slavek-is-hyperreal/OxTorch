@@ -142,4 +142,11 @@ For those who want to see how the "magic" works:
 - **Hobbyist Friendly**: Optimized for 1GB - 4GB VRAM targets.
 
 ---
+
+## 🌳 Repository Branching Strategy
+- **`main`**: The public, stable version. Verified and ready for production/hobbyist use.
+- **`test`**: Release candidate branch for comprehensive parity testing.
+- **`dev`**: Active development of new experimental features. 
+
+---
 *Developed with 💙 for the open hardware and self-hosting community.*

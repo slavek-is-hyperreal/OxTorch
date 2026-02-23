@@ -295,12 +295,11 @@ def run_all_tests():
         for name, ok, errors in grand_results:
             if not ok:
                 print(f"  [!] {name}: {errors[0] if errors else 'Unknown error'}")
-        sys.exit(1)
+        raise AssertionError("Parity tests failed.")
     else:
         print("\nALL PARITY TESTS PASSED! 100% Core Parity Achieved.")
         if not perf_ok:
             print("Note: Performance goal (1.5x) missed in some cases.")
-        sys.exit(0)
 
 def test_all_parity_cases():
     run_all_tests()
