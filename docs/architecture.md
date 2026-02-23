@@ -42,7 +42,12 @@ VNN automatically routes every operation through the most efficient backend base
 *   **Target**: Massive operations exceeding the `VNN_KAGGLE_THRESHOLD` (Default: 1GB).
 *   **Strategy**: Uses the `KaggleExecutor` to upload tiled data to cloud GPUs, execute via PyTorch/CUDA kernels, and stream results back to local SSD. Effectively bypasses all local hardware limitations.
 
-## 2. Autograd & Unified Gradient Accumulation
+## 2. Memory Suballocation & PagedAttention
+VNN handles VRAM with extreme prejudice to avoid out-of-memory errors on older GPUs.
+*   **VulkanTensorPool**: A Slab/Buddy memory suballocator that intercepts tensor requests, returning views from massive pre-allocated buffers. This bypasses the Vulkan `vkAllocateMemory` limit and prevents fragmentation.
+*   **PagedAttention (Phase 2)**: For LLM inference, VNN eschews contiguous KV cache allocation. Instead, it uses a `BlockTable` to dynamically map token sequences (logical chunks) to scattered physical blocks in VRAM, eliminating up to 80% of cache waste and drastically increasing the maximum context window on 2-8GB GPUs.
+
+## 3. Autograd & Unified Gradient Accumulation
 VNN's reverse-mode differentiation engine is backend-agnostic. The core innovation lies in the `_acc_grad(grad)` method, which intelligently routes gradient accumulation based on the host device:
 
 - **SSD**: Employs the SOE/ARAS engine for multi-threaded, tiled element-wise addition directly on disk.
@@ -52,19 +57,19 @@ VNN's reverse-mode differentiation engine is backend-agnostic. The core innovati
 
 This guarantees that even with a 40GB gradient buffer on an 8GB RAM system, accumulation will not trigger an Out-of-Memory (OOM) error.
 
-## 3. Zero-Copy Loading
+## 4. Zero-Copy Loading
 VNN offers a significant advantage over PyTorch through its `from_binary` (and `external_path`) mechanism. While PyTorch typically requires loading an entire state dictionary into RAM, VNN **mounts** binary files as virtual tensors.
 
 - **VNN**: Maps the file on disk via `memmap`. RAM consumption remains minimal until computation begins.
 - **PyTorch**: Reads the entire file into resident memory, often leading to OOM on constrained systems.
 
-## 4. Compute Kernels & Taichi Backend
+## 5. Compute Kernels & Taichi Backend
 Computationally intensive tasks are handled by **Taichi kernels**, which are JIT-compiled to SPIR-V (Vulkan compute shaders).
 - **Design**: Kernels operate on flattened 1D arrays to streamline shader logic.
 - **Parallelization**: Efficiently managed by the Taichi runtime.
 - **Precision**: Highly optimized for FP32, with expanding support for FP16 and INT8.
 
-## 5. Hardware Calibration & Tuning
+## 6. Hardware Calibration & Tuning
 Since VNN treats **VRAM/RAM as a Cache**, performance depends on finding the "Sweet Spot" for your hardware.
 
 ### The "Fast BAR" Threshold

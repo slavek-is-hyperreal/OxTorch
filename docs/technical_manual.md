@@ -48,15 +48,21 @@ JIT-compiled SPIR-V shaders for Vulkan.
 *   **Lines 504-512**: `k_unpack_int4`. 
     *   Performs bit-shifting and masking to decompress two 4-bit weights from one 8-bit byte on the fly.
 
-### 4. [memory.py](../vulkan_nn_lib/memory.py) - Hardware Oracle
-Manages the RAM/VRAM budgets and detects safety violations.
+### 4. [memory.py](../vulkan_nn_lib/memory.py) & [memory_pool.py](../vulkan_nn_lib/memory_pool.py) - Hardware Oracles & Allocators
+Manages the RAM/VRAM budgets and low-level physical allocations.
 
-*   **Line 15**: `_system_reserve_bytes`. Can be set via environment variable `VNN_RESERVE_GB` (Default: 5). This memory is "hidden" from VNN to protect ZFS ARC or other background services.
-*   **Lines 111-125**: `get_safe_budget()`. 
-    *   **Linear Scaling**: Dynamically calculates 80% of **(Available RAM - Reservation)**. 
-    *   **No Hard Cap**: Scales naturally from 1GB to 1TB+. On a 128GB system, VNN will automatically utilize ~100GB of RAM before offloading to SSD.
-*   **Lines 141-155**: `wait_for_ram()`. 
-    *   Blocking check used by factory functions. If RAM is too low, it pauses the requester until memory is released.
+*   `memory.py`:
+    *   **Line 15**: `_system_reserve_bytes`. Can be set via environment variable `VNN_RESERVE_GB` (Default: 5). Protects ZFS ARC/system background limits.
+    *   **Lines 111-125**: `get_safe_budget()`. Dynamically calculates 80% of **(Available RAM - Reservation)**.
+*   `memory_pool.py`:
+    *   **VulkanTensorPool**: Suballocator wrapper around `ti.ndarray` to constrain total allocation calls matching Vulkan driver caps.
+
+### 4.5. [paged_attention.py](../vulkan_nn_lib/paged_attention.py) - Virt-to-Phys Memory
+Implements the Phase 2 KV cache virtualization structure for LLM decoding contexts.
+
+*   `KVCachePool`: Real pre-allocated memory pool on Vulkan arrays (`physical_k`, `physical_v`).
+*   `BlockTable`: Maps a logical sequence to random scattered blocks.
+*   `PagedKVCache`: Context manager injected into the LLM layer simulating contiguous structures while utilizing `BlockTable` internally.
 
 ### 5. [kaggle_executor.py](../vulkan_nn_lib/kaggle_executor.py) - Ephemeral Supercompute
 The orchestration engine for remote cloud compute.
@@ -97,6 +103,7 @@ Provides the `torch.*` API.
 ### 8. [layers.py](../vulkan_nn_lib/modules/layers.py)
 *   **Linear**: Detects if weights are too large for RAM and initializes them on SSD.
 *   **RMSNorm**: Optimized Taichi kernel for stable normalization.
+*   **PagedAttention**: High-efficiency VRAM virtualization bypassing contiguous caching. Calls `.get_physical_blocks()` on the supplied `PagedKVCache` to submit raw offset vectors directly to the custom Taichi Vulkan pipeline.
 
 ### 9. [models.py](../vulkan_nn_lib/modules/models.py)
 *   **Gemma3Block**: Implements the complex Gemma-3 architecture (AltUp, Laurel, PLE) while keeping activation buffers OOM-safe via the core engine.

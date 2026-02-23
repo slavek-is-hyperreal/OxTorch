@@ -8,10 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **PagedAttention & Context Management**: Developed `BlockTable` and `PagedKVCache` in `paged_attention.py` to virtually map non-contiguous fragments of memory dynamically token-by-token, dramatically reducing OOM errors caused by contiguous cache fragmentation.
+- **KVCachePool**: Global physical memory pool backing the PagedAttention blocks via Taichi `ndarray`.
+- **PagedAttention Custom Shader**: Added highly optimized `k_paged_attention_vulkan` kernel in `kernels.py` handling query dot products and physical pointer resolution across scattered block tables.
+- **Layers**: New `PagedAttention` module added to `modules/layers.py` that transparently accepts normal Queries but fetches Keys/Values safely from the PagedKVCache.
 - **VulkanTensorPool**: A new centralized memory suballocator in `vulkan_nn_lib/memory_pool.py` that intercepts all tensor creations to manage `maxMemoryAllocationCount` Vulkan limits and prepare for PagedAttention (KV Cache fragmentation handling).
 - **Comprehensive Parity Suite**: Unified Python test architecture (`tests/parity/test_pytorch_parity_comprehensive.py`) covering structural ops, math functions, activations, linear algebra, and arithmetics across CPU, Vulkan, and SSD backends.
 - `docs/CHANGELOG.md` to track project evolution.
 - Experimental `debug_matmul.py` and `debug_leaky_relu.py` scripts for isolated precision tracking.
+- **Memory Benchmarks**: `tests/core/benchmark_paged_attention.py` leveraging Linux `/proc/self/status` to accurately trace VM RSS optimization compared to PyTorch's naive contiguous allocation.
 
 ### Changed
 - **Autograd Engine**: Integrated `VulkanTensorPool` seamlessly into `vulkan_nn_lib/tensor.py` ensuring all tensor instantiations (zeros, external, clones) route through the centralized pool allocator.
