@@ -22,17 +22,20 @@ def test_tiled_linear_vs_linear():
     vlinear.bias.load_from_numpy(layer.bias.detach().numpy())
     
     vy = vlinear(vx)
-    vy.backward(vnn.Tensor(np.ones((batch_size, out_features)), shape=(batch_size, out_features)))
+    vy.backward(vnn.Tensor(np.ones((batch_size, out_features), dtype=np.float32), shape=(batch_size, out_features)))
+    
+    print("Comparing Standard Linear vs Torch...")
+    check_close(vy, y, "Standard Linear Output")
     
     # 3. Setup TiledLinear
     vx_tiled = to_vnn(x, requires_grad=True)
     vtiled = vnn.TiledLinear(in_features, out_features, tile_size=tile_size)
-    # Copy weights to TiledLinear weight_ram (which is now vtiled.weight.arr if device='cpu')
-    vtiled.weight.arr[:] = layer.weight.detach().numpy().T.flatten()
+    # Copy weights to TiledLinear weight
+    vtiled.weight.load_from_numpy(layer.weight.detach().numpy().T)
     vtiled.bias.load_from_numpy(layer.bias.detach().numpy())
     
     vy_tiled = vtiled(vx_tiled)
-    vy_tiled.backward(vnn.Tensor(np.ones((batch_size, out_features)), shape=(batch_size, out_features)))
+    vy_tiled.backward(vnn.Tensor(np.ones((batch_size, out_features), dtype=np.float32), shape=(batch_size, out_features)))
     
     # 4. Compare
     print("Comparing TiledLinear vs Torch...")

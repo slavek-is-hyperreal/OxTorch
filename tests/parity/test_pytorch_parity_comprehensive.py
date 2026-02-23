@@ -36,7 +36,7 @@ def check_parity(name, v_t, t_t, atol=ATOL_DEFAULT):
     except AssertionError as e:
         return False, str(e)
 
-def test_arithmetic(mode, dtype_name):
+def verify_arithmetic(mode, dtype_name):
     dtype = np.dtype(dtype_name)
     print(f"  [Unit] Arithmetic ({mode}, {dtype_name})...")
     N = 1000
@@ -67,7 +67,7 @@ def test_arithmetic(mode, dtype_name):
     
     return all(r[0] for r in results), [r[1] for r in results if not r[0]]
 
-def test_math_functions(mode, dtype_name):
+def verify_math_functions(mode, dtype_name):
     print(f"  [Unit] Math Functions ({mode}, {dtype_name})...")
     N = 1000
     # Use positive values for sqrt/log
@@ -87,7 +87,7 @@ def test_math_functions(mode, dtype_name):
     
     return all(r[0] for r in results), [r[1] for r in results if not r[0]]
 
-def test_activations(mode, dtype_name):
+def verify_activations(mode, dtype_name):
     print(f"  [Unit] Activations ({mode}, {dtype_name})...")
     N = 1000
     a_np = np.random.randn(N).astype(np.float32)
@@ -109,7 +109,7 @@ def test_activations(mode, dtype_name):
     
     return all(r[0] for r in results), [r[1] for r in results if not r[0]]
 
-def test_structural(mode):
+def verify_structural(mode):
     print(f"  [Unit] Structural Ops ({mode})...")
     a_np = np.random.randn(4, 8, 16).astype(np.float32)
     vt_a = vnn.tensor(a_np, device=mode)
@@ -131,7 +131,7 @@ def test_structural(mode):
     
     return all(r[0] for r in results), [r[1] for r in results if not r[0]]
 
-def test_linear_algebra(mode):
+def verify_linear_algebra(mode):
     print(f"  [Unit] Linear Algebra ({mode})...")
     # 256x256 MatMul
     size = 256
@@ -148,7 +148,7 @@ def test_linear_algebra(mode):
     
     return all(r[0] for r in results), [r[1] for r in results if not r[0]]
 
-def test_integration(mode):
+def verify_integration(mode):
     print(f"\n[Integration] Simple MLP Chain ({mode})...")
     # Input -> Linear -> Relu -> Linear -> Sum
     X = np.random.randn(32, 128).astype(np.float32)
@@ -257,25 +257,25 @@ def run_all_tests():
         print(f"\n--- TESTING MODE: {mode.upper()} ---")
         
         # Structural & Math functions (typically float32)
-        ok, errors = test_structural(mode)
+        ok, errors = verify_structural(mode)
         grand_results.append((f"STRUCTURAL_{mode}", ok, errors))
         
-        ok, errors = test_math_functions(mode, 'float32')
+        ok, errors = verify_math_functions(mode, 'float32')
         grand_results.append((f"MATH_{mode}", ok, errors))
         
-        ok, errors = test_activations(mode, 'float32')
+        ok, errors = verify_activations(mode, 'float32')
         grand_results.append((f"ACT_{mode}", ok, errors))
         
-        ok, errors = test_linear_algebra(mode)
+        ok, errors = verify_linear_algebra(mode)
         grand_results.append((f"LA_{mode}", ok, errors))
 
         # Integer Parity (Arithmetic)
         for dt in int_dtypes:
-            ok, errors = test_arithmetic(mode, dt)
+            ok, errors = verify_arithmetic(mode, dt)
             grand_results.append((f"ARITH_{mode}_{dt}", ok, errors))
             
         # Integration
-        ok, err_msg = test_integration(mode)
+        ok, err_msg = verify_integration(mode)
         grand_results.append((f"INTEGRATION_{mode}", ok, [err_msg] if not ok else []))
 
     # Benchmark
@@ -301,6 +301,9 @@ def run_all_tests():
         if not perf_ok:
             print("Note: Performance goal (1.5x) missed in some cases.")
         sys.exit(0)
+
+def test_all_parity_cases():
+    run_all_tests()
 
 if __name__ == "__main__":
     run_all_tests()

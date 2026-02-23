@@ -3,6 +3,7 @@ import numpy as np
 from . import kernels as K
 import torch
 from .memory import MemoryManager
+from .memory_pool import get_pool
 from . import config
 
 def _get_torch():
@@ -157,7 +158,7 @@ class Tensor:
             
             if self.device == 'vulkan':
                 if not hasattr(self, 'arr'):
-                    self.arr = ti.ndarray(dtype=ti.f32, shape=(n,))
+                    self.arr = get_pool().allocate(dtype=ti.f32, shape=(n,))
                 if hasattr(self, 'np_arr'):
                     if self.dtype == 'int4':
                         # Unpack to f32 for Vulkan
@@ -178,7 +179,7 @@ class Tensor:
                     self.arr = np.zeros(num_elements, dtype=self.storage_dtype)
         else:
             if self.device == 'vulkan':
-                self.arr = ti.ndarray(dtype=ti.f32, shape=(n,))
+                self.arr = get_pool().allocate(dtype=ti.f32, shape=(n,))
             else: # ram/cpu
                 num_elements = int(n * self.item_size) if self.dtype == 'int4' else n
                 self.arr = np.zeros(num_elements, dtype=self.storage_dtype)
