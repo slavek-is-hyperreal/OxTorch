@@ -207,11 +207,53 @@ def k_relu_backward(X: ti.types.ndarray(), Grad_Out: ti.types.ndarray(), Grad_X:
 
 @ti.kernel
 def k_matmul(A: ti.types.ndarray(), B: ti.types.ndarray(), C: ti.types.ndarray(), M: int, N: int, K: int):
-    for i, j in ti.ndrange(M, N):
+    ti.loop_config(block_dim=256) # 16 * 16
+    
+    M_padded = (M + 15) // 16 * 16
+    N_padded = (N + 15) // 16 * 16
+    num_blocks_i = M_padded // 16
+    num_blocks_j = N_padded // 16
+    
+    for linear_idx in range(num_blocks_i * num_blocks_j * 256):
+        block_idx = linear_idx // 256
+        thread_idx = linear_idx % 256
+        
+        block_i = block_idx // num_blocks_j
+        block_j = block_idx % num_blocks_j
+        
+        i_local = thread_idx // 16
+        j_local = thread_idx % 16
+        
+        i_global = block_i * 16 + i_local
+        j_global = block_j * 16 + j_local
+        
+        # Structural Padding (+1) avoids 32-way SIMT/SIMD Shared Memory back conflicts!
+        sA = ti.simt.block.SharedArray((16, 17), ti.f32)
+        sB = ti.simt.block.SharedArray((16, 17), ti.f32)
+        
         acc = 0.0
-        for k in range(K):
-            acc += A[i * K + k] * B[k * N + j]
-        C[i * N + j] = acc
+        for k_block in range((K + 15) // 16):
+            k_global_a = k_block * 16 + j_local
+            if i_global < M and k_global_a < K:
+                sA[i_local, j_local] = A[i_global * K + k_global_a]
+            else:
+                sA[i_local, j_local] = 0.0
+                
+            k_global_b = k_block * 16 + i_local
+            if k_global_b < K and j_global < N:
+                sB[i_local, j_local] = B[k_global_b * N + j_global]
+            else:
+                sB[i_local, j_local] = 0.0
+                
+            ti.simt.block.sync()
+            
+            for k in range(16):
+                acc += sA[i_local, k] * sB[k, j_local]
+                
+            ti.simt.block.sync()
+            
+        if i_global < M and j_global < N:
+            C[i_global * N + j_global] = acc
 
 @ti.kernel
 def k_add_bias(X: ti.types.ndarray(), bias: ti.types.ndarray(), M: int, N: int):
@@ -632,4 +674,50 @@ def k_paged_attention_vulkan(
                 v_val = V_pool[phys_block, h, token_in_block, d]
                 out_val += exp_s * v_val
             Out[(b * num_heads + h) * head_dim + d] = out_val / sum_exp
+
+@ti.kernel
+def k_flash_attention_vulkan(
+    Q: ti.types.ndarray(),
+    K: ti.types.ndarray(),
+    V: ti.types.ndarray(),
+    Out: ti.types.ndarray(),
+    B: int,
+    H: int,
+    L: int,
+    D: int,
+    scale: float
+):
+    # Fused FlashAttention: Computes Attention in a single kernel
+    for b, h, i in ti.ndrange(B, H, L):
+        m_i = -1e20
+        # Pass 1: Find max score
+        for j in range(L):
+            score = 0.0
+            for d in range(D):
+                score += Q[((b * L + i) * H + h) * D + d] * K[((b * L + j) * H + h) * D + d]
+            score *= scale
+            if score > m_i:
+                m_i = score
+                
+        # Pass 2: Sum of exponentials
+        sum_exp = 0.0
+        for j in range(L):
+            score = 0.0
+            for d in range(D):
+                score += Q[((b * L + i) * H + h) * D + d] * K[((b * L + j) * H + h) * D + d]
+            score *= scale
+            sum_exp += ti.exp(score - m_i)
+            
+        # Pass 3: Weighted sum of values 
+        for d in range(D):
+            out_val = 0.0
+            for j in range(L):
+                score = 0.0
+                for d_k in range(D):
+                    score += Q[((b * L + i) * H + h) * D + d_k] * K[((b * L + j) * H + h) * D + d_k]
+                score *= scale
+                exp_s = ti.exp(score - m_i)
+                out_val += exp_s * V[((b * L + j) * H + h) * D + d]
+                
+            Out[((b * L + i) * H + h) * D + d] = out_val / sum_exp
 
