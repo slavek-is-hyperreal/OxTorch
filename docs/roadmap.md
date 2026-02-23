@@ -2,24 +2,25 @@
 
 VNN Legacy Edition has achieved 100% PyTorch parity and verified performance. This roadmap outlines the strategic direction for Phase 8 and beyond, focusing on compression, efficiency, and usability.
 
-## 🎯 Short-Term (Stability & Refinement)
-- [ ] **Lazy Buffer Allocation**: Delay SSD file creation until the first write operation to optimize disk space for intermediate computations.
-- [ ] **Kernel Fusions**: Implement fused kernels (e.g., `Linear + ReLU + Add`) in Taichi to minimize GPU-CPU synchronization overhead.
-- [ ] **Deterministic Testing**: Expand the parity suite to include deterministic seed testing for stochastic operations such as `randn` and `dropout`.
+### ✅ Completed Milestones
+- **Multi-Tiered Autograd**: Unified gradient flow across RAM, Vulkan, and SSD.
+- **DRAS v4**: Adaptive memory-aware streaming with backpressure.
+- **Kaggle Mode**: Production-ready remote execution for massive tensors.
+- **PyTorch Parity**: Verified numerical consistency and API compatibility.
 
-## 🚀 Mid-Term (Compression & Throughput)
-- [ ] **Native INT4 Quantization**:
-    - Develop specialized Taichi kernels for 4-bit weights with high-speed, on-the-fly decompression.
-    - Target a 2x reduction in SSD storage requirements and a 1.5x throughput increase for "Monster Scale" models.
-- [ ] **Prefetcher 2.0**: 
-    - Implement a dynamic prefetch window that automatically adapts to SSD latency and bandwidth profiles (SATA vs. NVMe).
-    - Introduce native support for multi-SSD striping (RAID-0 mode) directly within the library.
-- [ ] **Advanced Fusion Logic**: Group multiple element-wise operations into a single SSD stream pass to eliminate redundant I/O cycles.
+### 🎯 Short-Term (Stability & Refinement)
+- **Lazy Buffer Allocation**: Delay SSD file creation until the first write operation.
+- **Kernel Fusions**: Combine multiple operations in Taichi to minimize overhead.
+- **Deterministic Testing**: Expand parity suite with deterministic seed testing.
 
-## 🌌 Long-Term (Ecosystem & Deployment)
-- [ ] **Kaggle-Powered Remote Compute**:
-    - Implement a "Kaggle Mode" where intensive tiled operations (e.g. full-model training steps) are offloaded to Kaggle GPU kernels via the Kaggle API.
-    - Leverage Kaggle's free GPU/VRAM for environments with zero local GPU acceleration.
+### 🚀 Mid-Term (Compression & Throughput)
+- **Native INT4 Quantization**: High-speed weight decompression on SSD.
+- **Prefetcher 2.0**: Adaptive windowing for NVMe saturation.
+
+### 🌌 Long-Term (Expansion)
+- **Distributed VNN**: Parallelization across networked systems.
+- **ONNX Integration**: Direct import of standard models.
+- **Web Integration**: Explore WebGPU for browser-based acceleration.
 - [ ] **Distributed VNN**: Support for multi-system training where SSD storage is shared over a 10GbE network.
 - [ ] **ONNX Integration**: Tooling to import ONNX models directly into VNN SSD format.
 - [ ] **Web Integration**: Explore WebGPU (via Taichi-JS) to bring VNN's SSD-streaming capabilities to high-end browser applications.

@@ -9,8 +9,8 @@ VNN is not a general-purpose replacement for PyTorch; it is a **specialized tool
 - **VNN**: Uses `from_binary`. Memory usage is **constant (approx. 50MB)** regardless of whether the model is 7B, 70B, or 400B parameters.
 
 ### 2. Low-RAM Training/Inference
-- **Backpropagation**: VNN supports SSD-native gradient accumulation. In Phase 8 testing, we achieved **423 MB/s** stable throughput for a **37GB sum** operation on a system with standard RAM, outperforming PyTorch by virtue of surviving.
-- **Safety**: The **Backpressure Mechanism** and **21.5GB Threshold** ensure that VNN will never crash your Linux desktop, even when pushing RAID-0 saturated I/O.
+- **Safety**: The **Backpressure Mechanism** and adaptive memory-aware streaming ensure that VNN will never crash your Linux desktop, even when pushing RAID-0 saturated I/O.
+- **Kaggle Offloading**: For massive operations that simply cannot run on local hardware, VNN transparently leverages high-end cloud GPUs at zero cost.
 
 ### 3. Hardware Greed
 - **PyTorch**: Relies on OS-level page cache for large data.
@@ -33,6 +33,7 @@ Our Vulkan backend is designed for older/generic hardware. While slower than CUD
 | **MatMul** | 1024^2 | **PyTorch** | CPU | 83.4 ms |
 | **MatMul** | 1024^2 | **VNN** | CPU | **125.2 ms (1.50x slowdown)** |
 | **Monster Sum**| 34 GB | **VNN** | **SOE Engine** | **162 MB/s (OOM-Safe)** |
+| **Kaggle MatMul**| 10 GB | **VNN** | **Kaggle Remote**| **~120s (Incl. Up/Down)**|
 
 ## Comparison Table
 

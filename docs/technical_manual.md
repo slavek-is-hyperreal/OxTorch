@@ -9,33 +9,32 @@ This document provides a comprehensive, block-by-block (and often line-by-line) 
 ### 1. [tensor.py](../vulkan_nn_lib/tensor.py) - The Universal Tensor
 This is the central object of VNN. It manages the state, device routing, and Autograd graph.
 
-*   **Lines 14-16**: `setup_ssd_storage` initializes the `TensorStore` globally.
-*   **Lines 34-195**: `__init__` constructor.
-    *   It handles **Auto-Device Selection**: decides whether a tensor should live in VRAM, RAM, or SSD based on its size and the `MemoryManager` budget.
-    *   **int4 Packing**: (Lines 140-145) Uses a **+8 bias** when packing inputs to `uint8` to ensure correct round-tripping with the dequantization logic.
-*   **Lines 20-32**: Factory-style logic for zero-copy and RAM awareness.
-*   **Lines 258-281**: `_acc_grad()` - The most critical part for OOM-safety. 
+*   **Lines 16-21**: `setup_ssd_storage` initializes the `TensorStore` globally.
+*   **Lines 34-191**: `__init__` constructor.
+    *   It handles **Auto-Device Selection**: decides whether a tensor should live in VRAM, RAM, or SSD based on its size and the `MemoryManager` budget. (Lines 76-88).
+    *   **int4 Packing**: (Lines 114-118, 137-138) Uses a specialized packing/unpacking logic for 4-bit weights.
+*   **Lines 24-26**: `from_numpy` zero-copy factory.
+*   **Lines 257-285**: `_acc_grad()` - The most critical part for OOM-safety. 
     *   It accumulates gradients on the **target device**. 
     *   If a parameter is on SSD, its gradient is also on SSD, and they are summed using the streaming engine.
-*   **Lines 283-306**: `backward()` implementation.
+*   **Lines 286-310**: `backward()` implementation.
     *   It builds a **topological sort** of the computation graph using a depth-first search (DFS).
-*   **Lines 308-339| **I/O Strategy** | Standard OS Memmap | Greedy ARAS Buffering (Linear Scaling)|
-*   **Lines 308-339**: `to_numpy()` - Standardized data retrieval with a safety fallback for Vulkan data currently on CPU.
-*   **Lines 469-502**: **Activation Methods**. Direct support for `relu`, `silu`, `leaky_relu`, `softmax`, and `gelu_tanh` on the `Tensor` object.
-*   **Lines 504-534**: **MatMul Implementation**. Detects CPU-resident data and uses PyTorch's optimized BLAS kernels via shared memory views.
+*   **Lines 318-343**: `to_numpy()` - Standardized data retrieval with a safety fallback for Vulkan data currently on CPU.
+*   **Lines 475-508**: **Activation Methods**. Direct support for `relu`, `silu`, `leaky_relu`, `softmax`, and `gelu_tanh` on the `Tensor` object.
+*   **Lines 510-545**: **MatMul Implementation**. Detects CPU-resident data and uses PyTorch's optimized BLAS kernels via shared memory views.
 
 ### 2. [streaming_ops.py](../vulkan_nn_lib/streaming_ops.py) - The ARAS Engine
 The "Heart" of VNN's OOM-safety. It implements tiled streaming for multi-gigabyte tensors.
 
-*   **Lines 21-110**: `TilePrefetcher` - An asynchronous producer-consumer queue.
-    *   **Bounded Queue**: (Line 32) Now uses a **fixed-size queue** to provide backpressure, preventing disk prefetching from overflowing RAM on "Monster-Scale" datasets.
-    *   **Adaptive Backoff**: (Lines 43-60) Monitors RAM usage and scales the number of outstanding I/O futures based on the safe budget.
-*   **Lines 522-589**: `SOE.sum()` (and other reductions).
-    *   Uses a **ThreadPoolExecutor** with **Future-based throttling** (Lines 544-558) to ensure compute doesn't lag too far behind I/O.
-    *   **Lines 530-545**: `SafetyViolationError` catch-all. If RAM spikes dangerously, it triggers an **Adaptive Restart**, reducing the budget and retrying the operation.
-*   **Lines 125-324**: `elementwise_op()`.
-    *   Implements **Heterogeneous Acceleration**. It can run in **Hybrid Mode**, where one GPU thread processes tiles in Vulkan while CPU threads handle other tiles in parallel.
-    *   **Dtype Promotion**: Automatically promotes integer division to `float32` for PyTorch parity.
+*   **Lines 30-128**: `TilePrefetcher` - An asynchronous producer-consumer queue.
+    *   **Bounded Queue**: (Line 41) Now uses a **dynamic queue** to provide backpressure, preventing disk prefetching from overflowing RAM on "Monster-Scale" datasets.
+    *   **Adaptive Backoff**: (Lines 59-81) Monitors RAM usage and scales the number of outstanding I/O futures based on the safe budget.
+*   **Lines 739-805**: `SOE.sum()` (and other reductions).
+    *   Uses a **ThreadPoolExecutor** with **Future-based throttling** (Lines 782-789) to ensure compute doesn't lag too far behind I/O.
+    *   **Lines 800-805**: `SafetyViolationError` catch-all. If RAM spikes dangerously, it triggers an **Adaptive Restart**, reducing the budget and retrying the operation.
+*   **Lines 144-518**: `elementwise_op()`.
+    *   Implements **Heterogeneous Acceleration**. It can run in **Hybrid Mode**, where one GPU thread processes tiles in Vulkan while CPU threads handle other tiles in parallel. (Lines 465-501).
+    *   **Kaggle Redirect**: (Lines 167-172) Automatically offloads operations exceeding threshold to cloud GPUs.
     *   **Activation Integration**: Native support for streaming activation functions directly on disk.
 
 ### 3. [kernels.py](../vulkan_nn_lib/kernels.py) - Taichi Compute Shaders
@@ -53,11 +52,17 @@ JIT-compiled SPIR-V shaders for Vulkan.
 Manages the RAM/VRAM budgets and detects safety violations.
 
 *   **Line 15**: `_system_reserve_bytes`. Can be set via environment variable `VNN_RESERVE_GB` (Default: 5). This memory is "hidden" from VNN to protect ZFS ARC or other background services.
-*   **Lines 90-105**: `get_safe_budget()`. 
+*   **Lines 111-125**: `get_safe_budget()`. 
     *   **Linear Scaling**: Dynamically calculates 80% of **(Available RAM - Reservation)**. 
     *   **No Hard Cap**: Scales naturally from 1GB to 1TB+. On a 128GB system, VNN will automatically utilize ~100GB of RAM before offloading to SSD.
-*   **Lines 139-153**: `wait_for_ram()`. 
+*   **Lines 141-155**: `wait_for_ram()`. 
     *   Blocking check used by factory functions. If RAM is too low, it pauses the requester until memory is released.
+
+### 5. [kaggle_executor.py](../vulkan_nn_lib/kaggle_executor.py) - Ephemeral Supercompute
+The orchestration engine for remote cloud compute.
+
+- **Lines 140-192**: Job submission and script generation.
+- **Lines 232-282**: Remote kernel polling and result streaming.
 
 ---
 

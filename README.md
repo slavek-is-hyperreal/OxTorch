@@ -31,13 +31,16 @@ PYTHONPATH=. python3 demos/splat_studio/splat_studio.py
 
 ---
 
+---
+
 ## 🛠️ Core Capabilities
 
 PyTorch is for the data center. **VNN is for the rest of us.**
 
 -   **SSD-Native Autograd**: The jewel of VNN. Backpropagation that streams directly to/from disk, enabling training on models weighing hundreds of gigabytes.
--   **DRAS v4 (Adaptive RAM-Aware Streaming)**: Real-time memory monitoring that pushes your hardware to the absolute limit without crossing the RAM "cliff."
+-   **DRAS v4 (Adaptive RAM-Aware Streaming)**: Real-time memory monitoring with **Adaptive Backoff**. It pushes your hardware to the absolute limit without crossing the RAM "cliff," pausing I/O when the processing pipeline is saturated.
 -   **Vulkan/Taichi Engine**: Hardware-agnostic compute that runs on Intel, AMD, and NVIDIA alike.
+-   **Kaggle Offloading**: Zero-cost ephemeral supercomputing via Kaggle kernels.
 -   **100% Parity**: Mathematically verified against PyTorch for core operations.
 
 > [!TIP]
@@ -109,11 +112,11 @@ export VNN_KAGGLE_MODE=1
 ```
 
 ### How it works
-- **Automatic Offloading**: When an operation (e.g., `MatMul`, `Add`) exceeds the `VNN_KAGGLE_THRESHOLD` (default: 100MB), VNN intercepts it.
+- **Automatic Offloading**: When an operation (e.g., `MatMul`, `Add`) exceeds the `VNN_KAGGLE_THRESHOLD` (default: 1GB), VNN intercepts it.
 - **Data Sync**: Inputs are uploaded as private Kaggle Datasets.
 - **Remote Execution**: A specialized kernel is spun up to process the data on high-end GPUs.
 - **Result Streaming**: Results are downloaded directly to your local SSD.
-- **Seamless**: Your local Python script waits (or continues if async is enabled in future) as if it were a local function call.
+- **Seamless**: Your local Python script waits as if it were a local function call, transparently handling partitioning for tensors larger than Kaggle's 13GB RAM limit.
 
 ---
 

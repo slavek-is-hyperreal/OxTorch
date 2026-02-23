@@ -10,6 +10,7 @@ The `Tensor` class is the heart of VNN. It is designed to behave like a `torch.T
     - `'vulkan'`: Taichi acceleration.
     - `'cpu'`: PyTorch Hybrid Fast-Path (uses zero-copy shared memory).
     - `'ssd'`: Disk-native storage via `TensorStore`.
+    - `'kaggle'`: Cloud-native remote execution.
     - `'auto'`: (Default) Dynamically switches based on size and global RAM budget.
 - **`external_path`**: If provided, the tensor mounts an existing binary file on disk (Zero-copy).
 - **`requires_grad`**: Enables Autograd tracking.
@@ -62,6 +63,13 @@ Changes the dimension order.
 Mimics PyTorch's `expand` functionality. 
 - **Auto-Broadcasting**: VNN's Autograd engine automatically handles broadcasting during `backward()` to match expanded shapes.
 
+### `reshape(*shape)` / `view(*shape)`
+Returns a new tensor with the same data but a different shape. 
+- **Efficiency**: Zero-copy if possible. For SSD tensors, it returns a virtual view.
+
+### `flatten(start_dim=0, end_dim=-1)`
+Flattens the tensor into a 1D or lower-dimensional representation. 
+
 ---
 
 ## Boolean Masking & Conditional Logic
@@ -77,12 +85,24 @@ Standard comparison operators are fully supported.
 
 ---
 
+## 🛠️ Specialized Access
+
+### `__getitem__(idx)` / `__setitem__(idx, value)`
+Standard Python indexing and slicing.
+- **SSD Safety**: Slicing an SSD tensor returns a new virtual view or a small RAM-resident copy depending on context.
+- **VRAM Caution**: Slicing large Vulkan tensors may trigger a sync.
+
+### `get_samples(indices)`
+High-performance retrieval of specific indices. Designed for OOM-safe parity verification and sparse data inspection.
+
+---
+
 ## Math Backend Selection Logic
 
-| Operation | Vulkan (<128MB) | CPU (Large) | SSD (Monster) |
-| :--- | :--- | :--- | :--- |
-| **Add/Sub/Mul** | Taichi Kernel | PyTorch (Shared) | SOE Tiled Stream |
-| **Matmul** | Taichi Kernel | PyTorch (Shared) | Block-Based Parallel Stream |
-| **Exp/Log/Pow** | Taichi Kernel | PyTorch (Shared) | SOE Ufunc Stream |
-| **Sum/Mean** | Taichi Kernel | PyTorch (Shared) | ARAS Tiled Reduction |
-| **Activations** | Taichi Kernel | PyTorch (Shared) | SOE Streaming |
+| Operation | Vulkan (<128MB) | CPU (Large) | SSD (Monster) | Kaggle (>1GB) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Add/Sub/Mul** | Taichi Kernel | PyTorch (Shared) | SOE Tiled Stream | Remote GPU |
+| **Matmul** | Taichi Kernel | PyTorch (Shared) | Block-Based Stream| Remote GPU |
+| **Exp/Log/Pow** | Taichi Kernel | PyTorch (Shared) | SOE Ufunc Stream | Remote GPU |
+| **Sum/Mean** | Taichi Kernel | PyTorch (Shared) | ARAS Tiled Reduc. | Remote GPU |
+| **Activations** | Taichi Kernel | PyTorch (Shared) | SOE Streaming | Remote GPU |

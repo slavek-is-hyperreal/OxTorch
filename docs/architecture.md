@@ -11,13 +11,14 @@ graph TD
     Decision -- "< 128MB (FP32)" --> Vulkan["Taichi/Vulkan (GPU)"]
     Decision -- "< Safe RAM Budget" --> Hybrid["PyTorch Fast-Path (CPU/Shared)"]
     Decision -- "> Safe RAM Budget" --> ARAS["SOE Engine (SSD/Tiled)"]
+    Decision -- "> Kaggle Threshold" --> Kaggle["Kaggle Executor (Cloud GPU)"]
     
     ARAS --> Tiled["Tiled Math Engine"]
     Tiled --> SSD["SSD Binary Storage"]
 ```
 
 ## 1. The Multi-Tiered Backend
-VNN automatically routes every operation through the most efficient backend based on the current system load:
+VNN automatically routes every operation through the most efficient backend based on the current system load and operation size:
 
 ### A. Vulkan (via Taichi)
 *   **Target**: Small to medium tensors (under 128MB).
@@ -27,20 +28,25 @@ VNN automatically routes every operation through the most efficient backend base
 ### B. PyTorch Hybrid (Fast Path)
 *   **Target**: Tensors that fit comfortably in RAM (below the "Safe RAM Budget").
 *   **Innovation**: **Zero-Copy Shared Memory**. VNN utilizes `torch.from_numpy(self.arr)` to execute operations directly on CPU memory using PyTorch's optimized BLAS/MKL kernels.
-*   **Benefit**: Extremely low overhead (**~1.09x slowdown** vs. native PyTorch for element-wise additions).
+*   **Benefit**: Extremely low overhead.
 *   **Limitation**: Synchronous execution.
 
 ### C. SOE/ARAS (Streaming Operator Engine)
 *   **Target**: "Monster Scale" tensors (e.g., 34GB+ on systems with limited RAM).
 *   **Innovation**: **Adaptive Tiling & Backpressure**. 
     - **Adaptive Tiling**: Automatically decomposes operations into tiles that fit within a safe budget (default: 512MB).
-    - **Bounded Backpressure**: The engine employs a bounded prefetch queue and future-tracking to prevent SSD operations from overwhelming RAM. This ensures system stability during massive operations by pausing disk I/O when the processing pipeline is saturated.
-*   **SSD Native**: Results are generated directly on SSD via `memmap`, maintaining flat RAM usage regardless of total tensor size.
+    - **DRAS v4 Bounded Backpressure**: The engine employs a bounded prefetch queue and future-tracking to prevent SSD operations from overwhelming RAM. It monitors `MemAvailable` and dynamically throttles disk I/O when "Usage Risk" exceeds safe thresholds.
+*   **SSD Native**: Results are generated directly on SSD via `memmap`, with explicit `.flush()` calls to ensure coherence between tiled writes.
+
+### D. Kaggle Remote Compute
+*   **Target**: Massive operations exceeding the `VNN_KAGGLE_THRESHOLD` (Default: 1GB).
+*   **Strategy**: Uses the `KaggleExecutor` to upload tiled data to cloud GPUs, execute via PyTorch/CUDA kernels, and stream results back to local SSD. Effectively bypasses all local hardware limitations.
 
 ## 2. Autograd & Unified Gradient Accumulation
 VNN's reverse-mode differentiation engine is backend-agnostic. The core innovation lies in the `_acc_grad(grad)` method, which intelligently routes gradient accumulation based on the host device:
 
 - **SSD**: Employs the SOE/ARAS engine for multi-threaded, tiled element-wise addition directly on disk.
+- **Kaggle**: (Planned/Experimental) Offloads accumulation steps for massive layers.
 - **Vulkan**: Uses Taichi kernels for GPU-accelerated accumulation.
 - **CPU**: Utilizes optimized PyTorch shared memory paths for maximum performance.
 
