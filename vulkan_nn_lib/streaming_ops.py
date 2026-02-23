@@ -366,14 +366,14 @@ class SOE:
             try:
                 # m_ram is master, const_val/other_ram is slave
                 _torch = _get_torch()
-                if ti_b is not None:
+                if n_a == n_b:
                     # other is also a large tensor (same shape)
                     storage_other = get_storage(b) if not swapped else get_storage(a)
                     o_cached = b_is_cached if not swapped else a_is_cached
                     if not o_cached and hasattr(storage_other, '__getitem__'):
                         other_ram = storage_other[start:end].copy()
                     else:
-                        other_ram = storage_other if o_cached else storage_other[start:end]
+                        other_ram = storage_other[start:end]
                     a_t = _torch.from_numpy(m_ram if not swapped else other_ram)
                     b_t = _torch.from_numpy(other_ram if not swapped else m_ram)
                 else:
@@ -389,16 +389,31 @@ class SOE:
                     elif isinstance(extra, (int, float)):
                         extra_t = extra
                     elif hasattr(extra, 'to_numpy'):
-                        extra_t = _torch.from_numpy(extra.to_numpy())
+                         # If cached or small, it might benefit from full conversion or slice
+                         if extra_is_cached:
+                             val = extra.to_numpy().flatten()
+                             # Handle case where extra is larger than tile (shouldn't happen if cached properly as scalar broadcast, but if same shape...)
+                             # Actually extra is usually scalar or same shape.
+                             # If cached and same shape, we need slicing.
+                             if val.size > 1:
+                                  extra_t = _torch.from_numpy(val[start:end])
+                             else:
+                                  extra_t = val[0]
+                         else:
+                             extra_t = _torch.from_numpy(extra.to_numpy())
                     else:
-                        extra_t = _torch.from_numpy(get_storage(extra))
+                        storage_extra = get_storage(extra)
+                        if hasattr(storage_extra, '__getitem__'):
+                             extra_t = _torch.from_numpy(storage_extra[start:end].copy())
+                        else:
+                             extra_t = _torch.from_numpy(storage_extra)
 
                 if _torch is not None:
                     # a_t and b_t are now correctly ordered regardless of who is master
                     if op_type == 'add': r_t = a_t + b_t
                     elif op_type == 'sub': r_t = a_t - b_t
                     elif op_type == 'mul': r_t = a_t * b_t
-                    elif op_type == 'div' or op_type == 'truediv': r_t = a_t / (b_t + 1e-12)
+                    elif op_type == 'div' or op_type == 'truediv': r_t = a_t / b_t
                     elif op_type == 'gt': r_t = (a_t > b_t).float()
                     elif op_type == 'lt': r_t = (a_t < b_t).float()
                     elif op_type == 'ge': r_t = (a_t >= b_t).float()
@@ -485,7 +500,7 @@ class SOE:
                     executor.submit(process_tile_cpu, s_c, e_c, m_c)
 
         # Final Sync & Persistence
-        if res.device in ['vulkan', 'hybrid'] and hasattr(res, 'np_arr'):
+        if res.device == 'vulkan' and hasattr(res, 'np_arr') and res.np_arr is not None:
             # Convert to f32 for Taichi (default) and sync
             res.arr.from_numpy(res.np_arr.astype(np.float32))
             import taichi as ti

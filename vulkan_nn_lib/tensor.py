@@ -277,6 +277,10 @@ class Tensor:
                 g_val = np.array(grad)
             
             # Use rank-agnostic ellipsis for in-place update (handles 0D scalars)
+            # Ensure g_val matches target shape to avoid (1,) vs () broadcast errors
+            if g_val.shape != self.shape and g_val.size == self.total_size:
+                g_val = g_val.reshape(self.shape)
+                
             self.grad.arr.reshape(self.shape)[...] += g_val
             
     def backward(self, grad=None):

@@ -28,11 +28,11 @@ Our Vulkan backend is designed for older/generic hardware. While slower than CUD
 ## 📊 Benchmark Results (Standardized)
 | Operation | Size | Engine | Mode | Speed / Latency |
 | :--- | :--- | :--- | :--- | :--- |
-| **Add** | 8.3 M | **PyTorch** | CPU | 10.2 ms |
-| **Add** | 8.3 M | **VNN** | CPU | **11.1 ms (1.09x slowdown)** |
-| **MatMul** | 1024^2 | **PyTorch** | CPU | 25.6 ms |
-| **MatMul** | 1024^2 | **VNN** | CPU | **34.9 ms (1.36x slowdown)** |
-| **Monster Sum**| 37 GB | **VNN** | **SOE Engine** | **423 MB/s (OOM-Safe)** |
+| **Add** | 8.3 M | **PyTorch** | CPU | 21.6 ms |
+| **Add** | 8.3 M | **VNN** | CPU | **36.2 ms (1.68x slowdown)** |
+| **MatMul** | 1024^2 | **PyTorch** | CPU | 83.4 ms |
+| **MatMul** | 1024^2 | **VNN** | CPU | **125.2 ms (1.50x slowdown)** |
+| **Monster Sum**| 34 GB | **VNN** | **SOE Engine** | **162 MB/s (OOM-Safe)** |
 
 ## Comparison Table
 

@@ -65,7 +65,58 @@ loss.backward()
 print(f"Gradient safely resident on: {w.grad.device}") # -> 'ssd'
 ```
 
+
 ---
+
+## 🎛️ Device Selection
+
+VNN gives you full control over where your tensors live. You can let the system manage it or force specific hardware.
+
+```python
+# 1. auto (Default)
+# Intelligent placement based on RAM budget and tensor size.
+# Small -> Vulkan/CPU, Large -> SSD.
+x = Tensor(data, device='auto')
+
+# 2. cpu
+# Forces execution on System RAM. Good for small debugging or legacy ops.
+x = Tensor(data, device='cpu')
+
+# 3. vulkan
+# Forces execution on GPU. 
+# WARNING: Will crash if execution exceeds VRAM. Use for maximum speed on small-mid data.
+x = Tensor(data, device='vulkan')
+
+# 4. ssd
+# Forces data to reside on disk (memory-mapped).
+# Infinite capacity, limited by disk speed.
+x = Tensor(data, device='ssd')
+```
+
+---
+
+## ☁️ Kaggle Mode (Infinite Compute)
+
+VNN can transparently offload massive computations to **Kaggle Kernels** (free T4 x2 GPUs), effectively giving you an ephemeral supercomputer.
+
+### Setup
+1. Get your `kaggle.json` API key from [Kaggle Settings](https://www.kaggle.com/settings).
+2. Place it in the project root or `~/.kaggle/kaggle.json`.
+3. Enable the mode via environment variable:
+
+```bash
+export VNN_KAGGLE_MODE=1
+```
+
+### How it works
+- **Automatic Offloading**: When an operation (e.g., `MatMul`, `Add`) exceeds the `VNN_KAGGLE_THRESHOLD` (default: 100MB), VNN intercepts it.
+- **Data Sync**: Inputs are uploaded as private Kaggle Datasets.
+- **Remote Execution**: A specialized kernel is spun up to process the data on high-end GPUs.
+- **Result Streaming**: Results are downloaded directly to your local SSD.
+- **Seamless**: Your local Python script waits (or continues if async is enabled in future) as if it were a local function call.
+
+---
+
 
 ## 📚 Technical Manuals
 
