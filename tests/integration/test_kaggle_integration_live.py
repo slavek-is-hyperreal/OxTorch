@@ -12,6 +12,7 @@ def test_kaggle_small():
     
     # Enable Kaggle Mode for this process
     os.environ["VNN_KAGGLE_MODE"] = "1"
+    os.environ["VNN_KAGGLE_THRESHOLD"] = "1024" # Trigger on tiny tensors for testing framework
     
     # 1. Create tensors
     # We use a size that would normally trigger SSD if not for Kaggle
