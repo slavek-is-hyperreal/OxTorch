@@ -180,27 +180,30 @@ class PagedAttention(Module):
         
         max_seq_len = 4096
         max_blocks_per_seq = max_seq_len // kv_cache.pool.block_size
-        scores_scratchpad = Tensor(None, shape=(batch_size, self.num_heads, max_seq_len), device='vulkan')
+        scores_scratchpad = Tensor(None, shape=(batch_size * self.num_heads * max_seq_len,), device='vulkan')
         
         # Flatten block_tables and context_lens into ti.ndarrays
-        block_tables_np = np.zeros((batch_size, max_blocks_per_seq), dtype=np.int32)
+        block_tables_np = np.zeros(batch_size * max_blocks_per_seq, dtype=np.int32)
         context_lens_np = np.zeros((batch_size,), dtype=np.int32)
         
         # Simplified batch=1 assumption for the KV cache for now
-        block_tables_np[0, :kv_cache.num_blocks()] = kv_cache.block_table.get_physical_blocks()
+        block_tables_np[:kv_cache.num_blocks()] = kv_cache.block_table.get_physical_blocks()
         context_lens_np[0] = kv_cache.seq_len
         
         block_tables = Tensor(block_tables_np, device='vulkan')
         context_lens = Tensor(context_lens_np, device='vulkan')
         
+        q_flat = q.reshape(batch_size * self.num_heads * self.head_dim)
+        out_flat = Tensor(None, shape=(batch_size * self.num_heads * self.head_dim,), device='vulkan')
+        
         K.k_paged_attention_vulkan(
-            q.arr,
+            q_flat.arr,
             kv_cache.pool.physical_k,
             kv_cache.pool.physical_v,
             block_tables.arr,
             context_lens.arr,
             scores_scratchpad.arr,
-            out.arr,
+            out_flat.arr,
             batch_size,
             self.num_heads,
             self.head_dim,
@@ -211,4 +214,4 @@ class PagedAttention(Module):
         )
         import taichi as ti
         ti.sync()
-        return out
+        return out_flat.reshape(*q.shape)

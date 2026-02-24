@@ -18,9 +18,12 @@ class TiledLinear(Module):
             self.bias = Tensor(np.zeros(out_features, dtype=np.float32), requires_grad=True)
             
         self.weight_tile_vram = ti.ndarray(dtype=ti.f32, shape=(in_features * tile_size,))
+        self.weight_tile_vram.fill(0) # Force Taichi to bind the buffer to VRAM immediately
+        
         if quant_type == 'q4_0':
             # Q4_0 packs 32 elements into 18 bytes
             self.raw_tile_vram = ti.ndarray(dtype=ti.u8, shape=(in_features * tile_size // 32 * 18,))
+            self.raw_tile_vram.fill(0)
             
         self.grad_tile_vram = ti.ndarray(dtype=ti.f32, shape=(in_features * tile_size,))
         self.grad_out_tile_vram = None # Will be allocated once
