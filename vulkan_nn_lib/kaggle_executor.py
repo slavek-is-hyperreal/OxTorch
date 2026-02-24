@@ -216,7 +216,7 @@ if __name__ == "__main__":
                 slug = f"vnn-matmul-{int(time.time()*100)}"
                 ds_slug = f"vnn-data-{int(time.time()*100)}"
                 
-                with tempfile.TemporaryDirectory() as tmpdir:
+                with tempfile.TemporaryDirectory(dir='.') as tmpdir:
                     np.save(os.path.join(tmpdir, 'input_a.npy'), a_part)
                     
                     b_view = b_tensor.arr if hasattr(b_tensor, 'arr') else b_tensor.to_numpy()
@@ -251,7 +251,7 @@ if __name__ == "__main__":
         slug = f"vnn-op-{int(time.time()*100)}"
         ds_slug = f"vnn-data-{int(time.time()*100)}"
         
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(dir='.') as tmpdir:
             # Use safe views instead of to_numpy().flatten() to prevent 20GB+ OOM
             if hasattr(a_tensor, 'arr') and hasattr(a_tensor.arr, 'reshape'):
                 a_data = a_tensor.arr.reshape(-1)[start:end].copy()
@@ -282,7 +282,7 @@ if __name__ == "__main__":
 
     def _push_and_wait_with_dataset(self, slug, script_content, ds_slug):
         username = self.username
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(dir='.') as tmpdir:
             script_file = os.path.join(tmpdir, 'script.py')
             
             with open(script_file, 'w') as f:
