@@ -37,3 +37,10 @@ weights_gemma_3n*/
 vulkan_nn_lib/weights/
 vulkan_nn_lib/.env
 vulkan_nn_lib/kaggle.json
+
+# Rust (Maturin & Cargo)
+target/
+Cargo.lock
+*.whl
+.vnn_cache_bench/
+tmp*/

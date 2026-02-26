@@ -1,0 +1,17 @@
+[package]
+name = "vulkannn_rusted"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "vulkannn_rusted"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.21.2", features = ["extension-module"] }
+wgpu = "0.19"
+pollster = "0.3" 
+memmap2 = "0.9"
+numpy = "0.21.0"
+bytemuck = "1.15"
+libc = "0.2"
