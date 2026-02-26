@@ -266,9 +266,21 @@ class Tensor:
             
         if self.device == 'ssd':
             from . import streaming_ops as SOE
+            if grad.shape != self.shape:
+                g_val = grad.to_numpy()
+                axes = tuple(i for i, d in enumerate(grad.shape) if i < len(grad.shape) - len(self.shape) or d != self.shape[i-(len(grad.shape)-len(self.shape))])
+                g_val = np.sum(g_val, axis=axes).reshape(self.shape)
+                grad = Tensor(g_val, device='ssd')
             self.grad = SOE.SOE.elementwise_op(self.grad, grad, 'add', out_device='ssd')
         elif self.device == 'vulkan':
-            K.k_add(self.grad.arr, grad.arr, self.total_size, grad.total_size)
+            if grad.shape != self.shape:
+                g_val = grad.to_numpy()
+                axes = tuple(i for i, d in enumerate(grad.shape) if i < len(grad.shape) - len(self.shape) or d != self.shape[i-(len(grad.shape)-len(self.shape))])
+                g_val = np.sum(g_val, axis=axes).reshape(self.shape)
+                grad_reduced = Tensor(g_val, device='vulkan')
+                K.k_add(self.grad.arr, grad_reduced.arr, self.total_size, self.total_size)
+            else:
+                K.k_add(self.grad.arr, grad.arr, self.total_size, grad.total_size)
             ti.sync()
         else:
             # CPU/RAM: Numpy handles broadcasting
@@ -277,9 +289,9 @@ class Tensor:
             else:
                 g_val = np.array(grad)
             
-            # Use rank-agnostic ellipsis for in-place update (handles 0D scalars)
-            # Ensure g_val matches target shape to avoid (1,) vs () broadcast errors
-            if g_val.shape != self.shape and g_val.size == self.total_size:
+            if g_val.shape != self.shape:
+                axes = tuple(i for i, d in enumerate(g_val.shape) if i < len(g_val.shape) - len(self.shape) or d != self.shape[i-(len(g_val.shape)-len(self.shape))])
+                if axes: g_val = np.sum(g_val, axis=axes)
                 g_val = g_val.reshape(self.shape)
                 
             self.grad.arr.reshape(self.shape)[...] += g_val

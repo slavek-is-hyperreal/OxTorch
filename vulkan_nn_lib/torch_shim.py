@@ -48,11 +48,14 @@ def tensor(data, dtype=None, device='auto', requires_grad=False):
 
 def from_numpy(np_array):
     return Tensor(np_array)
-def _should_stream(size, dtype, device):
-    if device == 'ssd': return True
-    if device == 'auto':
+
+# Re-export Tensor functions
+
+def _should_stream(shape, dtype, requested_device):
+    if requested_device == 'ssd': return True
+    if requested_device == 'auto':
         n = 1
-        for s in size: n *= s
+        for s in shape: n *= s
         item_size = np.dtype(dtype if dtype else np.float32).itemsize
         size_bytes = n * item_size
         
@@ -76,25 +79,17 @@ def ones(*size, dtype=None, device='auto', requires_grad=False):
         n = t.total_size
         item_size = np.dtype(t.dtype).itemsize
         
-        # Greedy Allocation: Use 512MB chunks for explicit RAM buffering
-        chunk_size_bytes = 512 * 1024 * 1024
+        # Conservative Allocation to prevent OS freezing (128MB sequential)
+        chunk_size_bytes = 128 * 1024 * 1024
         chunk_len = chunk_size_bytes // item_size
         
-        # Optimized copy to SSD
         size_str = f"{n*item_size/1e6:.1f}MB" if n*item_size >= 1e6 else f"{n*item_size/1024:.1f}KB"
         print(f"  [Factory] Initializing SSD 'ones' tensor ({size_str}, {t.dtype})...")
         t0 = time.perf_counter()
         
-        def fill_chunk(start, end):
-            # Explicitly allocate in resident RAM to bypass ZFS ARC limits
-            buf = np.ones(end - start, dtype=t.dtype)
-            t.arr[start:end] = buf
-
-        with ThreadPoolExecutor(max_workers=12) as executor:
-            offsets = range(0, n, chunk_len)
-            for start in offsets:
-                end = min(start + chunk_len, n)
-                executor.submit(fill_chunk, start, end)
+        for start in range(0, n, chunk_len):
+            end = min(start + chunk_len, n)
+            t.arr[start:end] = np.ones(end - start, dtype=t.dtype)
         
         print(f"    Done in {time.perf_counter()-t0:.2f}s")
         return t
@@ -108,22 +103,16 @@ def randn(*size, dtype=None, device='auto', requires_grad=False):
         n = t.total_size
         item_size = np.dtype(t.dtype).itemsize
         
-        # Greedy Allocation
-        chunk_size_bytes = 256 * 1024 * 1024
+        # Conservative Allocation to prevent OS freezing (128MB sequential)
+        chunk_size_bytes = 128 * 1024 * 1024
         chunk_len = chunk_size_bytes // item_size
         
-        print(f"  [Factory] Greedy SSD 'randn' ({n*item_size/1e6:.1f}MB)...")
+        print(f"  [Factory] SSD 'randn' ({n*item_size/1e6:.1f}MB)...")
         t0 = time.perf_counter()
         
-        def fill_chunk(start, end):
-            buf = np.random.randn(end - start).astype(t.dtype)
-            t.arr[start:end] = buf
-
-        with ThreadPoolExecutor(max_workers=12) as executor:
-            offsets = range(0, n, chunk_len)
-            for start in offsets:
-                end = min(start + chunk_len, n)
-                executor.submit(fill_chunk, start, end)
+        for start in range(0, n, chunk_len):
+            end = min(start + chunk_len, n)
+            t.arr[start:end] = np.random.randn(end - start).astype(t.dtype)
         
         print(f"    Done in {time.perf_counter()-t0:.2f}s")
         return t

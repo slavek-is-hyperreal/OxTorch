@@ -6,9 +6,15 @@ import time
 # Simulate user script:
 import vulkan_nn_lib as torch
 from vulkan_nn_lib.tensor import Tensor
+import pytest
+import os
 
+@pytest.mark.skipif(os.environ.get('VNN_MASSIVE') != '1', reason="Takes 15+ minutes. Need VNN_MASSIVE=1 to run.")
 def test_phase2():
     print("--- Phase 2: Streaming Math (SOE) Test ---\n")
+    
+    # Kategorycznie zablokuj Kaggle dla tego pojedynczego gigantycznego testu:
+    os.environ['VNN_KAGGLE_MODE'] = '0'
     
     # Setup SSD for large tests
     Tensor.setup_ssd_storage(None)

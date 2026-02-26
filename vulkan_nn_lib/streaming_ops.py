@@ -225,6 +225,17 @@ class SOE:
         b_is_cached = (n_b < safe_budget * 0.4)
         extra_is_cached = (n_extra < safe_budget * 0.4) if extra is not None else True
 
+        # STRICT VULKAN VRAM CLAMP: Zapobiega zamrażaniu "Desktou i Antigravity"
+        if use_vulkan or use_hybrid:
+            vram_budget = MemoryManager.get_vram_budget()
+            # Odejmujemy bazowe 256 MB VRAM na absolutny priorytet utrzymania GUI Minta i przeglądarki
+            usable_vram = max(64 * 1024 * 1024, vram_budget - (256 * 1024 * 1024))
+            
+            arrays_needed = 2 if is_true_scalar else 3
+            if extra is not None: arrays_needed += 1
+            max_vram_tile = int(usable_vram // (arrays_needed * item_size))
+            tile_len = max(1000, min(tile_len, max_vram_tile))
+
         # 4. Result Initialization (with RAM shadow for tiling)
         if eff_device in ['vulkan', 'hybrid']:
             res = Tensor(np.zeros(master.shape, dtype=res_dtype), device=eff_device)
@@ -465,7 +476,7 @@ class SOE:
                         r_t = extra_t * sig * (1.0 + a_t * (1.0 - sig))
                     elif op_type == 'leaky_relu_backward':
                         mask = (a_t > 0).float()
-                        r_t = extra_t * (mask + (1.0 - mask) * extra) 
+                        r_t = b_t * (mask + (1.0 - mask) * extra) 
                     elif op_type == 'gelu_tanh_backward':
                         # Precise GELU derivative
                         r_t = extra_t * (0.5 * (1.0 + _torch.tanh(0.7978845608 * (a_t + 0.044715 * a_t**3))) + 

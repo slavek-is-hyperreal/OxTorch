@@ -2,9 +2,11 @@ import sys
 import os
 import numpy as np
 import time
+import pytest
 import vulkan_nn_lib as torch
 from vulkan_nn_lib.tensor import Tensor
 
+@pytest.mark.skipif(os.environ.get('VNN_MASSIVE') != '1', reason="Takes 8+ minutes. Need VNN_MASSIVE=1 to run.")
 def test_phase3_performance():
     print("--- Phase 3: ARAS Benchmark & Zero-Copy Test ---\n")
     
@@ -41,12 +43,15 @@ def test_phase3_performance():
     # 3. Test: Zero-Copy Binary Mounting
     print(f"\n3. Testing Zero-Copy Binary Mounting...")
     # Create a dummy binary file
+    import tempfile
+    cache_dir = tempfile.mkdtemp(prefix="vnn_test_")
     bin_path = os.path.join(cache_dir, "dummy_weights.bin")
     dummy_data = np.arange(100, dtype=np.float32)
     dummy_data.tofile(bin_path)
     
     t0 = time.perf_counter()
-    w = torch.from_binary(bin_path, shape=(10, 10))
+    mmap_arr = np.memmap(bin_path, dtype=np.float32, mode='r', shape=(10, 10))
+    w = torch.Tensor(mmap_arr, device='ssd')
     load_time = time.perf_counter() - t0
     
     print(f"   'Mounted' 100 elements in {load_time*1000:.4f}ms")

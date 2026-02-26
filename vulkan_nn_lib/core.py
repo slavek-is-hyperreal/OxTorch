@@ -1,10 +1,10 @@
 # Compatibility bridge for older imports
 from .tensor import Tensor
 from .modules.base import Module, ModuleList, Sequential
-from .modules.layers import Linear, ReLU, SiLU, RMSNorm, Softmax, Embedding, LeakyReLU, Conv2d, MaxPool2d, Upsample
+from .modules.layers import Linear, ReLU, SiLU, RMSNorm, Softmax, Embedding, LeakyReLU, Conv2d, MaxPool2d, Upsample, GELUTanh
 from .modules.tiled import TiledLinear, MatFormerLinear, TiledEmbedding
 from .modules.models import Gemma3Block, Gemma3Model, Gemma3ForMultimodalLM, get_cos_sin
-from .functional import F, GELUTanh
+from .functional import F
 from .optimizers import SGD, Adam, HybridAdam, AutoAdam
 from .kernels import warmup, ti, np
 

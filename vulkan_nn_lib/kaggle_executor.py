@@ -4,6 +4,29 @@ import time
 import subprocess
 import tempfile
 import numpy as np
+import shutil
+
+def _safe_save_npy(path, arr):
+    """Saves a numpy array to disk chunk-by-chunk to prevent OOM on huge memmaps."""
+    if arr.nbytes < 1024 * 1024 * 512:
+        np.save(path, arr) # Standard save for < 512MB
+        return
+        
+    print(f"  [Kaggle] Safely streaming {arr.nbytes/1e9:.2f}GB to {path}...")
+    import numpy.lib.format as fmt
+    with open(path, 'wb') as f:
+        fmt.write_array_header_2_0(f, fmt.header_data_from_array_1_0(arr))
+        
+        # Stream in 128MB chunks
+        chunk_bytes = 128 * 1024 * 1024
+        item_size = arr.itemsize
+        chunk_len = chunk_bytes // item_size
+        
+        flat_arr = arr.reshape(-1) # reshape doesn't copy on memmap
+        for i in range(0, flat_arr.size, chunk_len):
+            end = min(i + chunk_len, flat_arr.size)
+            chunk = flat_arr[i:end].copy() # Small copy into RAM
+            f.write(chunk.tobytes())
 
 class KaggleExecutor:
     """
@@ -217,10 +240,10 @@ if __name__ == "__main__":
                 ds_slug = f"vnn-data-{int(time.time()*100)}"
                 
                 with tempfile.TemporaryDirectory(dir='.') as tmpdir:
-                    np.save(os.path.join(tmpdir, 'input_a.npy'), a_part)
+                    _safe_save_npy(os.path.join(tmpdir, 'input_a.npy'), a_part)
                     
                     b_view = b_tensor.arr if hasattr(b_tensor, 'arr') else b_tensor.to_numpy()
-                    np.save(os.path.join(tmpdir, 'input_b.npy'), b_view)
+                    _safe_save_npy(os.path.join(tmpdir, 'input_b.npy'), b_view)
                     
                     self._ensure_dataset(ds_slug, tmpdir)
                     script = self._generate_execution_script(op_type, 'input_a.npy', 'input_b.npy', extra)
@@ -254,24 +277,24 @@ if __name__ == "__main__":
         with tempfile.TemporaryDirectory(dir='.') as tmpdir:
             # Use safe views instead of to_numpy().flatten() to prevent 20GB+ OOM
             if hasattr(a_tensor, 'arr') and hasattr(a_tensor.arr, 'reshape'):
-                a_data = a_tensor.arr.reshape(-1)[start:end].copy()
+                a_data = a_tensor.arr.reshape(-1)[start:end]
             else:
-                a_data = a_tensor.to_numpy().reshape(-1)[start:end].copy()
+                a_data = a_tensor.to_numpy().reshape(-1)[start:end]
                 
-            np.save(os.path.join(tmpdir, 'input_a.npy'), a_data)
+            _safe_save_npy(os.path.join(tmpdir, 'input_a.npy'), a_data)
             b_path = None
             if b_tensor is not None:
                 if hasattr(b_tensor, 'arr'):
                     # Handle if B should be sliced or is a constant matrix
                     if b_tensor.total_size == a_tensor.total_size:
                         if hasattr(b_tensor.arr, 'reshape'):
-                            b_data = b_tensor.arr.reshape(-1)[start:end].copy()
+                            b_data = b_tensor.arr.reshape(-1)[start:end]
                         else:
-                            b_data = b_tensor.to_numpy().reshape(-1)[start:end].copy()
-                        np.save(os.path.join(tmpdir, 'input_b.npy'), b_data)
+                            b_data = b_tensor.to_numpy().reshape(-1)[start:end]
+                        _safe_save_npy(os.path.join(tmpdir, 'input_b.npy'), b_data)
                     else:
                         b_view = b_tensor.arr if hasattr(b_tensor, 'arr') else b_tensor.to_numpy()
-                        np.save(os.path.join(tmpdir, 'input_b.npy'), b_view)
+                        _safe_save_npy(os.path.join(tmpdir, 'input_b.npy'), b_view)
                     b_path = 'input_b.npy'
 
             self._ensure_dataset(ds_slug, tmpdir)
