@@ -1,27 +1,27 @@
 # Changelog
 
-Wszystkie znaczące zmiany w projekcie VNN będą dokumentowane w tym pliku.
+All notable changes to the VNN project will be documented in this file.
 
-## [Unreleased] - Faza 5 i 6: VulkanNN Rusted Ed
-Wprowadzono natywną bibliotekę **VulkanNN Rusted Ed** napisaną w języku Rust, zaprojektowaną jako 1:1 "drop-in replacement" dla `vulkan_nn_lib`. 
-Rozwiązanie to usuwa wąskie gardła interpretera Pythona podczas operacji out-of-core.
+## [Unreleased] - Phase 5 and 6: VulkanNN Rusted Ed
+Introduced the native **VulkanNN Rusted Ed** library written in Rust, designed as a 1:1 "drop-in replacement" for `vulkan_nn_lib`. 
+This solution removes Python interpreter bottlenecks during out-of-core operations.
 
 ### Added (Rust)
-- **Moduł `vulkannn_rusted`**: Całkowicie natywna biblioteka zbudowana za pomocą `PyO3` oraz systemu `maturin`.
-- **Backend WGPU**: Napisane w czystym WGSL shadery obslugujace operatory Dodawania (Add), Mnożenia Macierzy (MatMul) oraz funkcji aktywacji (ReLU, Sigmoid, SiLU). Wielo-wymiarowe grupy robocze WGPU znoszące obostrzenie 64k alokacji dispatcha pozwalające na nielimitowane rozmiary tablic.
-- **Ekstremalnie szybki potok DMA (Tiered Memory Cache)**: 
-  - **L3 Cache (Dysk)**: Zastosowano zerowe kopiowanie przez `memmap2`.
-  - Zaawansowany OS-level prefetching przy uzyciu POSIX `madvise(MADV_WILLNEED)`, rozkazujący jądru Linuksa załadowanie danych do RAM asynchronicznie przez kontroler dysku DMA.
-  - **L1 Cache (VRAM)**: Użycie buforów zwalnianych mechanizmem "Ping-Pong" (buforowanie strumieni / recycling buforów WGPU), aby zniwelować podskoki czasu opóźnień sterownika podczas per-operacyjnej alokacji danych wejściowych i wyjściowych na karcie graficznej.
-- **Testy wydajności**: Skrypty `bench_table.py` i `benchmark_rust_vs_py.py` weryfikujące poprawność arytmetyczną wg NumPy (100% dokładność Parity ✅) oraz wydajność operacji.
-- **Pełne Parity API z Pythonem**: Obsługa operacji logicznych (+, @) i klasa `Tensor(data)` na wzór odpowiednika Pythonowskiego.
+- **Module `vulkannn_rusted`**: A completely native library built using `PyO3` and the `maturin` build system.
+- **WGPU Backend**: Compute shaders written in pure WGSL supporting Addition, Matrix Multiplication (MatMul), and activation functions (ReLU, Sigmoid, SiLU). Multi-dimensional WGPU workgroups breaking the 64k dispatch allocation limit, allowing for unlimited array sizes.
+- **Extremely fast DMA pipeline (Tiered Memory Cache)**: 
+  - **L3 Cache (Disk)**: Zero-copy integration via `memmap2`.
+  - Advanced OS-level prefetching utilizing POSIX `madvise(MADV_WILLNEED)`, telling the Linux kernel to load data into RAM asynchronously via the DMA disk controller.
+  - **L1 Cache (VRAM)**: Implementation of "Ping-Pong" WGPU Buffer recycling to eliminate driver latency spikes during per-operation input and output memory allocation on the graphics card.
+- **Performance Tests**: Scripts `bench_table.py` and `benchmark_rust_vs_py.py` verifying arithmetic correctness against NumPy (100% Parity ✅) and operational speed.
+- **Full Python Parity API**: Out-of-the-box support for logical operators (+, @) and the `Tensor(data)` class mirroring its Python counterpart.
 
-### Changed (Python `vulkan_nn_lib` i reszta)
-- Naprawiono precyzję numeryczną w Pythonowym backendzie Taichi. Zmieniono `k_reduce_sum` uniemożliwiające błędne zwracanie 0.0 w redukcjach z typem `float32`.
-- Zintegrowano operacje dla **Trybu Kaggle**. Znacznie rozbudowano możliwości delegowania obliczeń `MatMul` offline po przekroczeniu progu GB do wirtualnej super-maszyny przez API Kaggle, z jednoczesnym wsparciem wznawiania sesji.
-- Zoptymalizowano `to_numpy()` do szybkiego dostępu (fast path bypass).
-- Zaktualizowano tryb CPU pozwalający na utrzymywanie potężnych tensorów w samej pamięci RAM redukując zuzycie pamięci. 
+### Changed (Python `vulkan_nn_lib` and others)
+- Fixed numerical precision in the Python Taichi backend. Replaced `k_reduce_sum` which prevented incorrectly returning 0.0 in reductions involving the `float32` type.
+- Integrated operations for **Kaggle Mode**. Significantly expanded the capabilities of delegating GB-threshold `MatMul` operations offline to a virtual super-machine via Kaggle API, including session resume support.
+- Optimized `to_numpy()` for rapid access (fast path bypass).
+- Updated CPU mode to allow holding massive tensors entirely in RAM, reducing memory footprint.
 
 ### Fixed
-- Naprawiono błędy `AttributeError` dla tensora powiązanego z pamięcią RAM (RAM-resident array).
-- Rozwiązano błędy spadku VRAM do poniżej 2GB (usunięcie limitera 512MB RAM dla silnika w systemach starszych GPU), optymalizując wyciąganie maksimum możliwości zaawansowaniem detekcji budżetu. 
+- Fixed `AttributeError` bugs for tensors tied to system memory (RAM-resident arrays).
+- Resolved bugs involving VRAM dropping below 2GB (removed the 512MB RAM limiter for the engine on older GPU systems), optimizing maximum output capabilities via advanced budget detection.

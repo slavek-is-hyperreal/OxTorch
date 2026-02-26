@@ -41,8 +41,8 @@ PyTorch is for the data center. **VNN is for the rest of us.**
 -   **DRAS v4 (Adaptive RAM-Aware Streaming)**: Real-time memory monitoring with **Adaptive Backoff**. It pushes your hardware to the absolute limit without crossing the RAM "cliff," pausing I/O when the processing pipeline is saturated.
 -   **PagedAttention & KV Cache Management**: Native BlockTable abstractions combating contiguous memory fragmentation for continuous batched generation without OOM.
 -   **Vulkan/Taichi Engine**: Hardware-agnostic compute that runs on Intel, AMD, and NVIDIA alike.
--   **Kaggle Offloading**: Zero-cost ephemeral supercomputing via Kaggle kernels. Działa na operacjach przekraczających próg wielkości.
--   **Wysoka Precyzja Math**: Wersja Pythonowa silnika przeszła kompletny audyt numeryczny Taichi dając absolutną zbieżność arytmetyczną (+/- 1e-4 w MatMul).
+-   **Kaggle Offloading**: Zero-cost ephemeral supercomputing via Kaggle kernels. Works on operations exceeding the size threshold.
+-   **High Precision Math**: The Python version of the engine underwent a rigorous Taichi numerical audit, yielding absolute arithmetic convergence (+/- 1e-4 in MatMul).
 -   **100% Parity**: Mathematically verified against PyTorch for core operations.
 
 > [!TIP]
@@ -147,37 +147,37 @@ For those who want to see how the "magic" works:
 
 ## 🦀 VulkanNN Rusted Ed (Native Extension - MEGA FAST)
 
-Oprócz klasycznej, natywnej w Pythonie implementacji `vulkan_nn_lib`, repopozytorium posiada najnowszą **całkowicie natywną dla C/Rusta wtyczkę obliczeniową `vulkannn_rusted`**, operującą bezpośrednio na sterownikach GPU pod spodem jądra OS i przemycającą bezszelestnie gigabajty danych.
+In addition to the classic, Python-native implementation `vulkan_nn_lib`, the repository features the newest **fully native C/Rust compute plugin `vulkannn_rusted`**, operating directly on GPU drivers underneath the OS kernel and silently smuggling gigabytes of data.
 
-### O Rusted Ed
-`vulkannn_rusted` jest zbudowane pod `PyO3` by służyć jako pełnoprawna alternatywa dla klasycznego `vulkan_nn_lib`. Pozwala osiągać **od 2.5x do ponad 3.5x szybsze** prędkości alokacji i obliczeń! Rusted Ed zdejmuje błędy związane z interpreterem i w warstwie ukrytej wprowadza architekturę potrójnego buforowania (Triple-Tiers).
+### About Rusted Ed
+`vulkannn_rusted` is built with `PyO3` to serve as a fully-fledged alternative to the classic `vulkan_nn_lib`. It achieves **2.5x to over 3.5x faster** allocation and compute speeds! Rusted Ed strips away interpreter-related overhead and introduces a Triple-Tier memory caching architecture in the hidden layer.
 
-🔥 **Tiered Memory Cache Architecture w Rust:**
-- **L3 (SSD - Raw Storage)**: Brak uciekania do zwykłego plikowego read(). Odczyt leci czystym **Zero-Copy przez `memmap2`**.
-- **Wczesny Prefetching (DMA Asynchronous Load)**: W tle natywnego kodu wywoływana jest linuxowa instrukcja jądra POSIX `madvise(MADV_WILLNEED)`, która nakazuje bezpośrednio sprzętowemu kanałowi I/O wrzucanie gigabajtowych tensorów z SSD do L2 (RAM), jeszcze zanim GPU wyśle formalny postulat odczytu! Oznacza to brak blokad opóźnień na magistrali systemu!
-- **WGPU Ping-Pong Buffers**: W L1 (VRAM Karty) pozbyliśmy się niepotrzebnych re-alokacji WGPU. Bufor jest zachowywany i przetwarzany recyklingiem, zrzucając dziesiątki milisekund opóźnień sterownika podczas dodawania lub Mnożenia Macierzy (MatMul). Nielimitowany podział na dwuwymiarowe dyspozycje (przebicie górnego limitu WGPU pracy roboczej na osi X) nadpisuje barierę 64k operacji sprzętowych dla słaboszybkich kart starych generacji AMD.
+🔥 **Tiered Memory Cache Architecture in Rust:**
+- **L3 (SSD - Raw Storage)**: No fallback to standard file `read()`. Reading is done via pure **Zero-Copy through `memmap2`**.
+- **Early Prefetching (DMA Asynchronous Load)**: In the background of the native code, the Linux POSIX kernel instruction `madvise(MADV_WILLNEED)` is called, which instructs the hardware I/O channel directly to throw gigabyte-sized tensors from the SSD to L2 (RAM) *before* the GPU even sends a formal read request! This means no latency blocks on the system bus!
+- **WGPU Ping-Pong Buffers**: In L1 (Card VRAM) we got rid of unnecessary WGPU re-allocations. The buffer is retained and processed via recycling, dropping tens of milliseconds of driver delay during Addition or Matrix Multiplication (MatMul). Unlimited division into two-dimensional dispatches (breaking the WGPU upper limit of workgroups on the X axis) overrides the 64k hardware operations barrier for slower old-generation AMD cards.
 
-### Instrukcja kompilacji i uruchomienia:
-Moduł używa natywnego instalatora bibliotek Rust do pip o nazwie `maturin`.
+### Compilation and Execution Instructions:
+The module uses the native Rust library installer for pip called `maturin`.
 
-1. Rozpocznij posiadając środowisko wirtualne (*venv*):
+1. Start by having a virtual environment (*venv*):
 ```bash
 source venv/bin/activate
 ```
-2. Wejdź do katalogu paczki Rust:
+2. Enter the Rust package directory:
 ```bash
 cd vulkannn_rusted
 ```
-3. Zbuduj i zainstaluj ją produkcyjnie w locie (wymaga zainstalowanego w systemie pakietu cargo). Powinieneś uzyskać info o budowaniu do rozszerzenia *CPython*:
+3. Build and install it for production on the fly (requires the cargo package installed on your system). You should get info about building the *CPython* extension:
 ```bash
 maturin develop --release
 ```
-4. Wróć do folderu roota! Teraz możesz po prostu zamienić import w dowolnym wiodącym skrypcie AI by wejść z prędkością w nadprzestrzeń Rusta. Zmiany nie psują poprzedniego API:
+4. Return to the root folder! Now you can simply replace the import in any leading AI script to enter Rust's hyperspace at speed. The changes do not break the previous API:
 ```python
-# ZAMIAST: import vulkan_nn_lib as vnn
+# INSTEAD OF: import vulkan_nn_lib as vnn
 import vulkannn_rusted as vnn
 
-# Działa niesamowicie i out-of-core bez wysiłku!
+# Works incredibly well and out-of-core effortlessly!
 t = vnn.Tensor(np.random.rand(100000).astype(np.float32))
 t2 = vnn.Tensor(np.random.rand(100000).astype(np.float32))
 
