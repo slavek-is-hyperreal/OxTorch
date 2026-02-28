@@ -1,8 +1,10 @@
 import os
+import pytest
 import numpy as np
 import vulkan_nn_lib.torch_shim as torch
 import time
 
+@pytest.mark.skipif(os.environ.get("VNN_USE_RUST") == "1", reason="Kaggle mode is not supported by the Rust backend")
 def test_kaggle_small():
     """
     Triggers a small Kaggle offload to verify the flow.

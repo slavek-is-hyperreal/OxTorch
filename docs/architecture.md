@@ -1,84 +1,72 @@
-# Architecture: The VNN Bridge Strategy
+# Architecture: The Dual-Engine VNN Strategy
 
-VulkanNN (VNN) Legacy Edition is built on a unique architectural premise: **Software-Defined Memory Hierarchy**. Unlike PyTorch, which assumes your model fits in VRAM or RAM, VNN assumes you have an old GPU and limited RAM, but an extremely fast SSD.
+VulkanNN (VNN) is built on a unique architectural premise: **Software-Defined Memory Hierarchy**. Unlike PyTorch, which assumes your model fits in VRAM or RAM, VNN assumes you have an old GPU and limited RAM, but an extremely fast SSD.
+
+Recently, VNN underwent a massive architectural evolution. It is no longer just a Python wrapper over Taichi. It now features a completely standalone **Dual-Engine Architecture**.
 
 ```mermaid
 graph TD
-    User["torch.randn(100GB)"] --> Shim["torch_shim (Shim Layer)"]
-    Shim --> Tensor["Tensor (Core Engine)"]
-    Tensor --> Decision{"Size & Device?"}
+    User["import vulkan_nn_lib \n OR \n import vulkannn_rusted"] --> Router
+    Router --> LegacyEngine["VNN Legacy (Python + Taichi)"]
+    Router --> RustedEngine["VNN Rusted Ed (Rust + WGPU)"]
     
-    Decision -- "< 128MB (FP32)" --> Vulkan["Taichi/Vulkan (GPU)"]
-    Decision -- "< Safe RAM Budget" --> Hybrid["PyTorch Fast-Path (CPU/Shared)"]
-    Decision -- "> Safe RAM Budget" --> ARAS["SOE Engine (SSD/Tiled)"]
-    Decision -- "> Kaggle Threshold" --> Kaggle["Kaggle Executor (Cloud GPU)"]
+    LegacyEngine --> LegacyVulkan["Taichi Kernels"]
+    RustedEngine --> RustWGPU["WGSL Shaders (WGPU)"]
+    RustedEngine --> Rayon["SIMD via Rayon (CPU)"]
     
-    ARAS --> Tiled["Tiled Math Engine"]
-    Tiled --> SSD["SSD Binary Storage"]
+    RustWGPU --> PingPong["Zero-Copy Ping-Pong Buffers"]
+    Rayon --> Hetero["True Heterogeneous Pipeline"]
 ```
 
-## 1. The Multi-Tiered Backend
-VNN automatically routes every operation through the most efficient backend based on the current system load and operation size:
+## 1. The Legacy Engine (Python + Taichi)
+The original VNN engine, imported via `import vulkan_nn_lib`, remains mathematically perfect and completely stable.
+* **Backend**: Taichi JIT-compiled SPIR-V Vulkan shaders.
+* **Streaming**: The Python-based ARAS/SOE Engine handles multi-GB tiled streams.
+* **Use Case**: Excellent for debugging, testing, or rapid prototyping using Python primitives.
 
-### A. Vulkan (via Taichi)
-*   **Target**: Small to medium tensors (under 128MB).
-*   **Benefit**: Extremely low latency, full GPU acceleration.
-*   **Limitation**: Limited by physical VRAM. 
+## 2. 🦀 The Rusted Ed (Native C/Rust Extension)
+The crown jewel of VNN is the new `vulkannn_rusted` compiled extension. Accessible via `import vulkannn_rusted as vnn`, this engine bypasses the Python interpreter entirely for computation.
 
-### B. PyTorch Hybrid (Fast Path)
-*   **Target**: Tensors that fit comfortably in RAM (below the "Safe RAM Budget").
-*   **Innovation**: **Zero-Copy Shared Memory**. VNN utilizes `torch.from_numpy(self.arr)` to execute operations directly on CPU memory using PyTorch's optimized BLAS/MKL kernels.
-*   **Benefit**: Extremely low overhead.
-*   **Limitation**: Synchronous execution.
+### A. Core Technologies
+- **PyO3**: Provides zero-overhead bindings bridging Python and Rust.
+- **WGPU**: Replaces Taichi. WGPU operates directly on Vulkan/Metal/DX12 with explicitly compiled WGSL shaders, completely removing JIT compilation stalls.
+- **Rayon & Matrixmultiply**: For standard CPU tasks, Rust utilizes heavily unrolled, work-stealing parallel iterators that match or exceed PyTorch CPU speeds.
 
-### C. SOE/ARAS (Streaming Operator Engine)
-*   **Target**: "Monster Scale" tensors (e.g., 34GB+ on systems with limited RAM).
-*   **Innovation**: **Adaptive Tiling & Backpressure**. 
-    - **Adaptive Tiling**: Automatically decomposes operations into tiles that fit within a safe budget (default: 512MB).
-    - **DRAS v4 Bounded Backpressure**: The engine employs a bounded prefetch queue and future-tracking to prevent SSD operations from overwhelming RAM. It monitors `MemAvailable` and dynamically throttles disk I/O when "Usage Risk" exceeds safe thresholds.
-*   **SSD Native**: Results are generated directly on SSD via `memmap`, with explicit `.flush()` calls to ensure coherence between tiled writes.
+### B. Triple-Tier Caching Architecture
+While the Legacy engine struggled with Python GIL blocks during I/O, the Rusted engine employs severe bare-metal optimization:
+*   **L3 (SSD - Raw Storage)**: Reads stream via pure **Zero-Copy `memmap2`**.
+*   **L2 (RAM)**: Caches slices ahead of time using multi-threaded Linux native DMA.
+*   **L1 (VRAM - Ping-Pong Buffers)**: WGPU maintains two staging buffers. While Buffer A computes WGSL shaders, Buffer B simultaneously pulls the next L2 chunk via PCI-e.
 
-### D. Kaggle Remote Compute
-*   **Target**: Massive operations exceeding the `VNN_KAGGLE_THRESHOLD` (Default: 1GB).
-*   **Strategy**: Uses the `KaggleExecutor` to upload tiled data to cloud GPUs, execute via PyTorch/CUDA kernels, and stream results back to local SSD. Effectively bypasses all local hardware limitations.
+### C. True Heterogeneous Computing (`device="hybrid"`)
+The absolute pinnacle of the Rusted Engine. When processing a tensor too large for VRAM:
+1. The orchestrator spawns two strict threads via `std::thread::scope`.
+2. **Thread 1 (GPU)** pipes 70% of the operation chunks through the WGPU Ping-Pong pipeline.
+3. **Thread 2 (CPU)** *simultaneously* crunches the remaining 30% using `rayon::par_iter` and AVX instructions.
+4. The output vector is flawlessly stitched together in RAM.
+This removes the eternal bottleneck of one component waiting for the other.
 
-## 2. Memory Suballocation & PagedAttention
+## 3. Memory Suballocation & PagedAttention (Legacy & Rust)
 VNN handles VRAM with extreme prejudice to avoid out-of-memory errors on older GPUs.
 *   **VulkanTensorPool**: A Slab/Buddy memory suballocator that intercepts tensor requests, returning views from massive pre-allocated buffers. This bypasses the Vulkan `vkAllocateMemory` limit and prevents fragmentation.
-*   **PagedAttention (Phase 2)**: For LLM inference, VNN eschews contiguous KV cache allocation. Instead, it uses a `BlockTable` to dynamically map token sequences (logical chunks) to scattered physical blocks in VRAM, eliminating up to 80% of cache waste and drastically increasing the maximum context window on 2-8GB GPUs.
-
-## 3. Autograd & Unified Gradient Accumulation
-VNN's reverse-mode differentiation engine is backend-agnostic. The core innovation lies in the `_acc_grad(grad)` method, which intelligently routes gradient accumulation based on the host device:
-
-- **SSD**: Employs the SOE/ARAS engine for multi-threaded, tiled element-wise addition directly on disk.
-- **Kaggle**: (Planned/Experimental) Offloads accumulation steps for massive layers.
-- **Vulkan**: Uses Taichi kernels for GPU-accelerated accumulation.
-- **CPU**: Utilizes optimized PyTorch shared memory paths for maximum performance.
-
-This guarantees that even with a 40GB gradient buffer on an 8GB RAM system, accumulation will not trigger an Out-of-Memory (OOM) error.
+*   **PagedAttention**: For LLM inference, VNN eschews contiguous KV cache allocation. Instead, it uses a `BlockTable` to dynamically map token sequences (logical chunks) to scattered physical blocks in VRAM, eliminating up to 80% of cache waste and drastically increasing the maximum context window on 2-8GB GPUs.
 
 ## 4. Zero-Copy Loading
-VNN offers a significant advantage over PyTorch through its `from_binary` (and `external_path`) mechanism. While PyTorch typically requires loading an entire state dictionary into RAM, VNN **mounts** binary files as virtual tensors.
+VNN offers a significant advantage over PyTorch through its `from_binary` (and `from_ssd`) mechanism. While PyTorch typically requires loading an entire state dictionary into RAM, VNN **mounts** binary files as virtual tensors.
 
-- **VNN**: Maps the file on disk via `memmap`. RAM consumption remains minimal until computation begins.
+- **VNN Rusted**: Uses `Tensor.from_ssd(path)` to initialize an internal Rust `Option<Arc<Mmap>>`. RAM consumption remains at 0 bytes until mathematically required.
 - **PyTorch**: Reads the entire file into resident memory, often leading to OOM on constrained systems.
 
-## 5. Compute Kernels & Taichi Backend
-Computationally intensive tasks are handled by **Taichi kernels**, which are JIT-compiled to SPIR-V (Vulkan compute shaders).
-- **Design**: Kernels operate on flattened 1D arrays to streamline shader logic.
-- **Parallelization**: Efficiently managed by the Taichi runtime.
-- **Precision**: Highly optimized for FP32, with expanding support for FP16 and INT8.
+## 5. Kaggle Remote Compute (Legacy Mode Only)
+*   **Target**: Massive operations exceeding the `VNN_KAGGLE_THRESHOLD` (Default: 1GB).
+*   **Strategy**: Uses the `KaggleExecutor` (available only in Python `vulkan_nn_lib`) to upload tiled data to cloud GPUs, execute via PyTorch/CUDA kernels, and stream results back to local SSD.
 
 ## 6. Hardware Calibration & Tuning
 Since VNN treats **VRAM/RAM as a Cache**, performance depends on finding the "Sweet Spot" for your hardware.
 
-### The "Fast BAR" Threshold
-Most GPUs have a Visible VRAM BAR (usually 256MB). 
-- **Optimization**: Set your optimizer `tile_size` so that state buffers fit into this 256MB window for full-speed CPU access.
-
 ### Recommendation Table (Backpropagation)
 | GPU Tier | VRAM | Strategy | SSD Speed Target |
 | :--- | :---: | :--- | :--- |
-| **Legacy** | 1-2GB | SSD-Native | ~500MB/s (SATA) |
-| **Mid-Range** | 8GB | Hybrid Buffer | ~2GB/s (NVMe Gen3) |
+| **Legacy** | 1-2GB | SSD-Native (Rust) | ~500MB/s (SATA) |
+| **Mid-Range** | 8GB | True Hybrid (Rust) | ~2GB/s (NVMe Gen3) |
 | **High-End** | 24GB | VRAM-Cached | ~7GB/s (NVMe Gen4) |

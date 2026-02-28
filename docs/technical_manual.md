@@ -1,13 +1,35 @@
 # 📖 VNN Technical Manual: Source Code Walkthrough
 
-This document provides a comprehensive, block-by-block (and often line-by-line) explanation of the VNN Legacy Edition codebase. It is designed to help developers understand the "Why" and "How" behind every critical function.
+This document provides a comprehensive, block-by-block (and often line-by-line) explanation of the VNN Dual-Engine Architecture. It covers both the ultra-performant Native Rust Engine and the legacy Python computational engine.
 
 ---
 
-## 🏗️ Core Engine (`vulkan_nn_lib/`)
+## 🦀 Rusted Engine (`vulkannn_rusted/`) 
+The modern core. Exposes pure, memory-safe, blazing fast C/Rust native objects to Python via PyO3.
+
+### 1. [tensor.rs](../vulkannn_rusted/src/tensor.rs) - The Native Wrapper
+This module binds Python objects to Rust raw memory constructs.
+* **`#[pyclass] struct Tensor`**: The object seen when typing `vnn.Tensor()` in Python. It contains the shape, the device mapping, and the `mmap_data` which holds the zero-copy Arc pointer to the active NVMe SSD file slice.
+* **SIMD & Rayon (`device="cpu"`)**: When an addition or MatMul is invoked with the CPU device, `tensor.rs` bypasses the Python interpreter completely. It invokes `rayon` thread pools (`.par_iter_mut()`), saturating host cores with SIMD ops.
+* **BLAS Routing (`super::matrixmultiply`)**: Matrix multiplications jump into highly tuned, hand-written assembly unrolled registers.
+
+### 2. [backend.rs](../vulkannn_rusted/src/backend.rs) - WGPU Pipeline
+This handles the GPU interface, completely sidestepping Python's Taichi module.
+* **`WgpuBackend` Initialization**: Binds to Vulkan (or Metal/DX12 on Mac/Windows). Sets up Global Device handles and Memory Hints pointing towards high-performance DMA buffers.
+* **`WGSL` Complied Modules**: Compute shaders (like `add.wgsl` or `matmul.wgsl`) are attached as compiled `ComputePipeline` instances. No JIT stall time is present here. 
+* **True Heterogeneous Routing (`execute_add / execute_matmul`)**: If `is_hybrid` is active, the function explicitly forks background workers using `std::thread::scope`. The GPU threads submit mapped chunk slices to `WGPU Queue` Ping-Pong buffers, while CPU threads fall back to `Rayon` computations on the RAM layer. They converge synchronously.
+
+### 3. [streaming.rs](../vulkannn_rusted/src/streaming.rs) - Extreme Pipelining
+The system enforcing the "VRAM is a Cache" ruleset.
+* **`L3Cache::map_ssd_tensor`**: Returns a pointer to raw `memmap2` regions on disk. Zero allocation is used for gigabytes of data.
+* **`BUDGETS` LazyLock**: Tracks `l1_vram_max_bytes` and `l2_ram_max_bytes` using `AtomicUsize`. If a WGPU calculation exceeds VRAM capacity constraints, it is tiled via chunk offsets preventing driver timeouts and graphical OS freezes.
+
+---
+
+## 🏗️ Legacy Engine (`vulkan_nn_lib/`)
 
 ### 1. [tensor.py](../vulkan_nn_lib/tensor.py) - The Universal Tensor
-This is the central object of VNN. It manages the state, device routing, and Autograd graph.
+This is the central object of VNN Legacy. It manages the state, device routing, and Autograd graph.
 
 *   **Lines 16-21**: `setup_ssd_storage` initializes the `TensorStore` globally.
 *   **Lines 34-191**: `__init__` constructor.

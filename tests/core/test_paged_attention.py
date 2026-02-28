@@ -1,3 +1,4 @@
+import os
 import pytest
 import torch
 import torch.nn.functional as F
@@ -6,6 +7,8 @@ import taichi as ti
 from vulkan_nn_lib.tensor import Tensor
 from vulkan_nn_lib.modules.layers import PagedAttention
 from vulkan_nn_lib.paged_attention import KVCachePool, PagedKVCache
+
+pytestmark = pytest.mark.skipif(os.environ.get("VNN_USE_RUST") == "1", reason="PagedAttention kernels not yet ported to Rust WGPU MVP")
 
 def test_kv_cache_pool_allocation():
     ti.init(arch=ti.vulkan)

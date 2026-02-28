@@ -1,4 +1,8 @@
-from .tensor import Tensor
+import os
+if os.environ.get("VNN_USE_RUST") == "1":
+    from vulkannn_rusted import Tensor
+else:
+    from .tensor import Tensor
 from . import torch_shim as torch_compat
 from .torch_shim import (
     randn, zeros, ones, tensor, from_numpy, arange, manual_seed,

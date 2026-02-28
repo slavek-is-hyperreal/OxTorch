@@ -12,7 +12,7 @@ fn rust_greeting(name: &str) -> PyResult<String> {
 
 /// The main entry point mapped directly to the `vulkannn_rusted` Python module.
 #[pymodule]
-fn vulkannn_rusted(_py: Python, m: &PyModule) -> PyResult<()> {
+fn vulkannn_rusted(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Initialize the wgpu engine once upon module load
     backend::init_backend();
     // Initialize memory budgets

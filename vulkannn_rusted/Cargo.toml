@@ -8,10 +8,12 @@ name = "vulkannn_rusted"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.21.2", features = ["extension-module"] }
-wgpu = "0.19"
-pollster = "0.3" 
+pyo3 = { version = "0.22", features = ["extension-module"] }
+wgpu = "22.1"
+pollster = "0.3.0" 
 memmap2 = "0.9"
-numpy = "0.21.0"
-bytemuck = "1.15"
+numpy = "0.22"
+bytemuck = { version = "1.15", features = ["derive"] }
 libc = "0.2"
+rayon = "1.10"
+matrixmultiply = "0.3"

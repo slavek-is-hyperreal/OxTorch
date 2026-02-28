@@ -2,6 +2,8 @@ use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
 use numpy::{IntoPyArray, PyReadonlyArrayDyn};
 use numpy::ndarray::Array;
+use rayon::prelude::*;
+use matrixmultiply::sgemm;
 
 /// The central Tensor struct mimicking `vulkan_nn_lib.tensor.Tensor`.
 #[pyclass(unsendable)]
@@ -25,6 +27,7 @@ impl Tensor {
     /// Initialize a new Tensor. Currently only supports 1D/2D flat fallbacks for the MVP.
     #[new]
     #[pyo3(signature = (data=None, shape=None, dtype=None, device="auto", name="Tensor"))]
+    #[allow(unused_variables)]
     fn new(
         data: Option<PyReadonlyArrayDyn<'_, f32>>,
         shape: Option<Vec<usize>>,
@@ -110,15 +113,23 @@ impl Tensor {
             &other.cpu_data
         };
         
-        // Respect VRAM budget before sending to GPU 
-        if let Some(mut budgets) = crate::streaming::BUDGETS.get().unwrap().lock().ok() {
-            let bytes_needed = a_slice.len() * 4 * 3 ; // A + B + C
-            if bytes_needed > budgets.l1_vram_max_bytes {
-                println!("WARN: Exceeded Safe L1 VRAM Budget ({} mb needed > {} budget). Streaming required.", bytes_needed / 1024 / 1024, budgets.l1_vram_max_bytes / 1024 / 1024);
+        let result_data = if self.device == "cpu" {
+            let mut out = vec![0.0; a_slice.len()];
+            out.par_iter_mut()
+               .zip(a_slice.par_iter())
+               .zip(b_slice.par_iter())
+               .for_each(|((c, &a), &b)| *c = a + b);
+            out
+        } else {
+            // Respect VRAM budget before sending to GPU 
+            if let Some(budgets) = crate::streaming::BUDGETS.get().unwrap().lock().ok() {
+                let bytes_needed = a_slice.len() * 4 * 3 ; // A + B + C
+                if bytes_needed > budgets.l1_vram_max_bytes {
+                    println!("WARN: Exceeded Safe L1 VRAM Budget ({} mb needed > {} budget). Streaming required.", bytes_needed / 1024 / 1024, budgets.l1_vram_max_bytes / 1024 / 1024);
+                }
             }
-        }
-
-        let result_data = crate::backend::execute_add(a_slice, b_slice);
+            crate::backend::execute_add(a_slice, b_slice, self.device == "hybrid")
+        };
         
         Ok(Tensor {
             shape: self.shape.clone(),
@@ -155,7 +166,22 @@ impl Tensor {
             &other.cpu_data
         };
 
-        let result_data = crate::backend::execute_matmul(a_slice, b_slice, m, k, n);
+        let result_data = if self.device == "cpu" {
+            let mut out = vec![0.0; (m * n) as usize];
+            unsafe {
+                sgemm(
+                    m as usize, k as usize, n as usize,
+                    1.0,
+                    a_slice.as_ptr(), k as isize, 1,
+                    b_slice.as_ptr(), n as isize, 1,
+                    0.0,
+                    out.as_mut_ptr(), n as isize, 1,
+                );
+            }
+            out
+        } else {
+            crate::backend::execute_matmul(a_slice, b_slice, m, k, n, self.device == "hybrid")
+        };
 
         Ok(Tensor {
             shape: vec![m as usize, n as usize],
@@ -176,11 +202,22 @@ impl Tensor {
         } else {
             &self.cpu_data
         };
+        
+        let result_data = if self.device == "cpu" {
+            let mut out = vec![0.0; slice.len()];
+            out.par_iter_mut()
+               .zip(slice.par_iter())
+               .for_each(|(o, &i)| *o = if i > 0.0 { i } else { 0.0 });
+            out
+        } else {
+            crate::backend::execute_activation(slice, "relu", self.device == "hybrid")
+        };
+        
         Ok(Tensor {
             shape: self.shape.clone(),
             device: self.device.clone(),
             name: "ReLU".to_string(),
-            cpu_data: crate::backend::execute_activation(slice, "relu"),
+            cpu_data: result_data,
             mmap_data: None,
         })
     }
@@ -191,11 +228,22 @@ impl Tensor {
         } else {
             &self.cpu_data
         };
+        
+        let result_data = if self.device == "cpu" {
+            let mut out = vec![0.0; slice.len()];
+            out.par_iter_mut()
+               .zip(slice.par_iter())
+               .for_each(|(o, &i)| *o = 1.0 / (1.0 + (-i).exp()));
+            out
+        } else {
+            crate::backend::execute_activation(slice, "sigmoid", self.device == "hybrid")
+        };
+
         Ok(Tensor {
             shape: self.shape.clone(),
             device: self.device.clone(),
             name: "Sigmoid".to_string(),
-            cpu_data: crate::backend::execute_activation(slice, "sigmoid"),
+            cpu_data: result_data,
             mmap_data: None,
         })
     }
@@ -206,11 +254,22 @@ impl Tensor {
         } else {
             &self.cpu_data
         };
+        
+        let result_data = if self.device == "cpu" {
+            let mut out = vec![0.0; slice.len()];
+            out.par_iter_mut()
+               .zip(slice.par_iter())
+               .for_each(|(o, &i)| *o = i * (1.0 / (1.0 + (-i).exp())));
+            out
+        } else {
+            crate::backend::execute_activation(slice, "silu", self.device == "hybrid")
+        };
+
         Ok(Tensor {
             shape: self.shape.clone(),
             device: self.device.clone(),
             name: "SiLU".to_string(),
-            cpu_data: crate::backend::execute_activation(slice, "silu"),
+            cpu_data: result_data,
             mmap_data: None,
         })
     }
