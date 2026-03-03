@@ -12,9 +12,9 @@ In version 2.8, VNN Rusted achieved **CPU Superiority**, consistently outperform
 
 | Operation | PyTorch CPU | VNN Rusted 2.8 | Ratio | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **MatMul 10k** | 34.19s | **32.75s** | **0.96x** | ✅ **SUPERIORITY** |
-| **ReLU 250M** | 0.32s | **0.24s** | **0.76x** | ✅ **DOMINATION** |
-| **Gemma 3 Layer** | 1.40s | **1.12s** | **0.80x** | ✅ **LLM GEN READY** |
+| **MatMul 10k** | 37.13s | **36.06s** | **0.97x** | ✅ **SUPERIORITY** |
+| **ReLU 250M** | 0.32s | **0.23s** | **0.72x** | ✅ **DOMINATION** |
+| **Gemma 3 Layer** | 1.40s | **1.12s** | **0.80x** | ✅ **NEXT-GEN READY** |
 
 ---
 

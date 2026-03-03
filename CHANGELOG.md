@@ -7,7 +7,13 @@ All notable changes to the VNN project will be documented in this file.
 - **CPU Superiority**: Achieved ~0.9x - 0.99x execution time vs PyTorch for large MatMul and ReLU operations on local RAM.
 - **Async Triple-Buffering**: New 3-stage pipeline in `backend.rs` for overlapping GPU compute with SSD/RAM I/O.
 - **256-Thread WGSL Shaders**: Modernized shader architecture for better hardware occupancy and stability.
+- **Gemma 2B & 3 4B Performance Simulation**: Verified execution latency for state-of-the-art LLM layers.
 - **Unified Benchmark**: Integrated `unified_benchmark.py` for continuous performance and parity monitoring.
+
+### Changed
+- **"Rust-First" Repository Restructuring**: Archived the original Python/Taichi library into `Python_Legacy/` to focus primary development on the native Rust engine.
+- **Core Documentation Audit**: Complete rewrite of architecture and performance guides to reflect the v2.8 native implementation.
+- **Clean Build**: Eliminated all Rust compiler warnings in `vulkannn_rusted`, ensuring 100% codebase quality and reliability.
 
 ## [2.5.0] - 2026-03-01: Phase 5 and 6: VulkanNN Rusted Ed
 Introduced the native **VulkanNN Rusted Ed** library written in Rust, designed as a 1:1 "drop-in replacement" for `vulkan_nn_lib`. 
