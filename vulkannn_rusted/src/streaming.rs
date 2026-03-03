@@ -8,6 +8,7 @@ use memmap2::{Mmap, MmapOptions};
 pub struct L3Cache;
 
 impl L3Cache {
+    #[allow(dead_code)]
     pub fn map_ssd_tensor(path: &str) -> std::io::Result<Arc<Mmap>> {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
@@ -117,6 +118,7 @@ pub fn init_prefetcher() {
     });
 }
 
+#[allow(dead_code)]
 pub fn prefetch_tensor(mmap: Arc<Mmap>) {
     if let Some(engine) = PREFETCHER.get() {
         let _ = engine.tx.send(PrefetchRequest {
