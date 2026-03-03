@@ -11,16 +11,11 @@ impl L3Cache {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
-        // --- EXTREME PERFORMANCE: POSIX MADV_WILLNEED ---
-        // Telling the Linux kernel to start paging this immediately into OS RAM
-        // before the GPU actually requests it.
+        // --- EXTREME PERFORMANCE: POSIX MADV_WILLNEED + MADV_SEQUENTIAL ---
         #[cfg(target_os = "linux")]
         unsafe {
-            libc::madvise(
-                mmap.as_ptr() as *mut libc::c_void,
-                mmap.len(),
-                libc::MADV_WILLNEED,
-            );
+            libc::madvise(mmap.as_ptr() as *mut libc::c_void, mmap.len(), libc::MADV_WILLNEED);
+            libc::madvise(mmap.as_ptr() as *mut libc::c_void, mmap.len(), libc::MADV_SEQUENTIAL);
         }
 
         Ok(Arc::new(mmap))
@@ -28,39 +23,64 @@ impl L3Cache {
 }
 
 /// Budget Trackers
-#[allow(dead_code)]
 pub struct MemoryBudgets {
     pub l1_vram_max_bytes: usize,
+    #[allow(dead_code)]
     pub l2_ram_max_bytes: usize,
     
+    #[allow(dead_code)]
     pub l1_vram_used: usize,
+    #[allow(dead_code)]
     pub l2_ram_used: usize,
+}
+
+/// Detects available RAM on Linux (MemAvailable from /proc/meminfo)
+pub fn get_available_ram() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+            for line in content.lines() {
+                if line.starts_with("MemAvailable:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        if let Ok(kb) = parts[1].parse::<usize>() {
+                            // Leave 2GB safety margin for system/OS/Antigravity
+                            let bytes = kb * 1024;
+                            return bytes.saturating_sub(2 * 1024 * 1024 * 1024);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Fallback for non-Linux or failures: provide a conservative 4GB
+    4 * 1024 * 1024 * 1024
 }
 
 pub static BUDGETS: OnceLock<Mutex<MemoryBudgets>> = OnceLock::new();
 
 pub fn init_budgets() {
     BUDGETS.get_or_init(|| {
+        let avail_ram = get_available_ram();
+        println!("[vulkannn_rusted] Detected Available RAM for Compute: {:.2} GB", avail_ram as f64 / 1024.0 / 1024.0 / 1024.0);
+        
         Mutex::new(MemoryBudgets {
             l1_vram_max_bytes: 1024 * 1024 * 1024, // 1GB MVP VRAM
-            l2_ram_max_bytes: 8 * 1024 * 1024 * 1024, // 8GB MVP RAM
+            l2_ram_max_bytes: avail_ram,
             l1_vram_used: 0,
             l2_ram_used: 0,
         })
     });
 }
 
-/// A background prefetching engine moving data from L3 (SSD) -> L2 (RAM) -> L1 (VRAM)
-#[allow(dead_code)]
+/// A background prefetching engine moving data from L3 (SSD) -> L2 (RAM)
 pub struct PrefetchEngine {
     tx: std::sync::mpsc::Sender<PrefetchRequest>,
 }
 
-#[allow(dead_code)]
 pub struct PrefetchRequest {
-    pub file_path: String,
-    pub shape: Vec<usize>,
-    pub callback: Box<dyn FnOnce(Vec<f32>) + Send + 'static>,
+    pub mmap: Arc<Mmap>,
+    pub signal_done: Option<std::sync::mpsc::Sender<()>>,
 }
 
 pub static PREFETCHER: OnceLock<PrefetchEngine> = OnceLock::new();
@@ -71,24 +91,34 @@ pub fn init_prefetcher() {
         
         thread::spawn(move || {
             for request in rx {
-                // Background worker: Load from L3 (SSD) into L2 (RAM vector)
-                if let Ok(mmap) = L3Cache::map_ssd_tensor(&request.file_path) {
-                    let ptr = mmap.as_ptr() as *const f32;
-                    let len = mmap.len() / 4;
-                    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-                    
-                    // Copy to RAM (L2) - in reality we might zero-copy this until DMA,
-                    // but for now, we simulate forcing it into active L2 RAM pages.
-                    let l2_data = slice.to_vec();
-                    
-                    // Send back to caller
-                    (request.callback)(l2_data);
-                } else {
-                    eprintln!("Failed to prefetch {}", request.file_path);
+                // Background worker: touch pages to trigger OS readahead
+                let ptr = request.mmap.as_ptr();
+                let len = request.mmap.len();
+                
+                // We touch one byte every 64KB (a typical readahead cluster size)
+                let mut i = 0;
+                while i < len {
+                    unsafe {
+                        let _unused = std::ptr::read_volatile(ptr.add(i));
+                    }
+                    i += 65536; 
+                }
+
+                if let Some(sig) = request.signal_done {
+                    let _ = sig.send(());
                 }
             }
         });
 
         PrefetchEngine { tx }
     });
+}
+
+pub fn prefetch_tensor(mmap: Arc<Mmap>) {
+    if let Some(engine) = PREFETCHER.get() {
+        let _ = engine.tx.send(PrefetchRequest {
+            mmap,
+            signal_done: None,
+        });
+    }
 }

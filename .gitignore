@@ -44,3 +44,4 @@ Cargo.lock
 *.whl
 .vnn_cache_bench/
 tmp*/
+Gemma/
