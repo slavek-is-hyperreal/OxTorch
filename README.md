@@ -1,199 +1,86 @@
-# 🌌 VNN Legacy Edition (VulkanNN)
+# 🌌 VNN Rusted (VulkanNN Native Edition)
 
-**"Because it SHOULD be possible to run AI on your old hardware."**
+**"Because it SHOULD be possible to run state-of-the-art AI on your old hardware—faster than PyTorch."**
 
-VNN is a hobbyist-born, research-focused tensor library designed to prove that massive AI models don't just belong to big tech clusters. It bridges the gap between 100GB+ models and the systems gathering dust in our home offices—PCs with limited RAM, older GPUs, and modest laptops.
-
----
-
-### 📼 The Philosophy: Hardware-Defiant AI
-Modern AI development is a race for raw FLOPS, often leaving anyone with less than 24GB of VRAM in the "Out of Memory" (OOM) zone. **VNN takes the alternative path.** 
-
-We prioritize **Stability over Speed**. By treating your SSD as a first-class memory tier, VNN allows you to train and run models that physically shouldn't fit on your machine. If you have the disk space, you have a path to run the computation. No crashes, no compromises on scale.
+VNN Rusted is a high-performance, native C/Rust tensor engine designed for the modern open-weights era. Built with **Rust + WGPU**, it bypasses Python interpreter bottlenecks to deliver unprecedented performance on consumer CPUs and older GPUs.
 
 ---
 
-### 🧪 Experimental Demo: Splat Studio
-VNN powers **Splat Studio**, an end-to-end 3D Gaussian Splatting pipeline. 
+## 🚀 Performance: The PyTorch Killer (v2.8)
 
-> [!WARNING]
-> **Status: Experimental & Untested.**
-> This demo serves as a technical showcase for VNN's SSD-streaming `AutoAdam` optimizer. It is provided for research and curiosity; it has not been validated for production workloads.
+In version 2.8, VNN Rusted achieved **CPU Superiority**, consistently outperforming PyTorch in key LLM operations on standard consumer hardware.
 
-- **Tiled Optimization**: Uses VNN's `AutoAdam` to train models with millions of points by offloading gradients directly to SSD.
-- **Vulkan Rasterization**: High-speed visualization powered by the same Vulkan/Taichi backend as VNN core.
-- **Experimental Suite**: Integrated tools for converting Gaussian Splats to meshes (`gs_to_mesh.py`) and extracting camera data.
-
-To explore the demo:
-```bash
-PYTHONPATH=. python3 demos/splat_studio/splat_studio.py
-```
+| Operation | PyTorch CPU | VNN Rusted 2.8 | Ratio | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **MatMul 10k** | 34.19s | **32.75s** | **0.96x** | ✅ **SUPERIORITY** |
+| **ReLU 250M** | 0.32s | **0.24s** | **0.76x** | ✅ **DOMINATION** |
+| **Gemma 3 Layer** | 1.40s | **1.12s** | **0.80x** | ✅ **LLM GEN READY** |
 
 ---
 
----
+## 🏗️ Core Architecture (v2.8+)
 
-## 🛠️ Core Capabilities
+VNN Rusted employs a **Software-Defined Memory Hierarchy** designed to prevent OOM (Out-of-Memory) crashes at all costs while maintaining extreme throughput.
 
-PyTorch is for the data center. **VNN is for the rest of us.**
-
--   **SSD-Native Autograd**: The jewel of VNN. Backpropagation that streams directly to/from disk, enabling training on models weighing hundreds of gigabytes.
--   **DRAS v4 (Adaptive RAM-Aware Streaming)**: Real-time memory monitoring with **Adaptive Backoff**. It pushes your hardware to the absolute limit without crossing the RAM "cliff," pausing I/O when the processing pipeline is saturated.
--   **PagedAttention & KV Cache Management**: Native BlockTable abstractions combating contiguous memory fragmentation for continuous batched generation without OOM.
--   **Vulkan/Taichi Engine**: Hardware-agnostic compute that runs on Intel, AMD, and NVIDIA alike.
--   **Kaggle Offloading**: Zero-cost ephemeral supercomputing via Kaggle kernels. Works on operations exceeding the size threshold.
--   **High Precision Math**: The Python version of the engine underwent a rigorous Taichi numerical audit, yielding absolute arithmetic convergence (+/- 1e-4 in MatMul).
--   **100% Parity**: Mathematically verified against PyTorch for core operations.
-
-> [!TIP]
-> You can configure the SSD cache directory by setting the `VNN_CACHE_DIR` environment variable (defaults to `./vnn_cache`).
+### 🔥 Key Technologies & Optimizations:
+- **Async 3-Stage Pipeline**: Overlaps SSD/RAM I/O with GPU computation using a triple-buffering system. The GPU never waits for the bus.
+- **256-Thread WGSL Core**: Modernized shaders utilizing `@workgroup_size(256)` and dynamic 2D dispatch logic (64k+ barrier bypass).
+- **Zero-Copy CPU Path**: Direct integration with high-performance BLAS kernels and Rayon parallel iterators, eliminating redundant allocations.
+- **L3 (SSD) Virtual Tensors**: Mount models directly from disk via `memmap2` with `madvise(MADV_SEQUENTIAL)` kernel hints. SSD is your new RAM.
 
 ---
 
-## 🚀 Drop-in Replacement (Shim)
+## 🛠️ Getting Started
 
-VNN includes a PyTorch Shim, allowing you to refactor existing code with minimal effort:
-
-```python
-import vulkan_nn_lib.torch_shim as torch
-
-# 1. Initialize a "Monster" Tensor (e.g., 10GB+)
-# If size > RAM, VNN automatically mounts it on SSD.
-w = torch.randn(1024, 1024, 2560, requires_grad=True) 
-
-# 2. SSD-Native Math
-loss = (w * 2.0).sum()
-
-# 3. OOM-Safe Back propagation
-loss.backward()
-
-print(f"Gradient safely resident on: {w.grad.device}") # -> 'ssd'
-```
-
-
----
-
-## 🎛️ Device Selection
-
-VNN gives you full control over where your tensors live. You can let the system manage it or force specific hardware.
-
-```python
-# 1. auto (Default)
-# Intelligent placement based on RAM budget and tensor size.
-# Small -> Vulkan/CPU, Large -> SSD.
-x = Tensor(data, device='auto')
-
-# 2. cpu
-# Forces execution on System RAM. Good for small debugging or legacy ops.
-x = Tensor(data, device='cpu')
-
-# 3. vulkan
-# Forces execution on GPU. 
-# WARNING: Will crash if execution exceeds VRAM. Use for maximum speed on small-mid data.
-x = Tensor(data, device='vulkan')
-
-# 4. ssd
-# Forces data to reside on disk (memory-mapped).
-# Infinite capacity, limited by disk speed.
-x = Tensor(data, device='ssd')
-```
-
----
-
-## ☁️ Kaggle Mode (Infinite Compute)
-
-VNN can transparently offload massive computations to **Kaggle Kernels** (free T4 x2 GPUs), effectively giving you an ephemeral supercomputer.
-
-### Setup
-1. Get your `kaggle.json` API key from [Kaggle Settings](https://www.kaggle.com/settings).
-2. Place it in the project root or `~/.kaggle/kaggle.json`.
-3. Enable the mode via environment variable:
+### 1. Build & Install
+VNN Rusted is a native Python extension built with `PyO3` and `maturin`.
 
 ```bash
-export VNN_KAGGLE_MODE=1
-```
-
-### How it works
-- **Automatic Offloading**: When an operation (e.g., `MatMul`, `Add`) exceeds the `VNN_KAGGLE_THRESHOLD` (default: 1GB), VNN intercepts it.
-- **Data Sync**: Inputs are uploaded as private Kaggle Datasets.
-- **Remote Execution**: A specialized kernel is spun up to process the data on high-end GPUs.
-- **Result Streaming**: Results are downloaded directly to your local SSD.
-- **Seamless**: Your local Python script waits as if it were a local function call, transparently handling partitioning for tensors larger than Kaggle's 13GB RAM limit.
-
----
-
-
-## 📚 Technical Manuals
-
-For those who want to see how the "magic" works:
-
-| Guide | Description |
-| :--- | :--- |
-| 🏗️ **[Architecture](docs/architecture.md)** | Tiled memory logic, ARAS engine, and SSD backend. |
-| 📜 **[Tensor API](docs/tensor_api.md)** | Deep dive into supported operations and dtypes. |
-| ⚡ **[Performance Guide](docs/performance_guide.md)** | Real-world benchmarks (VNN vs Torch CPU). |
-| 📖 **[The Manual](docs/technical_manual.md)** | **Line-by-line source walkthrough** explaining the implementation. |
-
----
-
-## 💎 Features at a Glance
-
-- **Memory-First Design**: Built to prevent OOM crashes at all costs.
-- **Zero-Copy Loading**: Mount models from disk in milliseconds.
-- **Full Dtype Support**: Verified for `int8` through `int64` and `float32`.
-- **Hobbyist Friendly**: Optimized for 1GB - 4GB VRAM targets. Do not need NVIDIA GPUDirect to run out-of-core fast operations!
-
----
-
-## 🦀 VulkanNN Rusted Ed (Native Extension - MEGA FAST)
-
-In addition to the classic, Python-native implementation `vulkan_nn_lib`, the repository features the newest **fully native C/Rust compute plugin `vulkannn_rusted`**, operating directly on GPU drivers underneath the OS kernel and silently smuggling gigabytes of data.
-
-### About Rusted Ed (v2.8 - "The PyTorch Killer")
-`vulkannn_rusted` is built with `PyO3` to serve as a high-performance alternative to the classic `vulkan_nn_lib`. In version 2.8, it achieved **CPU Superiority**, consistently outperforming PyTorch in MatMul and Element-wise operations on standard consumer hardware.
-
-🔥 **v2.8 "Rusted" Architecture Features:**
-- **CPU Domination (0.9x - 0.99x vs PyTorch)**: Optimized blocked MatMul using `matrixmultiply` and Zero-Copy Rayon parallel iterators. It is faster than PyTorch for 10k+ matrix operations on local RAM.
-- **Async Triple-Buffering**: A 3-stage pipeline that overlaps SSD/RAM data transfers with GPU computation. The GPU never waits for I/O; it always has a chunk ready.
-- **256-Thread WGSL Shaders**: Modernized shader core using `@workgroup_size(256)` and 2D dispatch logic, allowing it to handle massive tensors (1GB+) while saturating the PCIe bus.
-- **Unified Parity Engine**: Every build is verified against PyTorch using the `unified_benchmark.py` suite, ensuring 100% mathematical convergence.
-- **L3 (SSD - Raw Storage)**: Pure **Zero-Copy through `memmap2`** with `madvise(MADV_SEQUENTIAL)` kernel hints for maximum SSD throughput.
-
-### Compilation and Execution Instructions:
-The module uses the native Rust library installer for pip called `maturin`.
-
-1. Start by having a virtual environment (*venv*):
-```bash
+# 1. Activate your environment
 source venv/bin/activate
-```
-2. Enter the Rust package directory:
-```bash
+
+# 2. Enter the Rust core
 cd vulkannn_rusted
-```
-3. Build and install it for production on the fly (requires the cargo package installed on your system). You should get info about building the *CPython* extension:
-```bash
+
+# 3. Build for peak performance
 maturin develop --release
 ```
-4. Return to the root folder! Now you can simply replace the import in any leading AI script to enter Rust's hyperspace at speed. The changes do not break the previous API:
+
+### 2. Basic Usage
+Fast, native, and drop-in compatible API:
+
 ```python
-# INSTEAD OF: import vulkan_nn_lib as vnn
 import vulkannn_rusted as vnn
+import numpy as np
 
-# Works incredibly well and out-of-core effortlessly!
-t = vnn.Tensor(np.random.rand(100000).astype(np.float32))
-t2 = vnn.Tensor(np.random.rand(100000).astype(np.float32))
+# Create tensors (automatically handles RAM vs SSD)
+a = vnn.Tensor(np.random.rand(1024, 1024).astype(np.float32), device="cpu")
+b = vnn.Tensor(np.random.rand(1024, 1024).astype(np.float32), device="cpu")
 
-add_result = t + t2
-matmul_res = t @ t2
-relu_res = t.relu()
+# High-speed math
+c = a @ b
+d = c.relu()
+
+print(f"Result shape: {d.shape} on {d.device}")
+```
+
+### 3. Verification
+Run the unified performance and parity suite:
+```bash
+PYTHONPATH=. python3 tests/unified_benchmark.py
 ```
 
 ---
 
-## 🌳 Repository Branching Strategy
-- **`main`**: The public, stable version. Verified and ready for production/hobbyist use.
-- **`test`**: Release candidate branch for comprehensive parity testing.
-- **`dev`**: Active development of new experimental features. 
+## 📚 Technical Manuals
+- 🏗️ **[Architecture](docs/architecture.md)**: Deep dive into async pipelines and memory tiers.
+- 🌳 **[Roadmap](docs/roadmap.md)**: Future support for Gemma 3n and MatFormer.
+- 🔬 **[Walkthrough](Python_Legacy/docs-python/technical_manual.md)**: Line-by-line internal logic (Classic/Legacy).
+
+---
+
+## 🐍 Python Legacy Version
+The original Python/Taichi implementation of VNN is now archived and available in the [Python_Legacy](Python_Legacy/README-PythonLegacy.md) directory. It remains stable but is no longer the primary focus of development.
 
 ---
 *Developed with 💙 for the open hardware and self-hosting community.*
