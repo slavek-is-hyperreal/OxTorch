@@ -4,6 +4,7 @@ use std::thread;
 use memmap2::{Mmap, MmapOptions};
 
 /// The L3 Cache: Raw SSD storage mapped to memory.
+#[allow(dead_code)]
 pub struct L3Cache;
 
 impl L3Cache {
@@ -24,6 +25,7 @@ impl L3Cache {
 
 /// Budget Trackers
 pub struct MemoryBudgets {
+    #[allow(dead_code)]
     pub l1_vram_max_bytes: usize,
     #[allow(dead_code)]
     pub l2_ram_max_bytes: usize,
@@ -75,6 +77,7 @@ pub fn init_budgets() {
 
 /// A background prefetching engine moving data from L3 (SSD) -> L2 (RAM)
 pub struct PrefetchEngine {
+    #[allow(dead_code)]
     tx: std::sync::mpsc::Sender<PrefetchRequest>,
 }
 
