@@ -45,3 +45,4 @@ Cargo.lock
 .vnn_cache_bench/
 tmp*/
 Gemma/
+gemma/
