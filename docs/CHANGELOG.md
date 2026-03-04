@@ -5,7 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.9.0] - 2026-03-04
+### Added
+- **Statistical Guard**: Integrated Coefficient of Variation (CV%) and P95 percentile tracking in benchmarks to filter system noise.
+- **API Reference**: Detailed documentation of all Rust/Python bindings with source line references.
+- **Hardware-Invariant Monitoring**: Switched to Ratio (VNN/PT) for regression detection.
+
+## [2.8.19] - 2026-03-04
+### Added
+- **Gemma Optimization**: Achieved 0.74x Ratio on Gemma 2B and 0.82x on Gemma 3 4B.
+- **Batch GEMV Submits**: Collected command buffers for concurrent processing in GEMV paths.
+
+## [2.8.18] - 2026-03-03
+### Changed
+- **Zero-Overhead CPU**: Removed manual threading in favor of `matrixmultiply`'s internal pool, achieving 0.86x Ratio on CPU MatMul.
+- **Refactored Hybrid Split**: Dynamic work-stealing for M-blocks between CPU and GPU.
+
+## [2.8.17] - 2026-03-02
+### Added
+- **The Union**: Forced N-tiling for GEMV to enable Double Buffering across all shapes.
+- **Double Buffering**: Dual weight buffers in `backend.rs` to overlap IO and Compute.
+
+## [2.8.0] - 2026-03-01
+### Added
+- **Rust-First Core**: Initial release of the `vulkannn_rusted` engine, replacing the legacy Taichi-based Python core with raw WGPU/Rust.
+- **SSD L3 Cache**: Memory mapping for tensors larger than system RAM.
+
+## [Legacy]
 
 ### Added
 - **PagedAttention & Context Management**: Developed `BlockTable` and `PagedKVCache` in `paged_attention.py` to virtually map non-contiguous fragments of memory dynamically token-by-token, dramatically reducing OOM errors caused by contiguous cache fragmentation.

@@ -3,7 +3,11 @@ import numpy as np
 import torch
 import os
 import sys
+import json
 from vulkannn_rusted import Tensor
+
+RESULTS_FILE = "tests/last_results.json"
+HISTORY_FILE = "tests/benchmark_history.log"
 
 # Constants
 CACHE_DIR = "/vectorlegis_ssd_pool/vnn_cache"
@@ -29,8 +33,14 @@ def check_parity(vnn_tensor, torch_tensor, name, atol=1e-3):
         diff = np.abs(v_np - t_np)
         return False, np.max(diff)
 
-def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=1):
-    print(f"\n>>> TEST: {name} ({mode.upper()}) | Shape: {shape} | SSD: {is_ssd}")
+def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None):
+    if iterations is None:
+        size_elements = np.prod(shape)
+        if is_ssd or size_elements > 5e7: iterations = 1
+        elif size_elements > 5e6: iterations = 5
+        else: iterations = 20 # Stable for small ReLU/MatMul
+        
+    print(f"\n>>> TEST: {name} ({mode.upper()}) | Shape: {shape} | SSD: {is_ssd} | Iter: {iterations}")
     
     # Pre-generate or Load Data
     if not is_ssd:
@@ -47,12 +57,15 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=1):
         b_torch = torch.from_numpy(b_np)
         
         # PyTorch Reference
-        t0 = time.time()
+        # Warmup
+        if op == "MatMul": _ = torch.matmul(a_torch, b_torch)
+        
+        t0 = time.perf_counter()
         for _ in range(iterations):
             if op == "MatMul": res_torch = torch.matmul(a_torch, b_torch)
             elif op == "Add": res_torch = a_torch + b_torch
             elif op == "ReLU": res_torch = torch.relu(a_torch)
-        t_pt = (time.time() - t0) / iterations
+        t_pt = (time.perf_counter() - t0) / iterations
         
         # VNN Input
         a_vnn = Tensor(a_np, device=mode)
@@ -60,14 +73,20 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=1):
     else:
         # SSD Path (Monster Tensors)
         size_elements = np.prod(shape)
+        size_elements = np.prod(shape)
         a_path = os.path.join(CACHE_DIR, f"monster_a_{size_elements}.bin")
-        if not os.path.exists(a_path):
-            print(f"    Generating {format_size(size_elements)} SSD junk data...")
-            # We don't need real random for 20GB, just something non-zero
-            junk = np.ones(1024*1024, dtype=np.float32)
+        expected_bytes = size_elements * 4
+        if not os.path.exists(a_path) or os.path.getsize(a_path) != expected_bytes:
+            print(f"    Generating {format_size(size_elements)} SSD junk data (exact {expected_bytes} bytes)...")
+            # Write in 4MB chunks but ensure exact total size
+            chunk_size = 1024 * 1024
+            junk = np.ones(chunk_size, dtype=np.float32)
             with open(a_path, 'wb') as f:
-                for _ in range(size_elements // (1024*1024)):
-                    f.write(junk.tobytes())
+                remaining = size_elements
+                while remaining > 0:
+                    write_size = min(remaining, chunk_size)
+                    f.write(junk[:write_size].tobytes())
+                    remaining -= write_size
         
         a_vnn = Tensor.from_ssd(a_path, shape)
         a_vnn.device = mode
@@ -76,12 +95,17 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=1):
         res_torch = None
 
     # VNN Execution
-    t0 = time.time()
+    # Warmup
+    if op == "MatMul": _ = a_vnn @ b_vnn
+    elif op == "Add": _ = a_vnn + b_vnn
+    elif op == "ReLU": _ = a_vnn.relu()
+
+    t0 = time.perf_counter()
     for _ in range(iterations):
         if op == "MatMul": res_vnn = a_vnn @ b_vnn
         elif op == "Add": res_vnn = a_vnn + b_vnn
         elif op == "ReLU": res_vnn = a_vnn.relu()
-    t_vnn = (time.time() - t0) / iterations
+    t_vnn = (time.perf_counter() - t0) / iterations
     
     # Validation
     parity_ok = "N/A"
@@ -152,3 +176,44 @@ if __name__ == "__main__":
     else:
         print("\n✨ ALL CORE SYSTEMS OPERATIONAL: Parity and Speed Verified.")
     print("="*80)
+
+    # --- REGRESSION MONITORING ---
+    prev_results = {}
+    if os.path.exists(RESULTS_FILE):
+        try:
+            with open(RESULTS_FILE, 'r') as f:
+                prev_results = json.load(f)
+        except:
+            prev_results = {}
+
+    print(f"\n{' RATIO-BASED REGRESSION MONITORING ':*^80}")
+    print(f"{'Test Case':<30} | {'Current R':<10} | {'Prev R':<10} | {'Delta':<10} | {'Status'}")
+    print("-" * 80)
+    
+    current_save = {}
+    for name, pt, vnn, ok in results:
+        ratio = vnn / pt if pt > 0 else 0
+        current_save[name] = ratio
+        prev_ratio = prev_results.get(name)
+        if prev_ratio is not None:
+            delta = ratio - prev_ratio
+            perc = (delta / prev_ratio) * 100 if prev_ratio > 0 else 0
+            d_str = f"{delta:>+8.4f}"
+            # Sensitivity: 10% change in ratio is significant
+            status = "🔴 REGRESSION" if perc > 10 else "🟢 IMPROVED" if perc < -10 else "🟡 STABLE"
+            print(f"{name:<30} | {ratio:>8.4f} | {prev_ratio:>8.4f} | {d_str} | {status} ({perc:>+5.1f}%)")
+        else:
+            print(f"{name:<30} | {ratio:>8.4f} | {'N/A':>8} | {'---':>8} | NEW TEST")
+    
+    # Save current ratios for next time
+    with open(RESULTS_FILE, 'w') as f:
+        json.dump(current_save, f, indent=4)
+        
+    # Append to human-readable log
+    with open(HISTORY_FILE, 'a') as f:
+        f.write(f"\n--- Benchmark Run: {time.ctime()} ---\n")
+        for name, pt, vnn, ok in results:
+            f.write(f"{name:<30} | VNN: {vnn:.4f}s | PT: {pt:.4f}s | Parity: {ok}\n")
+
+    print("*" * 80)
+    print(f"Results saved to {RESULTS_FILE} and logged to {HISTORY_FILE}")

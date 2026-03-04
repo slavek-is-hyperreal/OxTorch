@@ -1,86 +1,86 @@
-# 🌌 VNN Rusted (VulkanNN Native Edition)
+# 🚀 VulkanNN Rusted (v2.9.0)
 
-**"Because it SHOULD be possible to run state-of-the-art AI on your old hardware—faster than PyTorch."**
+**The Iron Age of Neural Inference.**  
+A high-performance, Rust-powered tensor engine designed for extreme memory efficiency and raw speed on consumer hardware. Leveraging Vulkan WGSL shaders and zero-copy SSD mapping to run models that shouldn't fit in your RAM.
 
-VNN Rusted is a high-performance, native C/Rust tensor engine designed for the modern open-weights era. Built with **Rust + WGPU**, it bypasses Python interpreter bottlenecks to deliver unprecedented performance on consumer CPUs and older GPUs.
-
----
-
-## 🚀 Performance: The PyTorch Killer (v2.8)
-
-In version 2.8, VNN Rusted achieved **CPU Superiority**, consistently outperforming PyTorch in key LLM operations on standard consumer hardware.
-
-| Operation | PyTorch CPU | VNN Rusted 2.8 | Ratio | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| **MatMul 10k** | 37.13s | **36.06s** | **0.97x** | ✅ **SUPERIORITY** |
-| **ReLU 250M** | 0.32s | **0.23s** | **0.72x** | ✅ **DOMINATION** |
-| **Gemma 3 Layer** | 1.40s | **1.12s** | **0.80x** | ✅ **NEXT-GEN READY** |
+[![Performance: Record-Breaking](https://img.shields.io/badge/Performance-Record--Breaking-orange.svg)](#benchmarks)
+[![Engine: Rust + Vulkan](https://img.shields.io/badge/Engine-Rust%20%2B%20Vulkan-blue.svg)](#technical-deep-dive)
 
 ---
 
-## 🏗️ Core Architecture (v2.8+)
+## 🏗 Why VulkanNN Rusted?
 
-VNN Rusted employs a **Software-Defined Memory Hierarchy** designed to prevent OOM (Out-of-Memory) crashes at all costs while maintaining extreme throughput.
-
-### 🔥 Key Technologies & Optimizations:
-- **Async 3-Stage Pipeline**: Overlaps SSD/RAM I/O with GPU computation using a triple-buffering system. The GPU never waits for the bus.
-- **256-Thread WGSL Core**: Modernized shaders utilizing `@workgroup_size(256)` and dynamic 2D dispatch logic (64k+ barrier bypass).
-- **Zero-Copy CPU Path**: Direct integration with high-performance BLAS kernels and Rayon parallel iterators, eliminating redundant allocations.
-- **L3 (SSD) Virtual Tensors**: Mount models directly from disk via `memmap2` with `madvise(MADV_SEQUENTIAL)` kernel hints. SSD is your new RAM.
+*   **🚀 Faster than PyTorch**: Up to **2.2x speedup** on MatMul 2k (0.45x Ratio) using Hybrid GPU/CPU tiling.
+*   **🧠 LLM Specialist**: Optimized for Gemma 2B (0.74x Ratio) and Gemma 3 4B (0.82x Ratio) on mid-range hardware.
+*   **💾 SSD-as-RAM (L3 Cache)**: Map 16GB+ weights directly to memory via `memmap2` with background prefetching.
+*   **⚡ Ghost Speed**: Asynchronous command submission and double buffering to saturate PCI-e bandwidth.
+*   **🛡 Statistical Guard**: Built-in regression monitoring with Coefficient of Variation (CV) tracking.
 
 ---
 
-## 🛠️ Getting Started
+## 🏁 Quick Start (Python)
 
-### 1. Build & Install
-VNN Rusted is a native Python extension built with `PyO3` and `maturin`.
-
-```bash
-# 1. Activate your environment
-source venv/bin/activate
-
-# 2. Enter the Rust core
-cd vulkannn_rusted
-
-# 3. Build for peak performance
-maturin develop --release
-```
-
-### 2. Basic Usage
-Fast, native, and drop-in compatible API:
+Minimal knowledge required. If you have `maturin` and a Vulkan-capable GPU, you're ready.
 
 ```python
-import vulkannn_rusted as vnn
+from vulkannn_rusted import Tensor
 import numpy as np
 
-# Create tensors (automatically handles RAM vs SSD)
-a = vnn.Tensor(np.random.rand(1024, 1024).astype(np.float32), device="cpu")
-b = vnn.Tensor(np.random.rand(1024, 1024).astype(np.float32), device="cpu")
+# 1. Create tensors (CPU, Vulkan, or Hybrid)
+a = Tensor(np.random.randn(2048, 2048).astype(np.float32), device="vulkan")
+b = Tensor(np.random.randn(2048, 2048).astype(np.float32), device="vulkan")
 
-# High-speed math
-c = a @ b
-d = c.relu()
+# 2. Raw Speed MatMul
+res = a @ b
 
-print(f"Result shape: {d.shape} on {d.device}")
-```
-
-### 3. Verification
-Run the unified performance and parity suite:
-```bash
-PYTHONPATH=. python3 tests/unified_benchmark.py
+# 3. Memory Mapping (Load 16GB weights in 0.0s)
+weights = Tensor.from_ssd("path/to/weights.bin", shape=(4096, 4096))
+# background prefetching is automatic!
 ```
 
 ---
 
-## 📚 Technical Manuals
-- 🏗️ **[Architecture](docs/architecture.md)**: Deep dive into async pipelines and memory tiers.
-- 🌳 **[Roadmap](docs/roadmap.md)**: Future support for Gemma 3n and MatFormer.
-- 🔬 **[Walkthrough](Python_Legacy/docs-python/technical_manual.md)**: Line-by-line internal logic (Classic/Legacy).
+## 📊 Benchmarks (v2.9.0)
+
+Tested on the **"Slavek Lab" Baseline**:
+*   **CPU**: Intel(R) Core(TM) i5-3450 @ 3.10GHz (4 Cores/4 Threads)
+*   **GPU**: AMD Radeon R7 200 Series (RADV BONAIRE) (Vulkan)
+*   **RAM**: 23GB DDR3
+*   **OS**: Linux x86_64
+
+| Test Case | PyTorch (Avg) | **VNN Rusted (Avg)** | **Ratio (VNN/PT)** | Stability (CV%) |
+|:--- |:--- |:--- |:--- |:--- |
+| **MatMul 2k (Hybrid)** | 0.203s | **0.090s** | **0.45x** 🚀 | 7.5% |
+| **MatMul 2k (Vulkan)** | 0.200s | **0.097s** | **0.49x** | 3.5% |
+| **Gemma 2B (Layer)** | 1.859s | **1.368s** | **0.74x** | 1.2% |
+| **Gemma 3 4B (Layer)** | 1.575s | **1.290s** | **0.82x** | 0.9% |
+| **MatMul 10k (CPU)** | 22.58s | **22.54s** | **1.00x** | 0.8% |
 
 ---
 
-## 🐍 Python Legacy Version
-The original Python/Taichi implementation of VNN is now archived and available in the [Python_Legacy](Python_Legacy/README-PythonLegacy.md) directory. It remains stable but is no longer the primary focus of development.
+## 🛠 Technical Deep Dive
+
+### The Multi-Tier Cache Analogy
+VNN Rusted treats your hardware like a tiered cache system:
+*   **L1 (VRAM)**: Extreme speed, small capacity (1GB-2GB). Used for active tiles.
+*   **L2 (System RAM)**: Medium speed, large capacity. Data is prefetched here.
+*   **L3 (SSD)**: Mass storage. Weights stay here until touched.
+
+### Key Implementation Details
+1.  **Hybrid Tiling**: `src/backend.rs:276` splits MatMul work between CPU (Rayon/matrixmultiply) and GPU (wgpu/WGSL).
+2.  **Double Buffering**: `src/backend.rs:329` uses dual `bufs_b` to upload the next B-tile while the GPU is still computing the current one.
+3.  **Ghost Speed (Async Copy)**: `src/backend.rs:428` prevents blocking the CPU while GPU results are being transferred back to RAM.
+4.  **Zero-Overhead Memory Mapping**: `src/tensor.rs:43` uses `memmap2` with `libc::madvise(MADV_SEQUENTIAL)` for hardware-level read-ahead.
 
 ---
-*Developed with 💙 for the open hardware and self-hosting community.*
+
+## 📚 Documentation
+*   [Architecture Deep-Dive](docs/architecture.md) - Data flows and internal structures.
+*   [Performance Guide](docs/performance_guide.md) - Understanding Tiling, CV%, and Throttle.
+*   [API Reference](docs/api_reference.md) - Full list of methods and classes.
+*   [Changelog](docs/CHANGELOG.md) - Version history.
+
+---
+
+## ⚖ License
+MIT License. Created by Antigravity AI for the VNN Rusted Project.

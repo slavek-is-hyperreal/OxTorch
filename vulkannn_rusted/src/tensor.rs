@@ -42,6 +42,11 @@ impl Tensor {
     #[staticmethod]
     fn from_ssd(path: &str, shape: Vec<usize>) -> PyResult<Self> {
         let file = std::fs::File::open(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let metadata = file.metadata().map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let expected_size = shape.iter().product::<usize>() * 4;
+        if metadata.len() < expected_size as u64 {
+            return Err(PyValueError::new_err(format!("File size mismatch: expected at least {} bytes, found {}", expected_size, metadata.len())));
+        }
         let mmap = unsafe { memmap2::MmapOptions::new().map(&file).map_err(|e| PyValueError::new_err(e.to_string()))? };
         #[cfg(target_os = "linux")] unsafe { libc::madvise(mmap.as_ptr() as *mut libc::c_void, mmap.len(), libc::MADV_SEQUENTIAL); }
         Ok(Tensor { shape, device: "ssd".to_string(), name: "SSDMapped".to_string(), cpu_data: Vec::new(), mmap_data: Some(MmapType::ReadOnly(std::sync::Arc::new(mmap))) })
@@ -191,12 +196,17 @@ impl Tensor {
                 let tile = 1024 * 1024 / 4;
                 out.par_chunks_mut(tile).enumerate().for_each(|(idx, chunk)| {
                     let s = idx * tile;
-                    let isub = &i_s[s..s+chunk.len()];
-                    match op {
-                        "relu" => for k in 0..chunk.len() { chunk[k] = if isub[k] > 0.0 { isub[k] } else { 0.0 }; },
-                        "sigmoid" => for k in 0..chunk.len() { chunk[k] = 1.0 / (1.0 + (-isub[k]).exp()); },
-                        "silu" => for k in 0..chunk.len() { chunk[k] = isub[k] * (1.0 / (1.0 + (-isub[k]).exp())); },
-                        _ => {}
+                    let end = std::cmp::min(s + chunk.len(), i_s.len());
+                    if s < end {
+                        let isub = &i_s[s..end];
+                        // Also make sure chunk and isub have same length to avoid panic later
+                        let process_len = std::cmp::min(chunk.len(), isub.len());
+                        match op {
+                            "relu" => for k in 0..process_len { chunk[k] = if isub[k] > 0.0 { isub[k] } else { 0.0 }; },
+                            "sigmoid" => for k in 0..process_len { chunk[k] = 1.0 / (1.0 + (-isub[k]).exp()); },
+                            "silu" => for k in 0..process_len { chunk[k] = isub[k] * (1.0 / (1.0 + (-isub[k]).exp())); },
+                            _ => {}
+                        }
                     }
                 });
             }
