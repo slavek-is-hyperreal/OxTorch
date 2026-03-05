@@ -8,6 +8,7 @@ VNN (VulkanNN) has achieved 100% PyTorch parity and established an unparalleled 
 - **Async 3-Stage Pipeline (v2.8)**: Triple-buffering system in `backend.rs` that overlaps I/O with compute.
 - **CPU Superiority (v2.8)**: Achieved lower latency than PyTorch CPU in core MatMul/ReLU operations via Rayon and `matrixmultiply`.
 - **Gemma 2B & 3 4B Support**: Verified engine performance on state-of-the-art weights.
+- **Native FP16/BF16 Engine (v3.0)**: Switched to native Rust data types (`half::f16`, `half::bf16`) and established high-performance MatMul baselines.
 
 ### 🛠️ In-Progress: The "Commodity Survival" Strategy
 Current development is focused on pushing the limits of native Rust implementation:
@@ -21,6 +22,9 @@ Current development is focused on pushing the limits of native Rust implementati
    - Full support for GGUF headers and block-structured memory mapping in Rust.
 4. **Asymmetric Speculative Decoding**
    - Implement a 2-engine pipeline where a tiny "Draft" model validates tokens locally in VRAM while the "Primary" weights stream from SSD.
+5. **Full BF16 Support & Advanced Optimizations (v3.1)**
+   - Native `bf16` support for high-precision model weights (Gemma series).
+   - Optimized CPU kernels for FP16/BF16 with F32 intermediate accumulation for numerical stability.
 
 ### 🚀 Long-Term (Expansion)
 1. **Multi-Precision Core (FP16/INT8/INT4)**

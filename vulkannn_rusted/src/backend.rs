@@ -2,7 +2,7 @@ use std::sync::{OnceLock, Mutex};
 use rayon::prelude::*;
 use wgpu::{Device, Queue};
 use crate::tensor::DataType;
-use half::f16;
+use half::{f16, bf16};
 
 pub struct CachedBuffer {
     pub size: wgpu::BufferAddress,
@@ -150,15 +150,20 @@ pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: D
     let queue = &backend.queue;
     
     let (a_f32_backup, b_f32_backup);
-    let (_a_f32, _b_f32) = if dtype == DataType::F16 && !is_hybrid {
-        // GPU F16 Fallback: Convert to F32 for compute
-        a_f32_backup = bytemuck::cast_slice::<u8, half::f16>(a_raw).iter().map(|x| x.to_f32()).collect::<Vec<_>>();
-        b_f32_backup = bytemuck::cast_slice::<u8, half::f16>(b_raw).iter().map(|x| x.to_f32()).collect::<Vec<_>>();
+    let (_a_f32, _b_f32) = if (dtype == DataType::F16 || dtype == DataType::BF16) && !is_hybrid {
+        // GPU Fallback: Convert to F32 for compute
+        if dtype == DataType::F16 {
+            a_f32_backup = bytemuck::cast_slice::<u8, half::f16>(a_raw).iter().map(|x| x.to_f32()).collect::<Vec<_>>();
+            b_f32_backup = bytemuck::cast_slice::<u8, half::f16>(b_raw).iter().map(|x| x.to_f32()).collect::<Vec<_>>();
+        } else {
+            a_f32_backup = bytemuck::cast_slice::<u8, half::bf16>(a_raw).iter().map(|x| x.to_f32()).collect::<Vec<_>>();
+            b_f32_backup = bytemuck::cast_slice::<u8, half::bf16>(b_raw).iter().map(|x| x.to_f32()).collect::<Vec<_>>();
+        }
         (a_f32_backup.as_slice(), b_f32_backup.as_slice())
     } else if dtype == DataType::F32 {
         (bytemuck::cast_slice(a_raw), bytemuck::cast_slice(b_raw))
     } else {
-        // Hybrid F16: Will handle CPU/GPU parts specifically
+        // Hybrid F16/BF16: Handled per-thread below
         (&[][..], &[][..])
     };
 
@@ -184,11 +189,16 @@ pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: D
                     let b_cpu_f32: &[f32] = bytemuck::cast_slice(b_cpu_bytes);
                     let res_cpu_f32: &mut [f32] = bytemuck::cast_slice_mut(res_cpu_bytes);
                     res_cpu_f32.par_iter_mut().zip(a_cpu_f32.par_iter()).zip(b_cpu_f32.par_iter()).for_each(|((c, &a), &b)| *c = a + b);
-                } else {
+                } else if dtype == DataType::F16 {
                     let a_cpu_f16: &[half::f16] = bytemuck::cast_slice(a_cpu_bytes);
                     let b_cpu_f16: &[half::f16] = bytemuck::cast_slice(b_cpu_bytes);
                     let res_cpu_f16: &mut [half::f16] = bytemuck::cast_slice_mut(res_cpu_bytes);
                     res_cpu_f16.par_iter_mut().zip(a_cpu_f16.par_iter()).zip(b_cpu_f16.par_iter()).for_each(|((c, &a), &b)| *c = half::f16::from_f32(a.to_f32() + b.to_f32()));
+                } else {
+                    let a_cpu_bf16: &[half::bf16] = bytemuck::cast_slice(a_cpu_bytes);
+                    let b_cpu_bf16: &[half::bf16] = bytemuck::cast_slice(b_cpu_bytes);
+                    let res_cpu_bf16: &mut [half::bf16] = bytemuck::cast_slice_mut(res_cpu_bytes);
+                    res_cpu_bf16.par_iter_mut().zip(a_cpu_bf16.par_iter()).zip(b_cpu_bf16.par_iter()).for_each(|((c, &a), &b)| *c = half::bf16::from_f32(a.to_f32() + b.to_f32()));
                 }
             });
         }
@@ -199,6 +209,10 @@ pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: D
             let (ag, bg) = if dtype == DataType::F16 {
                 a_gpu_f32 = bytemuck::cast_slice::<u8, half::f16>(a_gpu).iter().map(|x| x.to_f32()).collect::<Vec<_>>();
                 b_gpu_f32 = bytemuck::cast_slice::<u8, half::f16>(b_gpu).iter().map(|x| x.to_f32()).collect::<Vec<_>>();
+                (a_gpu_f32.as_slice(), b_gpu_f32.as_slice())
+            } else if dtype == DataType::BF16 {
+                a_gpu_f32 = bytemuck::cast_slice::<u8, half::bf16>(a_gpu).iter().map(|x| x.to_f32()).collect::<Vec<_>>();
+                b_gpu_f32 = bytemuck::cast_slice::<u8, half::bf16>(b_gpu).iter().map(|x| x.to_f32()).collect::<Vec<_>>();
                 (a_gpu_f32.as_slice(), b_gpu_f32.as_slice())
             } else {
                 (bytemuck::cast_slice(a_gpu), bytemuck::cast_slice(b_gpu))
@@ -282,11 +296,16 @@ pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: D
                 staging_bufs[s_idx].unmap();
             }
             
-            // Final Cast back to F16 if needed
+            // Final Cast back if needed
             if dtype == DataType::F16 {
                 let res_f16 = bytemuck::cast_slice_mut::<u8, f16>(res_gpu);
                 for i in 0..gpu_elements {
                     res_f16[i] = half::f16::from_f32(res_gpu_f32[i]);
+                }
+            } else if dtype == DataType::BF16 {
+                let res_bf16 = bytemuck::cast_slice_mut::<u8, bf16>(res_gpu);
+                for i in 0..gpu_elements {
+                    res_bf16[i] = half::bf16::from_f32(res_gpu_f32[i]);
                 }
             } else {
                 let res_f32 = bytemuck::cast_slice_mut::<u8, f32>(res_gpu);
@@ -318,6 +337,10 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
     let (ag, bg) = if dtype == DataType::F16 {
         a_f32_gpu = bytemuck::cast_slice::<u8, half::f16>(a_raw).iter().map(|x| x.to_f32()).collect();
         b_f32_gpu = bytemuck::cast_slice::<u8, half::f16>(b_raw).iter().map(|x| x.to_f32()).collect();
+        (a_f32_gpu.as_slice(), b_f32_gpu.as_slice())
+    } else if dtype == DataType::BF16 {
+        a_f32_gpu = bytemuck::cast_slice::<u8, half::bf16>(a_raw).iter().map(|x| x.to_f32()).collect();
+        b_f32_gpu = bytemuck::cast_slice::<u8, half::bf16>(b_raw).iter().map(|x| x.to_f32()).collect();
         (a_f32_gpu.as_slice(), b_f32_gpu.as_slice())
     } else {
         (bytemuck::cast_slice(a_raw), bytemuck::cast_slice(b_raw))
@@ -362,29 +385,27 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
                             );
                         }
                     } else {
-                        // Hybrid F16 CPU path using gemm crate (already tested to be fast)
-                        let _a_f16: &[f16] = bytemuck::cast_slice(a_raw);
-                        let _b_f16: &[f16] = bytemuck::cast_slice(b_raw);
+                        // Hybrid F16/BF16 CPU path: Convert to F32 intermediate for stability and avoid library conflicts
                         let a_offset = (m_start * k) as usize;
+                        let a_row_f32: Vec<f32> = if dtype == DataType::F16 {
+                            bytemuck::cast_slice::<u8, half::f16>(&a_raw[a_offset*2 .. (a_offset + (bm*k) as usize)*2]).iter().map(|x| x.to_f32()).collect()
+                        } else {
+                            bytemuck::cast_slice::<u8, half::bf16>(&a_raw[a_offset*2 .. (a_offset + (bm*k) as usize)*2]).iter().map(|x| x.to_f32()).collect()
+                        };
+                        
+                        let b_f32: Vec<f32> = if dtype == DataType::F16 {
+                            bytemuck::cast_slice::<u8, half::f16>(b_raw).iter().map(|x| x.to_f32()).collect()
+                        } else {
+                            bytemuck::cast_slice::<u8, half::bf16>(b_raw).iter().map(|x| x.to_f32()).collect()
+                        };
+
                         unsafe {
-                        // Use a temporary F16 buffer for gemm then cast to F32
-                        let mut temp_res_f16 = vec![gemm::f16::ZERO; bm as usize * n_usize];
-                        let a_ptr = (a_raw.as_ptr() as *const gemm::f16).add(a_offset);
-                        gemm::gemm(
-                            bm as usize, n_usize, k_usize,
-                            temp_res_f16.as_mut_ptr(), n as isize, 1,
-                            false,
-                            a_ptr, k as isize, 1,
-                            b_raw.as_ptr() as *const gemm::f16, n as isize, 1,
-                            gemm::f16::ONE, gemm::f16::ZERO,
-                            false, false, false,
-                            gemm::Parallelism::Rayon(rayon::current_num_threads()),
-                        );
-                        let res_f32_ptr = res_ptr.add(band_offset) as *mut f32;
-                        let temp_res_h16: &[half::f16] = bytemuck::cast_slice(&temp_res_f16);
-                        for i in 0..temp_res_h16.len() {
-                            *res_f32_ptr.add(i) = f32::from(temp_res_h16[i]);
-                        }
+                            matrixmultiply::sgemm(
+                                bm as usize, k_usize, n_usize, 1.0,
+                                a_row_f32.as_ptr(), k as isize, 1,
+                                b_f32.as_ptr(), n as isize, 1, 0.0,
+                                res_ptr.add(band_offset), n as isize, 1,
+                            );
                         }
                     }
                     let done = completed_blocks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -538,6 +559,9 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
     if dtype == DataType::F16 {
         let f16_vec: Vec<f16> = result_f32.iter().map(|&x| f16::from_f32(x)).collect();
         bytemuck::cast_slice(&f16_vec).to_vec()
+    } else if dtype == DataType::BF16 {
+        let bf16_vec: Vec<bf16> = result_f32.iter().map(|&x| bf16::from_f32(x)).collect();
+        bytemuck::cast_slice(&bf16_vec).to_vec()
     } else {
         bytemuck::cast_slice(&result_f32).to_vec()
     }
@@ -568,13 +592,22 @@ pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], d
                 "silu" => r_f32.par_iter_mut().zip(i_f32.par_iter()).for_each(|(o, &i)| *o = i * (1.0 / (1.0 + (-i).exp()))),
                 _ => {}
             }
-        } else {
+        } else if dtype == DataType::F16 {
             let i_f16: &[f16] = bytemuck::cast_slice(input_raw);
             let r_f16: &mut [f16] = bytemuck::cast_slice_mut(res_raw);
             match op {
                 "relu" => r_f16.par_iter_mut().zip(i_f16.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { f16::ZERO }),
                 "sigmoid" => r_f16.par_iter_mut().zip(i_f16.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
                 "silu" => r_f16.par_iter_mut().zip(i_f16.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(i.to_f32() * (1.0 / (1.0 + (-i.to_f32()).exp())))),
+                _ => {}
+            }
+        } else {
+            let i_bf16: &[bf16] = bytemuck::cast_slice(input_raw);
+            let r_bf16: &mut [bf16] = bytemuck::cast_slice_mut(res_raw);
+            match op {
+                "relu" => r_bf16.par_iter_mut().zip(i_bf16.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { bf16::ZERO }),
+                "sigmoid" => r_bf16.par_iter_mut().zip(i_bf16.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
+                "silu" => r_bf16.par_iter_mut().zip(i_bf16.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(i.to_f32() * (1.0 / (1.0 + (-i.to_f32()).exp())))),
                 _ => {}
             }
         }
@@ -604,13 +637,22 @@ pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], d
                         "silu" => r_cpu_f32.par_iter_mut().zip(i_cpu_f32.par_iter()).for_each(|(o, &i)| *o = i * (1.0 / (1.0 + (-i).exp()))),
                         _ => {}
                     }
-                } else {
+                } else if dtype == DataType::F16 {
                     let i_cpu_f16: &[half::f16] = bytemuck::cast_slice(i_cpu_loc);
                     let r_cpu_f16: &mut [half::f16] = bytemuck::cast_slice_mut(res_cpu_loc);
                     match op {
                         "relu" => r_cpu_f16.par_iter_mut().zip(i_cpu_f16.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { half::f16::ZERO }),
                         "sigmoid" => r_cpu_f16.par_iter_mut().zip(i_cpu_f16.par_iter()).for_each(|(o, &i)| *o = half::f16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
                         "silu" => r_cpu_f16.par_iter_mut().zip(i_cpu_f16.par_iter()).for_each(|(o, &i)| *o = half::f16::from_f32(i.to_f32() * (1.0 / (1.0 + (-i.to_f32()).exp())))),
+                        _ => {}
+                    }
+                } else {
+                    let i_cpu_bf16: &[half::bf16] = bytemuck::cast_slice(i_cpu_loc);
+                    let r_cpu_bf16: &mut [half::bf16] = bytemuck::cast_slice_mut(res_cpu_loc);
+                    match op {
+                        "relu" => r_cpu_bf16.par_iter_mut().zip(i_cpu_bf16.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { half::bf16::ZERO }),
+                        "sigmoid" => r_cpu_bf16.par_iter_mut().zip(i_cpu_bf16.par_iter()).for_each(|(o, &i)| *o = half::bf16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
+                        "silu" => r_cpu_bf16.par_iter_mut().zip(i_cpu_bf16.par_iter()).for_each(|(o, &i)| *o = half::bf16::from_f32(i.to_f32() * (1.0 / (1.0 + (-i.to_f32()).exp())))),
                         _ => {}
                     }
                 }
@@ -621,6 +663,8 @@ pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], d
             // GPU Fallback to F32
             let i_gpu_f32 = if dtype == DataType::F16 {
                 bytemuck::cast_slice::<u8, f16>(i_gpu).iter().map(|&x| x.to_f32()).collect::<Vec<f32>>()
+            } else if dtype == DataType::BF16 {
+                bytemuck::cast_slice::<u8, bf16>(i_gpu).iter().map(|&x| x.to_f32()).collect::<Vec<f32>>()
             } else {
                 bytemuck::cast_slice::<u8, f32>(i_gpu).to_vec()
             };
@@ -685,6 +729,9 @@ pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], d
             if dtype == DataType::F16 {
                 let r_f16 = bytemuck::cast_slice_mut::<u8, f16>(res_gpu);
                 for i in 0..gpu_elements { r_f16[i] = f16::from_f32(r_gpu_f32[i]); }
+            } else if dtype == DataType::BF16 {
+                let r_bf16 = bytemuck::cast_slice_mut::<u8, bf16>(res_gpu);
+                for i in 0..gpu_elements { r_bf16[i] = bf16::from_f32(r_gpu_f32[i]); }
             } else {
                 let r_f32 = bytemuck::cast_slice_mut::<u8, f32>(res_gpu);
                 r_f32[..gpu_elements].copy_from_slice(&r_gpu_f32);

@@ -35,15 +35,24 @@ def check_parity(vnn_tensor, torch_tensor, name, atol=1e-3):
         return False, np.max(diff)
 
 def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype="f32"):
-    vnn_dtype = vnn.DataType.F32 if dtype == "f32" else vnn.DataType.F16
-    torch_dtype = torch.float32 if dtype == "f32" else torch.float16
+    if dtype == "f32":
+        vnn_dtype = vnn.DataType.F32
+        torch_dtype = torch.float32
+    elif dtype == "f16":
+        vnn_dtype = vnn.DataType.F16
+        torch_dtype = torch.float16
+    elif dtype == "bf16":
+        vnn_dtype = vnn.DataType.BF16
+        torch_dtype = torch.bfloat16
+    else:
+        raise ValueError(f"Unsupported dtype: {dtype}")
     
     if iterations is None:
         size_elements = np.prod(shape)
         if is_ssd or size_elements > 5e7: iterations = 1
         elif size_elements > 5e6: iterations = 5
-        elif dtype == "f16" and mode == "cpu" and op == "MatMul": iterations = 1 # PyTorch is 200x slower here!
-        else: iterations = 10 if dtype == "f16" else 20
+        elif (dtype == "f16" or dtype == "bf16") and mode == "cpu" and op == "MatMul": iterations = 1 # PyTorch is 200x slower here!
+        else: iterations = 10 if dtype in ["f16", "bf16"] else 20
         
     print(f"\n>>> TEST: {name} ({mode.upper()}, {dtype.upper()}) | Shape: {shape} | SSD: {is_ssd} | Iter: {iterations}")
     
@@ -108,12 +117,12 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
 
 if __name__ == "__main__":
     print("="*60)
-    print(" VNN RUSTED SAFETY NET: DUAL-PRECISION AUDIT v3.0")
+    print(" VNN RUSTED SAFETY NET: TRI-PRECISION AUDIT v3.1")
     print("="*60)
     
     results = []
     
-    for dtype in ["f32", "f16"]:
+    for dtype in ["f32", "f16", "bf16"]:
         print(f"\n{'#'*20} PHASE: {dtype.upper()} {'#'*20}")
         # --- RAM-RESIDENT PARITY ---
         for mode in ["cpu", "vulkan", "hybrid"]:
@@ -126,7 +135,7 @@ if __name__ == "__main__":
             results.append((f"ReLU {dtype} ({mode})", pt, v_t, ok))
 
         # --- SPEED SUPREMACY (Large RAM) ---
-        if dtype == "f16":
+        if dtype in ["f16", "bf16"]:
              pt, v_t, ok = run_bench(f"MatMul_{dtype}_CPU_Huge", "MatMul", (4096, 4096), mode="cpu", dtype=dtype)
              results.append((f"MatMul {dtype} Huge CPU", pt, v_t, ok))
         else:
@@ -156,7 +165,7 @@ if __name__ == "__main__":
     if failed:
         print("\n⚠️  WARNING: Some parity tests failed! Check numerical differences.")
     else:
-        print("\n✨ ALL CORE SYSTEMS OPERATIONAL: F32/F16 Parity and Speed Verified.")
+        print("\n✨ ALL CORE SYSTEMS OPERATIONAL: F32/F16/BF16 Parity and Speed Verified.")
     print("="*80)
 
     # --- REGRESSION MONITORING ---

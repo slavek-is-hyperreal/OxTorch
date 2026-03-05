@@ -3,7 +3,7 @@ use pyo3::exceptions::PyValueError;
 use numpy::{IntoPyArray, PyReadonlyArrayDyn, ToPyArray};
 use numpy::ndarray::Array;
 use rayon::prelude::*;
-use half::f16;
+use half::{f16, bf16};
 
 #[derive(Clone)]
 pub enum MmapType {
@@ -16,12 +16,14 @@ pub enum MmapType {
 pub enum DataType {
     F32,
     F16,
+    BF16,
 }
 
 #[derive(Clone)]
 pub enum Storage {
     F32(Vec<f32>),
     F16(Vec<half::f16>),
+    BF16(Vec<half::bf16>),
     None,
 }
 
@@ -57,6 +59,10 @@ impl Tensor {
                     let f16_vec = vec.par_iter().map(|&x| half::f16::from_f32(x)).collect();
                     (Storage::F16(f16_vec), nd_arr.shape().to_vec())
                 },
+                DataType::BF16 => {
+                    let bf16_vec = vec.par_iter().map(|&x| half::bf16::from_f32(x)).collect();
+                    (Storage::BF16(bf16_vec), nd_arr.shape().to_vec())
+                }
             };
             (storage, final_shape)
         } else if let Some(s) = shape {
@@ -64,6 +70,7 @@ impl Tensor {
             match dtype {
                 DataType::F32 => (Storage::F32(vec![0.0; size]), s),
                 DataType::F16 => (Storage::F16(vec![half::f16::ZERO; size]), s),
+                DataType::BF16 => (Storage::BF16(vec![half::bf16::ZERO; size]), s),
             }
         } else {
             return Err(PyValueError::new_err("Must provide either data or shape"));
@@ -76,7 +83,7 @@ impl Tensor {
     fn from_ssd(path: &str, shape: Vec<usize>, dtype: DataType) -> PyResult<Self> {
         let file = std::fs::File::open(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let metadata = file.metadata().map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let bytes_per_elem = match dtype { DataType::F32 => 4, DataType::F16 => 2 };
+        let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
         let expected_size = shape.iter().product::<usize>() * bytes_per_elem;
         if metadata.len() < expected_size as u64 {
             return Err(PyValueError::new_err(format!("File size mismatch: expected at least {} bytes, found {}", expected_size, metadata.len())));
@@ -90,7 +97,7 @@ impl Tensor {
     #[pyo3(signature = (path, shape, dtype=DataType::F32))]
     fn new_ssd(path: &str, shape: Vec<usize>, dtype: DataType) -> PyResult<Self> {
         let size = shape.iter().product::<usize>();
-        let bytes_per_elem = match dtype { DataType::F32 => 4, DataType::F16 => 2 };
+        let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
         let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
         file.set_len((size * bytes_per_elem) as u64).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let mmap = unsafe { memmap2::MmapOptions::new().map_mut(&file).map_err(|e| PyValueError::new_err(e.to_string()))? };
@@ -107,6 +114,10 @@ impl Tensor {
             DataType::F16 => {
                 let (slice, _) = self.get_slice_raw_f16();
                 slice.par_iter().map(|&x| f32::from(x)).collect()
+            },
+            DataType::BF16 => {
+                let (slice, _) = self.get_slice_raw_bf16();
+                slice.par_iter().map(|&x| f32::from(x)).collect()
             }
         };
         Ok(Array::from_shape_vec(self.shape.clone(), vec).map_err(|e| PyValueError::new_err(e.to_string()))?.into_pyarray_bound(py))
@@ -120,8 +131,8 @@ impl Tensor {
                 let array = unsafe { numpy::ndarray::ArrayViewD::from_shape_ptr(shape, slice.as_ptr()) };
                 Ok((array.to_pyarray_bound(py), is_ssd))
             },
-            DataType::F16 => {
-                // Cannot do no-copy view of F16 as F32. Fallback to copy.
+            DataType::F16 | DataType::BF16 => {
+                // Cannot do no-copy view of F16/BF16 as F32. Fallback to copy.
                 let arr = self.to_numpy(py)?;
                 Ok((arr, false))
             }
@@ -140,12 +151,20 @@ impl Tensor {
                 let mut res = vec![0.0; a.len()];
                 res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = a + b);
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "AddRes".to_string(), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(res), mmap_data: None })
-            } else {
+            } else if self.dtype == DataType::F16 {
                 let (a, _) = self.get_slice_raw_f16();
                 let (b, _) = other.get_slice_raw_f16();
                 let mut res = vec![f16::ZERO; a.len()];
                 res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = f16::from_f32(a.to_f32() + b.to_f32()));
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "AddRes".to_string(), is_transposed: false, dtype: DataType::F16, storage: Storage::F16(res), mmap_data: None })
+            } else if self.dtype == DataType::BF16 {
+                let (a, _) = self.get_slice_raw_bf16();
+                let (b, _) = other.get_slice_raw_bf16();
+                let mut res = vec![bf16::ZERO; a.len()];
+                res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = bf16::from_f32(a.to_f32() + b.to_f32()));
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "AddRes".to_string(), is_transposed: false, dtype: DataType::BF16, storage: Storage::BF16(res), mmap_data: None })
+            } else {
+                return Err(PyValueError::new_err("Unsupported DataType for CPU Add"));
             }
         } else {
             let (a_raw, _) = self.get_slice_raw_bytes();
@@ -153,6 +172,8 @@ impl Tensor {
             let res_raw = crate::backend::execute_add(a_raw, b_raw, self.dtype, self.device == "hybrid");
             let storage = if self.dtype == DataType::F16 {
                 Storage::F16(bytemuck::cast_slice(&res_raw).to_vec())
+            } else if self.dtype == DataType::BF16 {
+                Storage::BF16(bytemuck::cast_slice(&res_raw).to_vec())
             } else {
                 Storage::F32(bytemuck::cast_slice(&res_raw).to_vec())
             };
@@ -173,6 +194,13 @@ impl Tensor {
                     let (a, _) = self.get_slice_raw_f16();
                     let (b, _) = other.get_slice_raw_f16();
                     out_slice.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &av), &bv)| *c = half::f16::from_f32(av.to_f32() + bv.to_f32()));
+                    Ok(())
+                }
+                DataType::BF16 => {
+                    let (out_slice, _) = out.get_slice_raw_mut_bf16();
+                    let (a, _) = self.get_slice_raw_bf16();
+                    let (b, _) = other.get_slice_raw_bf16();
+                    out_slice.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &av), &bv)| *c = half::bf16::from_f32(av.to_f32() + bv.to_f32()));
                     Ok(())
                 }
             }
@@ -207,6 +235,15 @@ impl Tensor {
                     }
                     Ok(())
                 }
+                DataType::BF16 => {
+                    let (out_slice, _) = out.get_slice_raw_mut_bf16();
+                    let (i_s, _) = self.get_slice_raw_bf16();
+                    match op {
+                        "relu" => out_slice.par_iter_mut().zip(i_s.par_iter()).for_each(|(o, &i)| *o = if i > half::bf16::ZERO { i } else { half::bf16::ZERO }),
+                        _ => panic!("Unsupported BF16 CPU op into: {}", op),
+                    }
+                    Ok(())
+                }
             }
         } else {
             let (input_raw, _) = self.get_slice_raw_bytes();
@@ -235,7 +272,7 @@ impl Tensor {
             let dtype = self.dtype;
             crate::streaming::init_budgets();
             let safe_ram = crate::streaming::BUDGETS.get().unwrap().lock().unwrap().l2_ram_max_bytes;
-            let bytes_per_elem = match dtype { DataType::F32 => 4, DataType::F16 => 2 };
+            let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
             let sz = (m*k + k*n + m*n) * bytes_per_elem;
 
             let storage = if sz < safe_ram {
@@ -253,6 +290,7 @@ impl Tensor {
                         }
                         Storage::F32(out)
                     },
+                    DataType::F16 => {
                         let mut out = vec![half::f16::ZERO; m * n];
                         let (a, a_ssd) = self.get_slice_raw_f16();
                         let (b, b_ssd) = other.get_slice_raw_f16();
@@ -265,6 +303,17 @@ impl Tensor {
                         out.par_iter_mut().zip(res_f32.par_iter()).for_each(|(o, &x)| *o = half::f16::from_f32(x));
                         Storage::F16(out)
                     },
+                    DataType::BF16 => {
+                        let mut out = vec![half::bf16::ZERO; m * n];
+                        let (a, _) = self.get_slice_raw_bf16();
+                        let (b, _) = other.get_slice_raw_bf16();
+                        let a_f32: Vec<f32> = a.par_iter().map(|&x| f32::from(x)).collect();
+                        let b_f32: Vec<f32> = b.par_iter().map(|&x| f32::from(x)).collect();
+                        let mut res_f32 = vec![0.0; m * n];
+                        self.cpu_sgemm_f32(&a_f32, &b_f32, &mut res_f32, m, k, n, rsa, csa, rsb, csb);
+                        out.par_iter_mut().zip(res_f32.par_iter()).for_each(|(o, &x)| *o = half::bf16::from_f32(x));
+                        Storage::BF16(out)
+                    },
                 }
             } else {
                 match dtype {
@@ -275,23 +324,38 @@ impl Tensor {
                         self.cpu_sgemm_streamed_f32(a, b, &mut out, m, k, n, rsa, csa, rsb, csb);
                         Storage::F32(out)
                     },
-                    DataType::F16 => {
-                        let mut out = vec![half::f16::ZERO; m * n];
-                        let (a, _) = self.get_slice_raw_f16();
-                        let (b, _) = other.get_slice_raw_f16();
-                        unsafe {
-                            gemm::gemm::<gemm::f16>(
-                                m, n, k,
-                                out.as_mut_ptr() as *mut gemm::f16, n as isize, 1,
-                                false,
-                                a.as_ptr() as *const gemm::f16, rsa, csa,
-                                b.as_ptr() as *const gemm::f16, rsb, csb,
-                                gemm::f16::from_f32(1.0), gemm::f16::from_f32(0.0),
-                                false, false, false,
-                                gemm::Parallelism::Rayon(rayon::current_num_threads()),
-                            );
+                    DataType::F16 | DataType::BF16 => {
+                        let is_f16 = dtype == DataType::F16;
+                        let mut out_bytes = vec![0u8; m * n * 2];
+                        let (a_bytes, _) = self.get_slice_raw_bytes();
+                        let (b_bytes, _) = other.get_slice_raw_bytes();
+                        
+                        // Streamed F16/BF16: For now fallback to F32 via streaming then convert back
+                        // Optimizing this for streaming BF16 next.
+                        let mut res_f32 = vec![0.0; m * n];
+                        let (a_f32, b_f32) = if is_f16 {
+                            let a_f16: &[half::f16] = bytemuck::cast_slice(a_bytes);
+                            let b_f16: &[half::f16] = bytemuck::cast_slice(b_bytes);
+                            (a_f16.par_iter().map(|&x| x.to_f32()).collect::<Vec<_>>(),
+                             b_f16.par_iter().map(|&x| x.to_f32()).collect::<Vec<_>>())
+                        } else {
+                            let a_bf16: &[half::bf16] = bytemuck::cast_slice(a_bytes);
+                            let b_bf16: &[half::bf16] = bytemuck::cast_slice(b_bytes);
+                            (a_bf16.par_iter().map(|&x| x.to_f32()).collect::<Vec<_>>(),
+                             b_bf16.par_iter().map(|&x| x.to_f32()).collect::<Vec<_>>())
+                        };
+                        
+                        self.cpu_sgemm_streamed_f32(&a_f32, &b_f32, &mut res_f32, m, k, n, rsa, csa, rsb, csb);
+                        
+                        if is_f16 {
+                            let out_f16: &mut [half::f16] = bytemuck::cast_slice_mut(&mut out_bytes);
+                            out_f16.par_iter_mut().zip(res_f32.par_iter()).for_each(|(o, &x)| *o = half::f16::from_f32(x));
+                            Storage::F16(out_f16.to_vec())
+                        } else {
+                            let out_bf16: &mut [half::bf16] = bytemuck::cast_slice_mut(&mut out_bytes);
+                            out_bf16.par_iter_mut().zip(res_f32.par_iter()).for_each(|(o, &x)| *o = half::bf16::from_f32(x));
+                            Storage::BF16(out_bf16.to_vec())
                         }
-                        Storage::F16(out)
                     }
                 }
             };
@@ -370,6 +434,7 @@ impl Tensor {
         match &self.storage {
             Storage::F32(v) => (bytemuck::cast_slice(v), false),
             Storage::F16(v) => (bytemuck::cast_slice(v), false),
+            Storage::BF16(v) => (bytemuck::cast_slice(v), false),
             Storage::None => {
                 if let Some(m) = &self.mmap_data {
                     match m {
@@ -413,10 +478,26 @@ impl Tensor {
         }
     }
 
+    fn get_slice_raw_bf16(&self) -> (&[half::bf16], bool) {
+        match &self.storage {
+            Storage::BF16(v) => (v, false),
+            Storage::None => {
+                if let Some(mmap) = &self.mmap_data {
+                    match mmap {
+                        MmapType::ReadOnly(m) => (unsafe { std::slice::from_raw_parts(m.as_ptr() as *const half::bf16, m.len()/2) }, true),
+                        MmapType::ReadWrite(m) => (unsafe { std::slice::from_raw_parts(m.as_ptr() as *const half::bf16, m.len()/2) }, true),
+                    }
+                } else { (&[], false) }
+            },
+            _ => (&[], false),
+        }
+    }
+
     pub fn get_slice_raw_mut_bytes(&mut self) -> (&mut [u8], bool) {
         match &mut self.storage {
             Storage::F32(v) => (bytemuck::cast_slice_mut(v), false),
             Storage::F16(v) => (bytemuck::cast_slice_mut(v), false),
+            Storage::BF16(v) => (bytemuck::cast_slice_mut(v), false),
             Storage::None => {
                 if let Some(mmap) = &mut self.mmap_data {
                     match mmap {
@@ -447,9 +528,24 @@ impl Tensor {
         match &mut self.storage {
             Storage::F16(v) => (v, false),
             Storage::None => {
-                if let Some(mmap) = &self.mmap_data {
+                if let Some(mmap) = &mut self.mmap_data {
                     match mmap {
                         MmapType::ReadWrite(m) => (unsafe { std::slice::from_raw_parts_mut(m.as_ptr() as *mut half::f16, m.len()/2) }, true),
+                        MmapType::ReadOnly(_) => panic!("Modify ReadOnly SSD!"),
+                    }
+                } else { panic!("No data") }
+            },
+            _ => panic!("Wrong DType"),
+        }
+    }
+
+    fn get_slice_raw_mut_bf16(&mut self) -> (&mut [half::bf16], bool) {
+        match &mut self.storage {
+            Storage::BF16(v) => (v, false),
+            Storage::None => {
+                if let Some(mmap) = &mut self.mmap_data {
+                    match mmap {
+                        MmapType::ReadWrite(m) => (unsafe { std::slice::from_raw_parts_mut(m.as_ptr() as *mut half::bf16, m.len()/2) }, true),
                         MmapType::ReadOnly(_) => panic!("Modify ReadOnly SSD!"),
                     }
                 } else { panic!("No data") }
