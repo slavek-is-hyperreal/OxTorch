@@ -21,6 +21,7 @@ fn vulkannn_rusted(m: &Bound<'_, PyModule>) -> PyResult<()> {
     streaming::init_prefetcher();
 
     m.add_function(wrap_pyfunction!(rust_greeting, m)?)?;
+    m.add_class::<tensor::DataType>()?;
     m.add_class::<tensor::Tensor>()?;
     Ok(())
 }

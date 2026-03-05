@@ -23,9 +23,14 @@ Current development is focused on pushing the limits of native Rust implementati
    - Implement a 2-engine pipeline where a tiny "Draft" model validates tokens locally in VRAM while the "Primary" weights stream from SSD.
 
 ### 🚀 Long-Term (Expansion)
-- **Native INT4/INT8 Quantization**: On-the-fly decompression inside WGSL shader registers.
-- **Distributed VNN**: Parallelization across networked systems via gRPC tunnels built into `vulkannn_rusted`.
-- **ONNX Integration**: Universal model translation into VNN native format.
+1. **Multi-Precision Core (FP16/INT8/INT4)**
+   - Implement FP16/BF16 kernels for 2x speedup on compatible hardware.
+   - Native INT8/INT4 quantization with on-the-fly decompression inside WGSL shader registers (Ghost Quantization).
+   - Aim for 4-bit support similar to PyTorch's `bitsandbytes` (NF4) but optimized for SSD streaming.
+2. **Distributed VNN**
+   - Parallelization across networked systems via gRPC tunnels built into `vulkannn_rusted`.
+3. **ONNX/GGUF Native Support**
+   - Universal model translation into VNN native format.
 
 ## 🛠️ The "Low-Hardware" Dream
 Our ultimate goal is to enable **Llama-3 (70B) inference on systems with 4-8GB RAM & GPU** at interactive latencies by combining SSD DMA saturation with speculative draft validation.

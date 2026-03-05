@@ -1,11 +1,11 @@
 {
-    "MatMul 2k (cpu)": 0.9320704683783148,
-    "ReLU 1M (cpu)": 0.9708869098210547,
-    "MatMul 2k (vulkan)": 0.48853589007233766,
-    "ReLU 1M (vulkan)": 1.2366289757398268,
-    "MatMul 2k (hybrid)": 0.467354608248467,
-    "ReLU 1M (hybrid)": 0.9798022562320169,
-    "MatMul 1x10k (Tiling)": 7.610562643775724,
-    "MatMul 10k CPU Speed": 0.959395064802041,
+    "MatMul 2k (cpu)": 0.8791190604416822,
+    "ReLU 1M (cpu)": 0.5963830708059463,
+    "MatMul 2k (vulkan)": 0.3874779717924341,
+    "ReLU 1M (vulkan)": 0.35090326842007546,
+    "MatMul 2k (hybrid)": 0.4276354931590485,
+    "ReLU 1M (hybrid)": 0.4024969083339201,
+    "MatMul 1x10k (Tiling)": 6.242044871251628,
+    "MatMul 10k CPU Speed": 0.8673446459119633,
     "Monster ReLU 16GB SSD": 0
 }
