@@ -12,8 +12,8 @@ VNN (VulkanNN) has achieved 100% PyTorch parity and established an unparalleled 
 ### 🛠️ In-Progress: The "Iron Age" Stability
 Current development is focused on pushing the limits of the native Rust implementation:
 
-1.  **Overnight Stress Testing (5000+ Iterations)**
-    - Long-form validation to verify SSD aging and thermal clock-down behavior.
+1.  **Long-Term Stress Testing (5000+ Iterations)**
+    - Long-term test validation to verify SSD aging and thermal clock-down behavior.
 2.  **Gemma 3n (MatFormer) Support**
     - Implement `Tensor::slice()` and `Tensor::view()` to support "Elastic Inference".
 3.  **PagedAttention inside WGPU (Rust Porting)**

@@ -31,7 +31,7 @@ VNN Rusted uses adaptive tiling to maximize bandwidth on mid-range GPUs (e.g., 2
 
 ---
 
-## 4. Maximizing Throughput (The "Slavek" Method)
+## 4. Maximizing Throughput (Hardware Saturation Method)
 1.  **Close the Browser**: While VNN is resilient, heavy browser activity increases `StdDev` on CPU tasks.
 2.  **Use `device="hybrid"`**: This saturates all CPU cores via Rayon (`src/tensor.rs:631`) while the GPU handles heavy SGEMM tiles via `wgpu` (`src/backend.rs:429`).
 3.  **SSD Direct Streaming**: Always use `Tensor.from_ssd`. This uses the Linux kernel's DMA prefetching (`src/tensor.rs:92`) to stream weights directly into the computation pipeline, effectively turning your SSD into an L3 Cache.

@@ -11,12 +11,11 @@ A high-performance, Rust-powered tensor engine designed for extreme memory effic
 
 ## 🏗 Why VulkanNN Rusted?
 
-*   **⚡ Tri-Precision Engine**: Native support for **F32**, **F16 (Half)**, and **BF16 (Brain-Float)** with optimized CPU/GPU kernels.
-*   **🚀 Faster than PyTorch**: Up to **700x speedup** on BF16 MatMul using specialized Radeon R7 kernels (VNN: 0.13s vs PT: 39s).
-*   **🧠 LLM Specialist**: Optimized for Gemma 2B and Gemma 3 4B on mid-range consumer hardware.
-*   **💾 SSD-as-RAM (L3 Cache)**: Map 16GB+ weights directly via `memmap2` with high-bandwidth hardware prefetching.
-*   **🛡 Statistical Safety Net**: Built-in 10-run audit with Median, Mean, and StdDev metrics to ensure stable deployment.
-*   **⌚ Total Session Tracking**: Record entire benchmark duration to analyze long-term hardware thermal behavior.
+*   **Tri-Precision Engine**: Native support for **F32**, **F16 (Half)**, and **BF16 (Brain-Float)** with optimized CPU/GPU kernels.
+*   **Faster than PyTorch**: Up to **700x speedup** on BF16 MatMul using specialized Radeon R7 kernels (VNN: 0.13s vs PT: 39s).
+*   **SSD-as-RAM (L3 Cache)**: Map 16GB+ weights directly via `memmap2` with high-bandwidth hardware prefetching.
+*   **Statistical Safety Net**: Built-in 10-run audit with Median, Mean, and StdDev metrics to ensure stable deployment.
+*   **Total Session Tracking**: Record entire benchmark duration to analyze long-term hardware thermal behavior.
 
 ---
 
