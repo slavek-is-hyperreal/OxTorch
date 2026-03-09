@@ -292,8 +292,8 @@ impl Tensor {
                     },
                     DataType::F16 => {
                         let mut out = vec![half::f16::ZERO; m * n];
-                        let (a, a_ssd) = self.get_slice_raw_f16();
-                        let (b, b_ssd) = other.get_slice_raw_f16();
+                        let (a, _a_ssd) = self.get_slice_raw_f16();
+                        let (b, _b_ssd) = other.get_slice_raw_f16();
                         let a_f32: Vec<f32> = a.par_iter().map(|&x| f32::from(x)).collect();
                         let b_f32: Vec<f32> = b.par_iter().map(|&x| f32::from(x)).collect();
                         let mut res_f32 = vec![0.0; m * n];
@@ -366,6 +366,8 @@ impl Tensor {
             let res_raw = crate::backend::execute_matmul(a_raw, b_raw, m as u32, k as u32, n as u32, self.dtype, self.device == "hybrid");
             let storage = if self.dtype == DataType::F16 {
                 Storage::F16(bytemuck::cast_slice(&res_raw).to_vec())
+            } else if self.dtype == DataType::BF16 {
+                Storage::BF16(bytemuck::cast_slice(&res_raw).to_vec())
             } else {
                 Storage::F32(bytemuck::cast_slice(&res_raw).to_vec())
             };
@@ -409,7 +411,7 @@ impl Tensor {
                 let mut res = vec![0.0; input.len()];
                 Self::act_into_raw_f32(input, op, &mut res)?;
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(res), mmap_data: None })
-            } else {
+            } else if self.dtype == DataType::F16 {
                 let (input, _) = self.get_slice_raw_f16();
                 let mut res = vec![f16::ZERO; input.len()];
                 match op {
@@ -417,12 +419,24 @@ impl Tensor {
                     _ => panic!("Unsupported F16 CPU op: {}", op),
                 }
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F16, storage: Storage::F16(res), mmap_data: None })
+            } else if self.dtype == DataType::BF16 {
+                let (input, _) = self.get_slice_raw_bf16();
+                let mut res = vec![bf16::ZERO; input.len()];
+                match op {
+                    "relu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { bf16::ZERO }),
+                    _ => panic!("Unsupported BF16 CPU op: {}", op),
+                }
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::BF16, storage: Storage::BF16(res), mmap_data: None })
+            } else {
+                return Err(PyValueError::new_err("Unsupported DataType for CPU Unary Op"));
             }
         } else {
             let (input_raw, _) = self.get_slice_raw_bytes();
             let res_raw = crate::backend::execute_activation(input_raw, op, self.dtype, self.device == "hybrid");
             let storage = if self.dtype == DataType::F16 {
                 Storage::F16(bytemuck::cast_slice(&res_raw).to_vec())
+            } else if self.dtype == DataType::BF16 {
+                Storage::BF16(bytemuck::cast_slice(&res_raw).to_vec())
             } else {
                 Storage::F32(bytemuck::cast_slice(&res_raw).to_vec())
             };
@@ -602,16 +616,6 @@ impl Tensor {
 
     fn par_copy_f32(&self, src: &[f32]) -> Vec<f32> {
         let mut dst = vec![0.0; src.len()];
-        dst.par_chunks_mut(1024*1024).enumerate().for_each(|(i, c)| {
-            let s = i * 1024 * 1024;
-            let end = std::cmp::min(s + c.len(), src.len());
-            if s < end { c.copy_from_slice(&src[s..end]); }
-        });
-        dst
-    }
-
-    fn par_copy_f16(&self, src: &[half::f16]) -> Vec<half::f16> {
-        let mut dst = vec![half::f16::ZERO; src.len()];
         dst.par_chunks_mut(1024*1024).enumerate().for_each(|(i, c)| {
             let s = i * 1024 * 1024;
             let end = std::cmp::min(s + c.len(), src.len());

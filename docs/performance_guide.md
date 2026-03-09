@@ -1,39 +1,42 @@
-# ⚡ Performance & Stability Guide (v2.9.0)
+# ⚡ Performance & Stability Guide (v3.2.0 "Valkyrie")
 
-This guide explains how to interpret benchmarks and maximize the throughput of VNN Rusted.
-
----
-
-## 1. The Ratio Metric (VNN/PyTorch)
-Because operating systems have background processes (Antigravity, browser, system updates), absolute execution time (s) is a "dirty" metric.
-*   **VNN Ratio < 1.0**: VNN is faster than PyTorch.
-*   **VNN Ratio > 1.0**: PyTorch is faster.
-*   **Stability**: If both VNN and PyTorch slow down together, the Ratio remains stable. This is our primary way to track algorithmic efficiency.
+This guide explains how to interpret the Valkyrie Statistical Audit and maximize the throughput of VNN Rusted.
 
 ---
 
-## 2. Performance Stability Law
-Observed in v2.9.0 benchmarks:
-1.  **Ultra-Short Tasks (<5ms)**: High Coefficient of Variation (**CV ~40%**). These are dominated by Python overhead and OS context switching.
-2.  **Medium Tasks (~100ms)**: **CV ~5-10%**. Dominated by GPU driver initialization and command submission.
-3.  **Heavy Tasks (>10s)**: **CV < 1%**. These represent true algorithmic potential. At this scale, system noise is negligible.
+## 1. The Statistical Guard
+Starting with v3.2.0, VNN uses multiple benchmark runs (`--runs N`) to filter out system noise (e.g., Anti-Gravity activity, browser tab rendering).
+
+1.  **PT/VNN (Median)**: The primary metric. The median is robust against "spikes" caused by background OS processes.
+2.  **StdDev (Standard Deviation)**: A measure of stability.
+    - **< 5ms**: Excellent thermal stability.
+    - **> 50ms**: Likely indicates **Thermal Throttling** or high background CPU contention.
+3.  **Ratio (VNN/PT)**: The hardware-invariant speed factor.
+    - **Ratio < 1.0**: VNN is faster.
+    - **Ratio 0.001x**: Characteristic of VNN's massive advantage in F16/BF16 on hardware where PyTorch lacks native acceleration.
 
 ---
 
-## 3. Tiling Strategies
-VNN Rusted uses adaptive tiling to fit within consumer VRAM (e.g., 2GB).
-*   **GEMV Path (N=1)**: Optimized in `src/backend.rs:263` with forced N-tiling to enable Double Buffering.
-*   **Large MatMul**: Uses **512x16384** A-tiles (`src/backend.rs:265`) to minimize cache misses.
+## 2. Hardware Thermal Law
+Observed during the 10-run (9790s) stress test:
+- **Phase 1 (Cold Start)**: Tensors are cold, cache is empty. Median times are consistent.
+- **Phase 10 (Heat Soak)**: After ~2 hours of computation, absolute times may increase by **10-15%** due to CPU/GPU clock-down. However, the **Ratio** remains stable as both VNN and PyTorch are slowed equally by the hardware.
 
 ---
 
-## 4. Maximizing Throughput
-1.  **Use `device="hybrid"`**: This uses all 4 cores of your i5-3450 AND the R7 200 GPU simultaneously.
-2.  **SSD Mapping**: Use `Tensor.from_ssd`. VNN uses background threads (`src/streaming.rs:96`) to "touch" memory pages, ensuring the data is in RAM *before* the computation starts.
-3.  **Warm-up**: Always run one small MatMul before benchmarking to let the Vulkan driver compile the WGSL pipelines.
+## 3. Tiling & Precision
+VNN Rusted uses adaptive tiling to maximize bandwidth on mid-range GPUs (e.g., 2GB VRAM).
+*   **MatMul Tiling**: `src/backend.rs:360` uses **512x16384** A-tiles. Large tiles reduce the number of command submissions but require more VRAM.
+*   **Tri-Precision Fallback**: If using a legacy GPU (pre-2018), `backend.rs:214` will cast F16 data to F32 for the compute shader. You retain the **50% smaller SSD storage** of F16 but compute at F32 precision.
 
 ---
 
-## 5. Hardware Limitations & Throttling
-*   **Power Limit**: If the GPU hits its power limit, you will see a sudden rise in **CV%**.
-*   **Thermal Throttling**: Long runs (e.g., 16GB SSD tests) heat up the CPU/GPU, which can increase absolute times by up to 25% while the Ratio remains stable.
+## 4. Maximizing Throughput (The "Slavek" Method)
+1.  **Close the Browser**: While VNN is resilient, heavy browser activity increases `StdDev` on CPU tasks.
+2.  **Use `device="hybrid"`**: This saturates all CPU cores via Rayon (`src/tensor.rs:631`) while the GPU handles heavy SGEMM tiles via `wgpu` (`src/backend.rs:429`).
+3.  **SSD Direct Streaming**: Always use `Tensor.from_ssd`. This uses the Linux kernel's DMA prefetching (`src/tensor.rs:92`) to stream weights directly into the computation pipeline, effectively turning your SSD into an L3 Cache.
+
+---
+
+## 5. Known Limitations
+- **Small Kernels**: Operations like `ReLU` on small vectors (<2M elements) are faster on CPU because the Vulkan command submission overhead (~1ms) outweighs the compute time. VNN automatically handles this threshold in `src/backend.rs:597`.
