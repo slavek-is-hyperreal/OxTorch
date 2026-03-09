@@ -24,20 +24,22 @@ This document provides a detailed reference for the `vulkannn_rusted` engine.
 
 ### Static Methods
 1.  **`from_ssd(path: str, shape: list, dtype=DataType.F32)`** (`src/tensor.rs:83`)
-    - Maps an existing binary file to a Tensor via `memmap2`.
-    - **Performance**: Uses `libc::madvise(MADV_SEQUENTIAL)` (`src/tensor.rs:92`) for hardware prefetching.
+    - *Current Implementation*: Maps an existing binary file to a Tensor via `memmap2` using `libc::madvise(MADV_SEQUENTIAL)` (`src/tensor.rs:92`) for kernel prefetching.
+    - *Upcoming (Phase 3 MSTS Roadmap)*: Will transition to `io_uring` with `O_DIRECT` to bypass the VFS page cache entirely for lockless software DMA streaming.
     - Returns a `ReadOnly` tensor.
 2.  **`new_ssd(path: str, shape: list, dtype=DataType.F32)`** (`src/tensor.rs:98`)
-    - Creates a new file on disk and maps it as `ReadWrite` (`src/tensor.rs:103`).
+    - *Current Implementation*: Creates a new file on disk and maps it as `ReadWrite` (`src/tensor.rs:103`).
+    - *Upcoming (Phase 3 MSTS Roadmap)*: Will align creation to 1MB ZFS recordsizes to interact natively with `io_uring` outputs.
+    - Ideal for storing results of massive calculations (e.g. 16GB ReLU).
     - Ideal for storing results of massive calculations (e.g. 16GB ReLU).
 
 ### Matrix Operations
 *   **`__matmul__(other: Tensor)`** (`src/tensor.rs:260`)
     - Operator: `@`
-    - **Hybrid Dispatch**: If `device="hybrid"`, uses dynamic work-stealing (`src/backend.rs:388`).
+    - **Hybrid Dispatch**: Currently uses dynamic work-stealing (`src/backend.rs:388`). Will transition to the lockless **MERA Style Task Scheduler (MSTS)** `StatefulTile` architecture.
     - **CPU Path**: Uses `matrixmultiply::sgemm` (`src/tensor.rs:639`).
     - **GPU Path**: Uses WGSL tiling shader (`src/shaders/matmul.wgsl`).
-    - **Fallbacks**: Automatically casts F16/BF16 to F32 for GPU compute if hardware doesn't support native FP16 (`src/backend.rs:344`).
+    - **Fallbacks**: Automatically casts F16/BF16 to F32 for GPU compute if hardware doesn't support native FP16 (`src/backend.rs:344`). *Upcoming (Phase 3)*: This conversion will utilize Branchless AVX1 Bit-Twiddling (SWAR) via `std::arch::x86_64` for dramatic CPU speedups on Ivy Bridge architectures, while maintaining AVX2 paths for modern CPUs.
 
 ### Activation Functions
 *   **`relu()`** (`src/tensor.rs:216`) -> Uses `execute_activation` (`src/backend.rs:583`).
