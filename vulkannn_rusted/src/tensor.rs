@@ -4,11 +4,13 @@ use numpy::{IntoPyArray, PyReadonlyArrayDyn, ToPyArray};
 use numpy::ndarray::Array;
 use rayon::prelude::*;
 use half::{f16, bf16};
+use crate::io_uring_engine::DirectIoEngine;
+use std::sync::Arc;
 
 #[derive(Clone)]
-pub enum MmapType {
-    ReadOnly(std::sync::Arc<memmap2::Mmap>),
-    ReadWrite(std::sync::Arc<memmap2::MmapMut>),
+pub enum IoEngineType {
+    ReadOnly(Arc<DirectIoEngine>),
+    ReadWrite(Arc<DirectIoEngine>),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -40,7 +42,7 @@ pub struct Tensor {
     #[pyo3(get)]
     pub dtype: DataType,
     pub storage: Storage,
-    pub mmap_data: Option<MmapType>,
+    pub mmap_data: Option<IoEngineType>,
 }
 
 
@@ -56,11 +58,13 @@ impl Tensor {
             let (storage, final_shape) = match dtype {
                 DataType::F32 => (Storage::F32(vec), nd_arr.shape().to_vec()),
                 DataType::F16 => {
-                    let f16_vec = vec.par_iter().map(|&x| half::f16::from_f32(x)).collect();
+                    let mut f16_vec = vec![half::f16::ZERO; vec.len()];
+                    crate::avx_swar::convert_f32_to_f16(&vec, &mut f16_vec);
                     (Storage::F16(f16_vec), nd_arr.shape().to_vec())
                 },
                 DataType::BF16 => {
-                    let bf16_vec = vec.par_iter().map(|&x| half::bf16::from_f32(x)).collect();
+                    let mut bf16_vec = vec![half::bf16::ZERO; vec.len()];
+                    crate::avx_swar::convert_f32_to_bf16(&vec, &mut bf16_vec);
                     (Storage::BF16(bf16_vec), nd_arr.shape().to_vec())
                 }
             };
@@ -88,9 +92,8 @@ impl Tensor {
         if metadata.len() < expected_size as u64 {
             return Err(PyValueError::new_err(format!("File size mismatch: expected at least {} bytes, found {}", expected_size, metadata.len())));
         }
-        let mmap = unsafe { memmap2::MmapOptions::new().map(&file).map_err(|e| PyValueError::new_err(e.to_string()))? };
-        #[cfg(target_os = "linux")] unsafe { libc::madvise(mmap.as_ptr() as *mut libc::c_void, mmap.len(), libc::MADV_SEQUENTIAL); }
-        Ok(Tensor { shape, device: "ssd".to_string(), name: "SSDMapped".to_string(), is_transposed: false, dtype, storage: Storage::None, mmap_data: Some(MmapType::ReadOnly(std::sync::Arc::new(mmap))) })
+        let engine = DirectIoEngine::new(path, true);
+        Ok(Tensor { shape, device: "ssd".to_string(), name: "SSDMapped".to_string(), is_transposed: false, dtype, storage: Storage::None, mmap_data: Some(IoEngineType::ReadOnly(Arc::new(engine))) })
     }
 
     #[staticmethod]
@@ -100,24 +103,33 @@ impl Tensor {
         let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
         let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
         file.set_len((size * bytes_per_elem) as u64).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let mmap = unsafe { memmap2::MmapOptions::new().map_mut(&file).map_err(|e| PyValueError::new_err(e.to_string()))? };
-        #[cfg(target_os = "linux")] unsafe { libc::madvise(mmap.as_ptr() as *mut libc::c_void, mmap.len(), libc::MADV_SEQUENTIAL); }
-        Ok(Tensor { shape, device: "ssd".to_string(), name: "SSDResult".to_string(), is_transposed: false, dtype, storage: Storage::None, mmap_data: Some(MmapType::ReadWrite(std::sync::Arc::new(mmap))) })
+        let engine = DirectIoEngine::new(path, false);
+        Ok(Tensor { shape, device: "ssd".to_string(), name: "SSDResult".to_string(), is_transposed: false, dtype, storage: Storage::None, mmap_data: Some(IoEngineType::ReadWrite(Arc::new(engine))) })
     }
 
     fn to_numpy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, numpy::PyArrayDyn<f32>>> {
         let vec = match self.dtype {
             DataType::F32 => {
-                let (slice, _) = self.get_slice_raw_f32();
-                slice.to_vec()
+                if self.is_ssd() { self.load_to_f32_vec_msts() } else {
+                    let (slice, _) = self.get_slice_raw_f32();
+                    slice.to_vec()
+                }
             },
             DataType::F16 => {
-                let (slice, _) = self.get_slice_raw_f16();
-                slice.par_iter().map(|&x| f32::from(x)).collect()
+                if self.is_ssd() { self.load_to_f32_vec_msts() } else {
+                    let (slice, _) = self.get_slice_raw_f16();
+                    let mut vec = vec![0.0; slice.len()];
+                    crate::avx_swar::convert_f16_to_f32(slice, &mut vec);
+                    vec
+                }
             },
             DataType::BF16 => {
-                let (slice, _) = self.get_slice_raw_bf16();
-                slice.par_iter().map(|&x| f32::from(x)).collect()
+                if self.is_ssd() { self.load_to_f32_vec_msts() } else {
+                    let (slice, _) = self.get_slice_raw_bf16();
+                    let mut vec = vec![0.0; slice.len()];
+                    crate::avx_swar::convert_bf16_to_f32(slice, &mut vec);
+                    vec
+                }
             }
         };
         Ok(Array::from_shape_vec(self.shape.clone(), vec).map_err(|e| PyValueError::new_err(e.to_string()))?.into_pyarray_bound(py))
@@ -126,6 +138,9 @@ impl Tensor {
     fn to_numpy_no_copy<'py>(&self, py: Python<'py>) -> PyResult<(Bound<'py, numpy::PyArrayDyn<f32>>, bool)> {
         match self.dtype {
             DataType::F32 => {
+                if self.is_ssd() {
+                    return Ok((self.to_numpy(py)?, false));
+                }
                 let (slice, is_ssd) = self.get_slice_raw_f32();
                 let shape = self.shape.clone();
                 let array = unsafe { numpy::ndarray::ArrayViewD::from_shape_ptr(shape, slice.as_ptr()) };
@@ -279,23 +294,31 @@ impl Tensor {
                 match dtype {
                     DataType::F32 => {
                         let mut out = vec![0.0; m * n];
-                        let (a, a_ssd) = self.get_slice_raw_f32();
-                        let (b, b_ssd) = other.get_slice_raw_f32();
+                        let a_ssd = self.is_ssd();
+                        let b_ssd = other.is_ssd();
                         if a_ssd || b_ssd {
-                            let ar = if a_ssd { self.par_copy_f32(a) } else { a.to_vec() };
-                            let br = if b_ssd { self.par_copy_f32(b) } else { b.to_vec() };
+                            let ar = if a_ssd { self.load_to_f32_vec_msts() } else { self.get_slice_raw_f32().0.to_vec() };
+                            let br = if b_ssd { other.load_to_f32_vec_msts() } else { other.get_slice_raw_f32().0.to_vec() };
                             self.cpu_sgemm_f32(&ar, &br, &mut out, m, k, n, rsa, csa, rsb, csb);
                         } else {
+                            let (a, _) = self.get_slice_raw_f32();
+                            let (b, _) = other.get_slice_raw_f32();
                             self.cpu_sgemm_f32(a, b, &mut out, m, k, n, rsa, csa, rsb, csb);
                         }
                         Storage::F32(out)
                     },
                     DataType::F16 => {
                         let mut out = vec![half::f16::ZERO; m * n];
-                        let (a, _a_ssd) = self.get_slice_raw_f16();
-                        let (b, _b_ssd) = other.get_slice_raw_f16();
-                        let a_f32: Vec<f32> = a.par_iter().map(|&x| f32::from(x)).collect();
-                        let b_f32: Vec<f32> = b.par_iter().map(|&x| f32::from(x)).collect();
+                        let a_f32 = if self.is_ssd() { self.load_to_f32_vec_msts() } else {
+                            let mut v = vec![0.0; self.shape.iter().product()];
+                            crate::avx_swar::convert_f16_to_f32(self.get_slice_raw_f16().0, &mut v);
+                            v
+                        };
+                        let b_f32 = if other.is_ssd() { other.load_to_f32_vec_msts() } else {
+                            let mut v = vec![0.0; other.shape.iter().product()];
+                            crate::avx_swar::convert_f16_to_f32(other.get_slice_raw_f16().0, &mut v);
+                            v
+                        };
                         let mut res_f32 = vec![0.0; m * n];
                         
                         self.cpu_sgemm_f32(&a_f32, &b_f32, &mut res_f32, m, k, n, rsa, csa, rsb, csb);
@@ -305,10 +328,16 @@ impl Tensor {
                     },
                     DataType::BF16 => {
                         let mut out = vec![half::bf16::ZERO; m * n];
-                        let (a, _) = self.get_slice_raw_bf16();
-                        let (b, _) = other.get_slice_raw_bf16();
-                        let a_f32: Vec<f32> = a.par_iter().map(|&x| f32::from(x)).collect();
-                        let b_f32: Vec<f32> = b.par_iter().map(|&x| f32::from(x)).collect();
+                        let a_f32 = if self.is_ssd() { self.load_to_f32_vec_msts() } else {
+                            let mut v = vec![0.0; self.shape.iter().product()];
+                            crate::avx_swar::convert_bf16_to_f32(self.get_slice_raw_bf16().0, &mut v);
+                            v
+                        };
+                        let b_f32 = if other.is_ssd() { other.load_to_f32_vec_msts() } else {
+                            let mut v = vec![0.0; other.shape.iter().product()];
+                            crate::avx_swar::convert_bf16_to_f32(other.get_slice_raw_bf16().0, &mut v);
+                            v
+                        };
                         let mut res_f32 = vec![0.0; m * n];
                         self.cpu_sgemm_f32(&a_f32, &b_f32, &mut res_f32, m, k, n, rsa, csa, rsb, csb);
                         out.par_iter_mut().zip(res_f32.par_iter()).for_each(|(o, &x)| *o = half::bf16::from_f32(x));
@@ -398,6 +427,10 @@ impl Tensor {
 
 // Internal Logic
 impl Tensor {
+    pub fn is_ssd(&self) -> bool {
+        self.mmap_data.is_some()
+    }
+
     fn check_shape(&self, other: &Tensor) -> PyResult<()> {
         if self.shape != other.shape { return Err(PyValueError::new_err("Shape mismatch")); }
         if self.dtype != other.dtype { return Err(PyValueError::new_err("DType mismatch")); }
@@ -450,11 +483,8 @@ impl Tensor {
             Storage::F16(v) => (bytemuck::cast_slice(v), false),
             Storage::BF16(v) => (bytemuck::cast_slice(v), false),
             Storage::None => {
-                if let Some(m) = &self.mmap_data {
-                    match m {
-                        MmapType::ReadOnly(inner) => (&inner[..], true),
-                        MmapType::ReadWrite(inner) => (&inner[..], true),
-                    }
+                if let Some(_) = &self.mmap_data {
+                    panic!("MSTS Architecture: Cannot get flat slice of O_DIRECT SSD tensors. Use chunk streaming.");
                 } else {
                     (&[], false)
                 }
@@ -466,11 +496,8 @@ impl Tensor {
         match &self.storage {
             Storage::F32(v) => (v, false),
             Storage::None => {
-                if let Some(mmap) = &self.mmap_data {
-                    match mmap {
-                        MmapType::ReadOnly(m) => (unsafe { std::slice::from_raw_parts(m.as_ptr() as *const f32, m.len()/4) }, true),
-                        MmapType::ReadWrite(m) => (unsafe { std::slice::from_raw_parts(m.as_ptr() as *const f32, m.len()/4) }, true),
-                    }
+                if let Some(_) = &self.mmap_data {
+                    panic!("MSTS Architecture: Cannot get flat slice of O_DIRECT SSD tensors. Use chunk streaming.");
                 } else { (&[], false) }
             },
             _ => (&[], false),
@@ -481,11 +508,8 @@ impl Tensor {
         match &self.storage {
             Storage::F16(v) => (v, false),
             Storage::None => {
-                if let Some(mmap) = &self.mmap_data {
-                    match mmap {
-                        MmapType::ReadOnly(m) => (unsafe { std::slice::from_raw_parts(m.as_ptr() as *const half::f16, m.len()/2) }, true),
-                        MmapType::ReadWrite(m) => (unsafe { std::slice::from_raw_parts(m.as_ptr() as *const half::f16, m.len()/2) }, true),
-                    }
+                if let Some(_) = &self.mmap_data {
+                    panic!("MSTS Architecture: Cannot get flat slice of O_DIRECT SSD tensors. Use chunk streaming.");
                 } else { (&[], false) }
             },
             _ => (&[], false),
@@ -496,11 +520,8 @@ impl Tensor {
         match &self.storage {
             Storage::BF16(v) => (v, false),
             Storage::None => {
-                if let Some(mmap) = &self.mmap_data {
-                    match mmap {
-                        MmapType::ReadOnly(m) => (unsafe { std::slice::from_raw_parts(m.as_ptr() as *const half::bf16, m.len()/2) }, true),
-                        MmapType::ReadWrite(m) => (unsafe { std::slice::from_raw_parts(m.as_ptr() as *const half::bf16, m.len()/2) }, true),
-                    }
+                if let Some(_) = &self.mmap_data {
+                    panic!("MSTS Architecture: Cannot get flat slice of O_DIRECT SSD tensors. Use chunk streaming.");
                 } else { (&[], false) }
             },
             _ => (&[], false),
@@ -513,11 +534,8 @@ impl Tensor {
             Storage::F16(v) => (bytemuck::cast_slice_mut(v), false),
             Storage::BF16(v) => (bytemuck::cast_slice_mut(v), false),
             Storage::None => {
-                if let Some(mmap) = &mut self.mmap_data {
-                    match mmap {
-                        MmapType::ReadWrite(m) => (unsafe { std::slice::from_raw_parts_mut(m.as_ptr() as *mut u8, m.len()) }, true),
-                        MmapType::ReadOnly(_) => panic!("Modify ReadOnly SSD!"),
-                    }
+                if let Some(_) = &mut self.mmap_data {
+                    panic!("MSTS Architecture: Cannot get flat slice of O_DIRECT SSD tensors. Use chunk streaming.");
                 } else { panic!("No data") }
             },
         }
@@ -527,11 +545,8 @@ impl Tensor {
         match &mut self.storage {
             Storage::F32(v) => (v, false),
             Storage::None => {
-                if let Some(mmap) = &self.mmap_data {
-                    match mmap {
-                        MmapType::ReadWrite(m) => (unsafe { std::slice::from_raw_parts_mut(m.as_ptr() as *mut f32, m.len()/4) }, true),
-                        MmapType::ReadOnly(_) => panic!("Modify ReadOnly SSD!"),
-                    }
+                if let Some(_) = &self.mmap_data {
+                    panic!("MSTS Architecture: Cannot get flat slice of O_DIRECT SSD tensors. Use chunk streaming.");
                 } else { panic!("No data") }
             },
             _ => panic!("Wrong DType"),
@@ -542,11 +557,8 @@ impl Tensor {
         match &mut self.storage {
             Storage::F16(v) => (v, false),
             Storage::None => {
-                if let Some(mmap) = &mut self.mmap_data {
-                    match mmap {
-                        MmapType::ReadWrite(m) => (unsafe { std::slice::from_raw_parts_mut(m.as_ptr() as *mut half::f16, m.len()/2) }, true),
-                        MmapType::ReadOnly(_) => panic!("Modify ReadOnly SSD!"),
-                    }
+                if let Some(_) = &mut self.mmap_data {
+                    panic!("MSTS Architecture: Cannot get flat slice of O_DIRECT SSD tensors. Use chunk streaming.");
                 } else { panic!("No data") }
             },
             _ => panic!("Wrong DType"),
@@ -557,11 +569,8 @@ impl Tensor {
         match &mut self.storage {
             Storage::BF16(v) => (v, false),
             Storage::None => {
-                if let Some(mmap) = &mut self.mmap_data {
-                    match mmap {
-                        MmapType::ReadWrite(m) => (unsafe { std::slice::from_raw_parts_mut(m.as_ptr() as *mut half::bf16, m.len()/2) }, true),
-                        MmapType::ReadOnly(_) => panic!("Modify ReadOnly SSD!"),
-                    }
+                if let Some(_) = &mut self.mmap_data {
+                    panic!("MSTS Architecture: Cannot get flat slice of O_DIRECT SSD tensors. Use chunk streaming.");
                 } else { panic!("No data") }
             },
             _ => panic!("Wrong DType"),
@@ -614,14 +623,70 @@ impl Tensor {
         Ok(())
     }
 
-    fn par_copy_f32(&self, src: &[f32]) -> Vec<f32> {
-        let mut dst = vec![0.0; src.len()];
-        dst.par_chunks_mut(1024*1024).enumerate().for_each(|(i, c)| {
-            let s = i * 1024 * 1024;
-            let end = std::cmp::min(s + c.len(), src.len());
-            if s < end { c.copy_from_slice(&src[s..end]); }
-        });
-        dst
+    /// Extreme I/O MERA-400 architecture for SSD tensors
+    pub fn load_to_f32_vec_msts(&self) -> Vec<f32> {
+        let engine = match &self.mmap_data {
+            Some(crate::tensor::IoEngineType::ReadOnly(e)) => e.clone(),
+            Some(crate::tensor::IoEngineType::ReadWrite(e)) => e.clone(),
+            None => panic!("Not an SSD tensor"),
+        };
+        
+        // 1MB = 262144 f32s OR 524288 f16s
+        let total_elems = self.shape.iter().product::<usize>();
+        let mut out = vec![0.0; total_elems];
+        let bytes_per_elem = if self.dtype == DataType::F32 { 4 } else { 2 };
+        let total_bytes = (total_elems * bytes_per_elem) as u64;
+        
+        let scheduler = crate::crook_scheduler::CrookScheduler::new(8); // 8MB ring
+        let io_handle = crate::crook_scheduler::CrookScheduler::start_io_worker(scheduler.clone(), engine, total_bytes);
+        
+        let mut offset = 0;
+        let ring_size = scheduler.ring.len();
+        let mut tile_idx = 0;
+        
+        while offset < total_bytes {
+            let tile = &scheduler.ring[tile_idx];
+            
+            // Spin wait for TILE_READY_FOR_COMPUTE
+            while tile.state.compare_exchange(
+                crate::crook_scheduler::TILE_READY_FOR_COMPUTE, 
+                crate::crook_scheduler::TILE_COMPUTING, 
+                std::sync::atomic::Ordering::Acquire, 
+                std::sync::atomic::Ordering::Relaxed
+            ).is_err() {
+                std::hint::spin_loop();
+            }
+            
+            let bytes_to_process = std::cmp::min(1048568, total_bytes - offset);
+            let elems_to_process = (bytes_to_process / bytes_per_elem as u64) as usize;
+            
+            let payload_slice = unsafe { 
+                let ptr = tile.payload.get();
+                &(&(*ptr))[0..bytes_to_process as usize]
+            };
+            
+            let out_idx = (offset / bytes_per_elem as u64) as usize;
+            
+            if self.dtype == DataType::F32 {
+                let f32_slice: &[f32] = bytemuck::cast_slice(payload_slice);
+                out[out_idx..out_idx + elems_to_process].copy_from_slice(f32_slice);
+            } else if self.dtype == DataType::F16 {
+                let f16_slice: &[half::f16] = bytemuck::cast_slice(payload_slice);
+                out[out_idx..out_idx + elems_to_process].par_iter_mut().zip(f16_slice.par_iter()).for_each(|(o, &i)| *o = i.to_f32());
+            } else if self.dtype == DataType::BF16 {
+                let bf16_slice: &[half::bf16] = bytemuck::cast_slice(payload_slice);
+                out[out_idx..out_idx + elems_to_process].par_iter_mut().zip(bf16_slice.par_iter()).for_each(|(o, &i)| *o = i.to_f32());
+            }
+            
+            // Reclaim tile back to empty state
+            tile.state.store(crate::crook_scheduler::TILE_EMPTY, std::sync::atomic::Ordering::Release);
+            
+            offset += bytes_to_process;
+            tile_idx = (tile_idx + 1) % ring_size;
+        }
+        
+        io_handle.join().unwrap();
+        out
     }
 
     fn cpu_sgemm_f32(&self, a: &[f32], b: &[f32], out: &mut [f32], m: usize, k: usize, n: usize, rsa: isize, csa: isize, rsb: isize, csb: isize) {
