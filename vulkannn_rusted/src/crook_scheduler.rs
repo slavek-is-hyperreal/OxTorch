@@ -10,11 +10,12 @@ pub const TILE_WRITING_TO_DISK: u32 = 5;
 
 /// MERA-400 CROOK OS Inspired Stateful Tile
 /// Lockless Tagged-Token architecture.
-#[repr(align(1048576))]
+#[repr(align(4096))]
 pub struct StatefulTile {
     pub state: AtomicU32,
-    pub tile_id: AtomicU32, // tracks which chunk of the matrix this is
-    pub payload: UnsafeCell<[u8; 1048576 - 8]>, // Fill exactly 1MB
+    pub tile_id: AtomicU32,
+    _pad: [u8; 4088], // Pad to 4096 to ensure payload is aligned
+    pub payload: UnsafeCell<[u8; 1048576]>, // Exactly 1MB
 }
 
 unsafe impl Sync for StatefulTile {}
@@ -25,7 +26,8 @@ impl StatefulTile {
         Self {
             state: AtomicU32::new(TILE_EMPTY),
             tile_id: AtomicU32::new(0),
-            payload: UnsafeCell::new([0; 1048576 - 8]),
+            _pad: [0; 4088],
+            payload: UnsafeCell::new([0; 1048576]),
         }
     }
 }
@@ -65,13 +67,13 @@ impl CrookScheduler {
                     std::hint::spin_loop();
                 }
                 
-                let bytes_to_read = std::cmp::min(1048568, total_bytes - offset); // max payload size
+                let bytes_to_read = std::cmp::min(1048576, total_bytes - offset); // max payload size (1MB)
                 // We pad the read to a multiple of 4096 for O_DIRECT 
                 let read_size = (bytes_to_read + 4095) & !4095;
                 
                 let payload_slice = unsafe { 
                     let ptr = tile.payload.get();
-                    &mut (&mut *ptr)[0..read_size as usize]
+                    &mut (&mut *ptr)[0..std::cmp::min(1048576, read_size as usize)]
                 };
                 
                 // Submit IO_URING read

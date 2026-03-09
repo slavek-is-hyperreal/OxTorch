@@ -1,771 +1,593 @@
-use std::sync::{OnceLock, Mutex};
+use std::ffi::{CStr, CString};
+use std::sync::{Mutex, OnceLock};
+use ash::vk;
+use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc, Allocation, AllocationCreateDesc};
+use gpu_allocator::MemoryLocation;
 use rayon::prelude::*;
-use wgpu::{Device, Queue};
 use crate::tensor::DataType;
-use half::{f16, bf16};
+
+pub struct AshBackend {
+    pub _entry: ash::Entry,
+    pub _instance: ash::Instance,
+    pub _pdevice: vk::PhysicalDevice,
+    pub device: ash::Device,
+    pub compute_queue: vk::Queue,
+    pub _compute_family: u32,
+    pub transfer_queue: vk::Queue,
+    pub _transfer_family: u32,
+    pub allocator: Mutex<Allocator>,
+    
+    pub desc_pool: Mutex<vk::DescriptorPool>,
+    pub dsl_add: vk::DescriptorSetLayout,
+    pub dsl_matmul: vk::DescriptorSetLayout,
+    pub dsl_act: vk::DescriptorSetLayout,
+    
+    pub pipe_layout_add: vk::PipelineLayout,
+    pub pipe_layout_matmul: vk::PipelineLayout,
+    pub pipe_layout_act: vk::PipelineLayout,
+    
+    pub pipe_add: vk::Pipeline,
+    pub pipe_matmul: vk::Pipeline,
+    pub pipe_relu: vk::Pipeline,
+    pub pipe_sigmoid: vk::Pipeline,
+    pub pipe_silu: vk::Pipeline,
+
+    pub compute_cmd_pool: vk::CommandPool,
+    pub transfer_cmd_pool: vk::CommandPool,
+    pub buffer_cache: Mutex<Vec<CachedBuffer>>,
+}
 
 pub struct CachedBuffer {
-    pub size: wgpu::BufferAddress,
-    pub usage: wgpu::BufferUsages,
-    pub buffer: wgpu::Buffer,
-}
-pub struct WgpuBackend {
-    pub device: Device,
-    pub queue: Queue,
-    pub buffer_cache: Mutex<Vec<CachedBuffer>>,
-    pub vec_cache: Mutex<Vec<Vec<f32>>>,
-    
-    // Pipeline Cache
-    pub add_pipeline: wgpu::ComputePipeline,
-    pub matmul_pipeline: wgpu::ComputePipeline,
-    pub relu_pipeline: wgpu::ComputePipeline,
-    pub sigmoid_pipeline: wgpu::ComputePipeline,
-    pub silu_pipeline: wgpu::ComputePipeline,
+    pub size: vk::DeviceSize,
+    pub usage: vk::BufferUsageFlags,
+    pub buffer: vk::Buffer,
+    pub allocation: Option<Allocation>,
+    pub cpu_visible: bool,
 }
 
-pub static BACKEND: OnceLock<WgpuBackend> = OnceLock::new();
+pub static BACKEND: OnceLock<AshBackend> = OnceLock::new();
 
 pub fn init_backend() {
     BACKEND.get_or_init(|| {
-        let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        }))
-        .expect("Failed to find an appropriate wgpu adapter (e.g., Vulkan)");
+        println!("[vulkannn_rusted] Initializing Raw Ash Vulkan Engine...");
+        let entry = unsafe { ash::Entry::load().expect("Failed to load Vulkan library") };
 
-        let info = adapter.get_info();
-        println!("[vulkannn_rusted] Found WGPU Adapter: {} ({:?})", info.name, info.backend);
+        let app_name = CString::new("VulkanNN Rusted").unwrap();
+        let app_info = vk::ApplicationInfo::default()
+            .application_name(&app_name)
+            .api_version(vk::make_api_version(0, 1, 2, 0)); // Vulkan 1.2 required for timeline semaphores
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("VulkanNN Device"),
-                required_features: adapter.features() & wgpu::Features::SHADER_F16,
-                required_limits: adapter.limits(),
-                memory_hints: wgpu::MemoryHints::Performance,
-            },
-            None,
-        ))
-        .expect("Failed to create wgpu device");
+        let instance_create_info = vk::InstanceCreateInfo::default()
+            .application_info(&app_info);
 
-        let has_f16 = device.features().contains(wgpu::Features::SHADER_F16);
-        if has_f16 { println!("[vulkannn_rusted] Native FP16 Compute Enabled."); }
+        let instance = unsafe { entry.create_instance(&instance_create_info, None).expect("Instance creation failed") };
 
-        let add_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Add Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/add.wgsl").into()),
-        });
-        let add_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Add Pipeline"), layout: None, module: &add_shader, entry_point: "main",
-            compilation_options: wgpu::PipelineCompilationOptions::default(), cache: None,
-        });
+        let pdevices = unsafe { instance.enumerate_physical_devices().expect("No physical devices found") };
+        let pdevice = pdevices.into_iter().find(|&pd| {
+            let props = unsafe { instance.get_physical_device_properties(pd) };
+            if props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU || props.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU {
+                let name = unsafe { CStr::from_ptr(props.device_name.as_ptr()) };
+                println!("[vulkannn_rusted] Selected Physical Device: {:?}", name);
+                true
+            } else { false }
+        }).expect("No suitable GPU found");
 
-        let matmul_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("MatMul Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/matmul.wgsl").into()),
-        });
-        let matmul_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("MatMul Pipeline"), layout: None, module: &matmul_shader, entry_point: "main",
-            compilation_options: wgpu::PipelineCompilationOptions::default(), cache: None,
-        });
-
-        let activation_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Activation Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/activation.wgsl").into()),
-        });
+        let queue_family_properties = unsafe { instance.get_physical_device_queue_family_properties(pdevice) };
         
-        let relu_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("ReLU Pipeline"), layout: None, module: &activation_shader, entry_point: "relu_main",
-            compilation_options: wgpu::PipelineCompilationOptions::default(), cache: None,
-        });
-        let sigmoid_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Sigmoid Pipeline"), layout: None, module: &activation_shader, entry_point: "sigmoid_main",
-            compilation_options: wgpu::PipelineCompilationOptions::default(), cache: None,
-        });
-        let silu_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("SiLU Pipeline"), layout: None, module: &activation_shader, entry_point: "silu_main",
-            compilation_options: wgpu::PipelineCompilationOptions::default(), cache: None,
-        });
+        let mut compute_family = None;
+        let mut transfer_family = None;
 
-        WgpuBackend {
-            device, queue, buffer_cache: Mutex::new(Vec::new()),
-            vec_cache: Mutex::new(Vec::new()),
-            add_pipeline, matmul_pipeline, relu_pipeline, sigmoid_pipeline, silu_pipeline,
+        for (i, prop) in queue_family_properties.iter().enumerate() {
+            if prop.queue_flags.contains(vk::QueueFlags::COMPUTE) && !prop.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                compute_family = Some(i as u32);
+            } else if prop.queue_flags.contains(vk::QueueFlags::COMPUTE) && compute_family.is_none() {
+                compute_family = Some(i as u32);
+            }
+
+            if prop.queue_flags.contains(vk::QueueFlags::TRANSFER) && !prop.queue_flags.contains(vk::QueueFlags::COMPUTE) && !prop.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                transfer_family = Some(i as u32);
+            }
+        }
+        
+        // Fallbacks
+        let compute_family = compute_family.expect("No compute queue family found");
+        let transfer_family = transfer_family.unwrap_or(compute_family);
+
+        let priorities = [1.0f32];
+        let mut queue_create_infos = vec![
+            vk::DeviceQueueCreateInfo::default()
+                .queue_family_index(compute_family)
+                .queue_priorities(&priorities)
+        ];
+        if transfer_family != compute_family {
+            queue_create_infos.push(
+                vk::DeviceQueueCreateInfo::default()
+                    .queue_family_index(transfer_family)
+                    .queue_priorities(&priorities)
+            );
+        }
+
+        let ext_timeline = CStr::from_bytes_with_nul(b"VK_KHR_timeline_semaphore\0").unwrap().as_ptr();
+
+        let mut device_extension_names_raw = vec![ext_timeline];
+        let mut has_fp16_ext = false;
+        
+        if let Ok(device_exts) = unsafe { instance.enumerate_device_extension_properties(pdevice) } {
+            for ext in device_exts {
+                let name_bytes = unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) };
+                if let Ok(name_str) = name_bytes.to_str() {
+                    if name_str == "VK_KHR_shader_float16_int8" {
+                        has_fp16_ext = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut has_fp16 = false;
+        if has_fp16_ext {
+            let mut supported_features16 = vk::PhysicalDeviceShaderFloat16Int8FeaturesKHR::default();
+            let mut supported_features2 = vk::PhysicalDeviceFeatures2::default();
+            supported_features2.p_next = &mut supported_features16 as *mut _ as *mut std::ffi::c_void;
+            unsafe { instance.get_physical_device_features2(pdevice, &mut supported_features2) };
+            
+            if supported_features16.shader_float16 == vk::TRUE {
+                has_fp16 = true;
+                println!("[vulkannn_rusted] Found Advanced GPU: VK_KHR_shader_float16_int8 and shader_float16 enabled");
+            }
+        }
+
+        if has_fp16 {
+            device_extension_names_raw.push(CStr::from_bytes_with_nul(b"VK_KHR_shader_float16_int8\0").unwrap().as_ptr());
+        }
+
+        let features = vk::PhysicalDeviceFeatures::default();
+        
+        let mut features16 = vk::PhysicalDeviceShaderFloat16Int8FeaturesKHR::default()
+            .shader_float16(true);
+            
+        let mut features11 = vk::PhysicalDeviceVulkan11Features::default()
+            .storage_buffer16_bit_access(true);
+            
+        if has_fp16 {
+            features11.p_next = &mut features16 as *mut _ as *mut std::ffi::c_void;
+        }
+            
+        let mut features12 = vk::PhysicalDeviceVulkan12Features::default()
+            .timeline_semaphore(true);
+            
+        if has_fp16 {
+            features12.p_next = &mut features11 as *mut _ as *mut std::ffi::c_void;
+        }
+
+        let mut features2 = vk::PhysicalDeviceFeatures2::default()
+            .features(features);
+        features2.p_next = &mut features12 as *mut _ as *mut std::ffi::c_void;
+
+        let mut device_create_info = vk::DeviceCreateInfo::default()
+            .queue_create_infos(&queue_create_infos)
+            .enabled_extension_names(&device_extension_names_raw);
+        device_create_info.p_next = &mut features2 as *mut _ as *mut std::ffi::c_void;
+
+        let device = unsafe { instance.create_device(pdevice, &device_create_info, None) }.expect("Device creation failed");
+
+        let compute_queue = unsafe { device.get_device_queue(compute_family, 0) };
+        let transfer_queue = unsafe { device.get_device_queue(transfer_family, 0) };
+
+        let allocator = Allocator::new(&AllocatorCreateDesc {
+            instance: instance.clone(),
+            device: device.clone(),
+            physical_device: pdevice,
+            debug_settings: Default::default(),
+            buffer_device_address: false,
+            allocation_sizes: Default::default(),
+        }).unwrap();
+
+        let pool_sizes = [
+            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(10000),
+            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(2000),
+        ];
+        let pool_info = vk::DescriptorPoolCreateInfo::default()
+            .max_sets(2000)
+            .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
+            .pool_sizes(&pool_sizes);
+        let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None) }.unwrap();
+
+        // DSL Add: 3 Storage
+        let bindings_add = [
+            vk::DescriptorSetLayoutBinding::default().binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default().binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default().binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+        ];
+        let dsl_add = unsafe { device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_add), None) }.unwrap();
+
+        // DSL Matmul: 3 Storage, 1 Uniform
+        let bindings_matmul = [
+            vk::DescriptorSetLayoutBinding::default().binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default().binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default().binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default().binding(3).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+        ];
+        let dsl_matmul = unsafe { device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_matmul), None) }.unwrap();
+
+        // DSL Act: 2 Storage
+        let bindings_act = [
+            vk::DescriptorSetLayoutBinding::default().binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default().binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+        ];
+        let dsl_act = unsafe { device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_act), None) }.unwrap();
+
+        let pipe_layout_add = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_add]), None) }.unwrap();
+        let pipe_layout_matmul = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_matmul]), None) }.unwrap();
+        let pipe_layout_act = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_act]), None) }.unwrap();
+
+        let load_shader = |bytes: &[u8]| -> vk::ShaderModule {
+            let mut cursor = std::io::Cursor::new(bytes);
+            let code = ash::util::read_spv(&mut cursor).expect("Failed to read struct spv");
+            let info = vk::ShaderModuleCreateInfo::default().code(&code);
+            unsafe { device.create_shader_module(&info, None) }.unwrap()
+        };
+
+        let sm_add = load_shader(include_bytes!("shaders/add.wgsl.spv"));
+        let sm_matmul = load_shader(include_bytes!("shaders/matmul.wgsl.spv"));
+        let sm_act = load_shader(include_bytes!("shaders/activation.wgsl.spv"));
+
+        let entry_main = CString::new("main").unwrap();
+        let entry_relu = CString::new("relu_main").unwrap();
+        let entry_sigm = CString::new("sigmoid_main").unwrap();
+        let entry_silu = CString::new("silu_main").unwrap();
+
+        let create_pipe = |sm: vk::ShaderModule, entry: &CStr, layout: vk::PipelineLayout| -> vk::Pipeline {
+            let stage = vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::COMPUTE)
+                .module(sm)
+                .name(entry);
+            let info = vk::ComputePipelineCreateInfo::default()
+                .stage(stage)
+                .layout(layout);
+            unsafe { device.create_compute_pipelines(vk::PipelineCache::null(), &[info], None) }.unwrap()[0]
+        };
+
+        let pipe_add = create_pipe(sm_add, &entry_main, pipe_layout_add);
+        let pipe_matmul = create_pipe(sm_matmul, &entry_main, pipe_layout_matmul);
+        let pipe_relu = create_pipe(sm_act, &entry_relu, pipe_layout_act);
+        let pipe_sigmoid = create_pipe(sm_act, &entry_sigm, pipe_layout_act);
+        let pipe_silu = create_pipe(sm_act, &entry_silu, pipe_layout_act);
+
+        unsafe {
+            device.destroy_shader_module(sm_add, None);
+            device.destroy_shader_module(sm_matmul, None);
+            device.destroy_shader_module(sm_act, None);
+        }
+
+        let compute_cmd_pool_info = vk::CommandPoolCreateInfo::default()
+            .queue_family_index(compute_family)
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let compute_cmd_pool = unsafe { device.create_command_pool(&compute_cmd_pool_info, None) }.unwrap();
+
+        let transfer_cmd_pool_info = vk::CommandPoolCreateInfo::default()
+            .queue_family_index(transfer_family)
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let transfer_cmd_pool = unsafe { device.create_command_pool(&transfer_cmd_pool_info, None) }.unwrap();
+
+        AshBackend {
+            _entry: entry, _instance: instance, _pdevice: pdevice, device,
+            compute_queue, _compute_family: compute_family,
+            transfer_queue, _transfer_family: transfer_family,
+            allocator: Mutex::new(allocator),
+            desc_pool: Mutex::new(desc_pool),
+            dsl_add, dsl_matmul, dsl_act,
+            pipe_layout_add, pipe_layout_matmul, pipe_layout_act,
+            pipe_add, pipe_matmul, pipe_relu, pipe_sigmoid, pipe_silu,
+            compute_cmd_pool, transfer_cmd_pool,
+            buffer_cache: Mutex::new(Vec::new()),
         }
     });
 }
 
-pub fn get_buffer(device: &Device, size: wgpu::BufferAddress, usage: wgpu::BufferUsages, label: Option<&str>) -> wgpu::Buffer {
+pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Option<&str>, cpu_visible: bool) -> CachedBuffer {
     let backend = BACKEND.get().unwrap();
     if let Ok(mut cache) = backend.buffer_cache.lock() {
-        if let Some(idx) = cache.iter().position(|b| b.size >= size && b.usage == usage) {
+        if let Some(idx) = cache.iter().position(|b| b.size >= size && b.usage.contains(usage) && b.cpu_visible == cpu_visible) {
             let cached = cache.swap_remove(idx);
-            return cached.buffer;
+            return cached;
         }
     }
-    device.create_buffer(&wgpu::BufferDescriptor { label, size, usage, mapped_at_creation: false })
+    
+    let buffer_info = vk::BufferCreateInfo::default().size(size).usage(usage).sharing_mode(vk::SharingMode::EXCLUSIVE);
+    let buffer = unsafe { backend.device.create_buffer(&buffer_info, None) }.unwrap();
+    
+    let requirements = unsafe { backend.device.get_buffer_memory_requirements(buffer) };
+    let location = if cpu_visible { MemoryLocation::CpuToGpu } else { MemoryLocation::GpuOnly };
+    
+    let allocation = backend.allocator.lock().unwrap().allocate(&AllocationCreateDesc {
+        name: label.unwrap_or("Buffer"),
+        requirements,
+        location,
+        linear: true,
+        allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+    }).unwrap();
+    
+    unsafe { backend.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()) }.unwrap();
+    
+    CachedBuffer { size, usage, buffer, allocation: Some(allocation), cpu_visible }
 }
 
-pub fn recycle_buffer(buffer: wgpu::Buffer, size: wgpu::BufferAddress, usage: wgpu::BufferUsages) {
+pub fn recycle_buffer(cached: CachedBuffer) {
     if let Ok(mut cache) = BACKEND.get().unwrap().buffer_cache.lock() {
-        cache.push(CachedBuffer { size, usage, buffer });
+        cache.push(cached);
     }
 }
-
-pub fn get_vec(size: usize, zeroed: bool) -> Vec<f32> {
-    if let Ok(mut cache) = BACKEND.get().unwrap().vec_cache.lock() {
-        if let Some(idx) = cache.iter().position(|v| v.capacity() >= size) {
-            let mut v = cache.swap_remove(idx);
-            v.resize(size, 0.0);
-            if zeroed { v.fill(0.0); }
-            return v;
-        }
-    }
-    vec![0.0; size]
-}
-
-pub fn recycle_vec(v: Vec<f32>) {
-    if let Ok(mut cache) = BACKEND.get().unwrap().vec_cache.lock() {
-        cache.push(v);
-    }
-}
-
-
 pub fn execute_add(a_raw: &[u8], b_raw: &[u8], dtype: DataType, is_hybrid: bool) -> Vec<u8> {
-    let mut res = vec![0u8; a_raw.len()];
-    execute_add_into(a_raw, b_raw, &mut res, dtype, is_hybrid, false);
-    res
+    let mut out = vec![0u8; a_raw.len()];
+    execute_add_into(a_raw, b_raw, &mut out, dtype, is_hybrid, false);
+    out
 }
 
-pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: DataType, is_hybrid: bool, _use_staging: bool) {
-    let backend = BACKEND.get().expect("Backend not initialized");
-    let device = &backend.device;
-    let queue = &backend.queue;
-    
-    let (a_f32_backup, b_f32_backup);
-    let (_a_f32, _b_f32) = if (dtype == DataType::F16 || dtype == DataType::BF16) && !is_hybrid {
-        // GPU Fallback: Convert to F32 for compute
-        if dtype == DataType::F16 {
-            a_f32_backup = bytemuck::cast_slice::<u8, half::f16>(a_raw).par_iter().map(|x| x.to_f32()).collect::<Vec<_>>();
-            b_f32_backup = bytemuck::cast_slice::<u8, half::f16>(b_raw).par_iter().map(|x| x.to_f32()).collect::<Vec<_>>();
-        } else {
-            a_f32_backup = bytemuck::cast_slice::<u8, half::bf16>(a_raw).par_iter().map(|x| x.to_f32()).collect::<Vec<_>>();
-            b_f32_backup = bytemuck::cast_slice::<u8, half::bf16>(b_raw).par_iter().map(|x| x.to_f32()).collect::<Vec<_>>();
-        }
-        (a_f32_backup.as_slice(), b_f32_backup.as_slice())
-    } else if dtype == DataType::F32 {
-        (bytemuck::cast_slice(a_raw), bytemuck::cast_slice(b_raw))
-    } else {
-        // Hybrid F16/BF16: Handled per-thread below
-        (&[][..], &[][..])
-    };
-
-    let bytes_per_element = if dtype == DataType::F32 { 4 } else { 2 };
-    let total_elements = if dtype == DataType::F32 { a_raw.len() / 4 } else { a_raw.len() / 2 };
-    let gpu_ratio: f64 = if is_hybrid { 0.7 } else { 1.0 };
-    let gpu_elements = (total_elements as f64 * gpu_ratio) as usize;
-    let cpu_elements = total_elements - gpu_elements;
-    let gpu_bytes = gpu_elements * bytes_per_element;
-
-    let (a_gpu, a_cpu) = a_raw.split_at(gpu_bytes);
-    let (b_gpu, b_cpu) = b_raw.split_at(gpu_bytes);
-    let (res_gpu, res_cpu) = res_raw.split_at_mut(gpu_bytes);
-
-    std::thread::scope(|s| {
-        if is_hybrid && cpu_elements > 0 {
-            let a_cpu_bytes = a_cpu; // Bind to local to satisfy closure
-            let b_cpu_bytes = b_cpu;
-            let res_cpu_bytes = &mut *res_cpu;
-            s.spawn(move || {
-                let threshold = 2_000_000;
-                if dtype == DataType::F32 {
-                    let a_cpu_f32: &[f32] = bytemuck::cast_slice(a_cpu_bytes);
-                    let b_cpu_f32: &[f32] = bytemuck::cast_slice(b_cpu_bytes);
-                    let res_cpu_f32: &mut [f32] = bytemuck::cast_slice_mut(res_cpu_bytes);
-                    if cpu_elements >= threshold {
-                        res_cpu_f32.par_iter_mut().zip(a_cpu_f32.par_iter()).zip(b_cpu_f32.par_iter()).for_each(|((c, &a), &b)| *c = a + b);
-                    } else {
-                        res_cpu_f32.iter_mut().zip(a_cpu_f32.iter()).zip(b_cpu_f32.iter()).for_each(|((c, &a), &b)| *c = a + b);
-                    }
-                } else if dtype == DataType::F16 {
-                    let a_cpu_f16: &[half::f16] = bytemuck::cast_slice(a_cpu_bytes);
-                    let b_cpu_f16: &[half::f16] = bytemuck::cast_slice(b_cpu_bytes);
-                    let res_cpu_f16: &mut [half::f16] = bytemuck::cast_slice_mut(res_cpu_bytes);
-                    if cpu_elements >= threshold {
-                        res_cpu_f16.par_iter_mut().zip(a_cpu_f16.par_iter()).zip(b_cpu_f16.par_iter()).for_each(|((c, &a), &b)| *c = half::f16::from_f32(a.to_f32() + b.to_f32()));
-                    } else {
-                        res_cpu_f16.iter_mut().zip(a_cpu_f16.iter()).zip(b_cpu_f16.iter()).for_each(|((c, &a), &b)| *c = half::f16::from_f32(a.to_f32() + b.to_f32()));
-                    }
-                } else {
-                    let a_cpu_bf16: &[half::bf16] = bytemuck::cast_slice(a_cpu_bytes);
-                    let b_cpu_bf16: &[half::bf16] = bytemuck::cast_slice(b_cpu_bytes);
-                    let res_cpu_bf16: &mut [half::bf16] = bytemuck::cast_slice_mut(res_cpu_bytes);
-                    if cpu_elements >= threshold {
-                        res_cpu_bf16.par_iter_mut().zip(a_cpu_bf16.par_iter()).zip(b_cpu_bf16.par_iter()).for_each(|((c, &a), &b)| *c = half::bf16::from_f32(a.to_f32() + b.to_f32()));
-                    } else {
-                        res_cpu_bf16.iter_mut().zip(a_cpu_bf16.iter()).zip(b_cpu_bf16.iter()).for_each(|((c, &a), &b)| *c = half::bf16::from_f32(a.to_f32() + b.to_f32()));
-                    }
-                }
-            });
-        }
-
-        if gpu_elements > 0 {
-            // GPU Path ALWAYS uses F32 compute for now (R7 200 compat)
-            let (a_gpu_f32, b_gpu_f32);
-            let (ag, bg) = if dtype == DataType::F16 {
-                a_gpu_f32 = bytemuck::cast_slice::<u8, half::f16>(a_gpu).par_iter().map(|x| x.to_f32()).collect::<Vec<_>>();
-                b_gpu_f32 = bytemuck::cast_slice::<u8, half::f16>(b_gpu).par_iter().map(|x| x.to_f32()).collect::<Vec<_>>();
-                (a_gpu_f32.as_slice(), b_gpu_f32.as_slice())
-            } else if dtype == DataType::BF16 {
-                a_gpu_f32 = bytemuck::cast_slice::<u8, half::bf16>(a_gpu).par_iter().map(|x| x.to_f32()).collect::<Vec<_>>();
-                b_gpu_f32 = bytemuck::cast_slice::<u8, half::bf16>(b_gpu).par_iter().map(|x| x.to_f32()).collect::<Vec<_>>();
-                (a_gpu_f32.as_slice(), b_gpu_f32.as_slice())
-            } else {
-                (bytemuck::cast_slice(a_gpu), bytemuck::cast_slice(b_gpu))
-            };
-            
-            let mut res_gpu_f32 = vec![0.0f32; gpu_elements];
-            
-            let pipeline = &backend.add_pipeline;
-            let chunk_elements = 8 * 1024 * 1024; // 32MB
-            let num_chunks = (gpu_elements + chunk_elements - 1) / chunk_elements;
-            const NUM_STAGES: usize = 3;
-            let mut buf_a = Vec::with_capacity(NUM_STAGES);
-            let mut buf_b = Vec::with_capacity(NUM_STAGES);
-            let mut buf_c = Vec::with_capacity(NUM_STAGES);
-            let mut staging_bufs = Vec::with_capacity(NUM_STAGES);
-            let size = (chunk_elements * 4) as wgpu::BufferAddress;
-            let usage_storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;
-            let usage_result = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
-            let usage_staging = wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST;
-
-            for i in 0..NUM_STAGES {
-                buf_a.push(get_buffer(device, size, usage_storage, Some(&format!("Add A {}", i))));
-                buf_b.push(get_buffer(device, size, usage_storage, Some(&format!("Add B {}", i))));
-                buf_c.push(get_buffer(device, size, usage_result, Some(&format!("Add C {}", i))));
-                staging_bufs.push(get_buffer(device, size, usage_staging, Some(&format!("Staging {}", i))));
-            }
-
-            let mut inflight_receivers: std::collections::VecDeque<(std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>, usize, usize, usize)> = std::collections::VecDeque::new();
-            
-            for chunk_idx in 0..num_chunks {
-                let stage = chunk_idx % NUM_STAGES;
-                let chunk_start = chunk_idx * chunk_elements;
-                let current_elements = std::cmp::min(chunk_elements, gpu_elements - chunk_start);
-                let current_size = (current_elements * 4) as wgpu::BufferAddress;
-
-                if inflight_receivers.len() >= NUM_STAGES {
-                    let (rx, s_idx, elements, start_offset) = inflight_receivers.pop_front().unwrap();
-                    while rx.try_recv().is_err() { device.poll(wgpu::Maintain::Poll); }
-                    {
-                        let data = staging_bufs[s_idx].slice(.. (elements * 4) as u64).get_mapped_range();
-                        res_gpu_f32[start_offset .. start_offset + elements].copy_from_slice(bytemuck::cast_slice(&data));
-                    }
-                    staging_bufs[s_idx].unmap();
-                }
-
-                queue.write_buffer(&buf_a[stage], 0, bytemuck::cast_slice(&ag[chunk_start..chunk_start + current_elements]));
-                queue.write_buffer(&buf_b[stage], 0, bytemuck::cast_slice(&bg[chunk_start..chunk_start + current_elements]));
-
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: None, layout: &pipeline.get_bind_group_layout(0),
-                    entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: buf_a[stage].as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: buf_b[stage].as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 2, resource: buf_c[stage].as_entire_binding() },
-                    ],
-                });
-
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-                {
-                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
-                    cpass.set_pipeline(pipeline);
-                    cpass.set_bind_group(0, &bind_group, &[]);
-                    cpass.dispatch_workgroups((current_elements as u32 + 255) / 256, 1, 1);
-                }
-                encoder.copy_buffer_to_buffer(&buf_c[stage], 0, &staging_bufs[stage], 0, current_size);
-                queue.submit(Some(encoder.finish()));
-
-                let (tx, rx) = std::sync::mpsc::channel();
-                staging_bufs[stage].slice(..current_size).map_async(wgpu::MapMode::Read, move |res| tx.send(res).unwrap());
-                inflight_receivers.push_back((rx, stage, current_elements, chunk_start));
-                device.poll(wgpu::Maintain::Poll);
-            }
-
-            while let Some((rx, s_idx, elements, start_offset)) = inflight_receivers.pop_front() {
-                device.poll(wgpu::Maintain::Wait);
-                rx.recv().unwrap().unwrap();
-                {
-                    let data = staging_bufs[s_idx].slice(.. (elements * 4) as u64).get_mapped_range();
-                    res_gpu_f32[start_offset .. start_offset + elements].copy_from_slice(bytemuck::cast_slice(&data));
-                }
-                staging_bufs[s_idx].unmap();
-            }
-            
-            // Final Cast back if needed
-            if dtype == DataType::F16 {
-                let res_f16 = bytemuck::cast_slice_mut::<u8, f16>(res_gpu);
-                for i in 0..gpu_elements {
-                    res_f16[i] = half::f16::from_f32(res_gpu_f32[i]);
-                }
-            } else if dtype == DataType::BF16 {
-                let res_bf16 = bytemuck::cast_slice_mut::<u8, bf16>(res_gpu);
-                for i in 0..gpu_elements {
-                    res_bf16[i] = half::bf16::from_f32(res_gpu_f32[i]);
-                }
-            } else {
-                let res_f32 = bytemuck::cast_slice_mut::<u8, f32>(res_gpu);
-                res_f32[..gpu_elements].copy_from_slice(&res_gpu_f32);
-            }
-
-            for _i in 0..NUM_STAGES {
-                recycle_buffer(buf_a.pop().unwrap(), size, usage_storage);
-                recycle_buffer(buf_b.pop().unwrap(), size, usage_storage);
-                recycle_buffer(buf_c.pop().unwrap(), size, usage_result);
-                recycle_buffer(staging_bufs.pop().unwrap(), size, usage_staging);
-            }
-        }
-    });
+fn begin_cmd(device: &ash::Device, pool: vk::CommandPool) -> vk::CommandBuffer {
+    let alloc_info = vk::CommandBufferAllocateInfo::default().command_pool(pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1);
+    let cmd = unsafe { device.allocate_command_buffers(&alloc_info) }.unwrap()[0];
+    let begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+    unsafe { device.begin_command_buffer(cmd, &begin_info) }.unwrap();
+    cmd
 }
 
-pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype: DataType, is_hybrid: bool) -> Vec<u8> {
-    let backend = BACKEND.get().expect("Backend not init");
-    let device = &backend.device;
-    let queue = &backend.queue;
-    let total_elements = (m * n) as usize;
-    
-    // Hybrid/CPU-only F16 handled by gemm crate in tensor.rs? 
-    // Wait, tensor.rs calls this FOR GPU/Hybrid.
-    
-    // Convert to F32 for GPU compute (fallback)
-    let a_f32_gpu: Vec<f32>;
-    let b_f32_gpu: Vec<f32>;
-    let (ag, bg) = if dtype == DataType::F16 {
-        a_f32_gpu = bytemuck::cast_slice::<u8, half::f16>(a_raw).par_iter().map(|x| x.to_f32()).collect();
-        b_f32_gpu = bytemuck::cast_slice::<u8, half::f16>(b_raw).par_iter().map(|x| x.to_f32()).collect();
-        (a_f32_gpu.as_slice(), b_f32_gpu.as_slice())
-    } else if dtype == DataType::BF16 {
-        a_f32_gpu = bytemuck::cast_slice::<u8, half::bf16>(a_raw).par_iter().map(|x| x.to_f32()).collect();
-        b_f32_gpu = bytemuck::cast_slice::<u8, half::bf16>(b_raw).par_iter().map(|x| x.to_f32()).collect();
-        (a_f32_gpu.as_slice(), b_f32_gpu.as_slice())
-    } else {
-        (bytemuck::cast_slice(a_raw), bytemuck::cast_slice(b_raw))
-    };
+fn end_and_submit(device: &ash::Device, queue: vk::Queue, pool: vk::CommandPool, cmd: vk::CommandBuffer) {
+    unsafe { device.end_command_buffer(cmd) }.unwrap();
+    let cmds = [cmd];
+    let submit_info = vk::SubmitInfo::default().command_buffers(&cmds);
+    unsafe { 
+        device.queue_submit(queue, &[submit_info], vk::Fence::null()).unwrap();
+        device.queue_wait_idle(queue).unwrap();
+        device.free_command_buffers(pool, &cmds);
+    }
+}
 
-    let mut result_f32 = vec![0.0f32; total_elements];
-    let res_ptr = result_f32.as_mut_ptr() as usize;
-
-    // Adaptive tiling
-    let (block_m, block_k, block_n) = if m <= 16 {
-        (16, 16384, 2048) // v2.8.17: "The Union". forced N-tiling for GEMV to enable Double Buffering.
-    } else {
-        (512, 16384, 1024) // 512x16384 A (32MB), 16384x1024 B (64MB). Safe for 2GB VRAM.
-    };
-    
-    let total_m_blocks = (m + block_m - 1) / block_m;
-    let next_m_start = std::sync::atomic::AtomicU32::new(0);
-    let completed_blocks = std::sync::atomic::AtomicU32::new(0);
-    let n_usize = n as usize;
-    let k_usize = k as usize;
-
-    let b_f32_cpu: Vec<f32> = if is_hybrid && (dtype == DataType::F16 || dtype == DataType::BF16) {
-        if dtype == DataType::F16 {
-            bytemuck::cast_slice::<u8, half::f16>(b_raw).par_iter().map(|&x| x.to_f32()).collect()
-        } else {
-            bytemuck::cast_slice::<u8, half::bf16>(b_raw).par_iter().map(|&x| x.to_f32()).collect()
-        }
-    } else {
-        Vec::new()
-    };
-
-    std::thread::scope(|s| {
-        if is_hybrid {
-            let b_f32_ref = &b_f32_cpu;
-            s.spawn(|| {
-                let res_ptr = res_ptr as *mut f32;
-                loop {
-                    let m_start = next_m_start.fetch_add(block_m, std::sync::atomic::Ordering::Relaxed);
-                    if m_start >= m { break; }
-                    let bm = std::cmp::min(block_m, m - m_start);
-                    let band_offset = (m_start * n) as usize;
-                    
-                    if dtype == DataType::F32 {
-                        let a_f32: &[f32] = bytemuck::cast_slice(a_raw);
-                        let b_f32: &[f32] = bytemuck::cast_slice(b_raw);
-                        let a_offset = (m_start * k) as usize;
-                        unsafe {
-                            matrixmultiply::sgemm(
-                                bm as usize, k_usize, n_usize, 1.0,
-                                a_f32.as_ptr().add(a_offset), k as isize, 1,
-                                b_f32.as_ptr(), n as isize, 1, 0.0,
-                                res_ptr.add(band_offset), n as isize, 1,
-                            );
-                        }
-                    } else {
-                        // Hybrid F16/BF16 CPU path: Convert to F32 intermediate for stability
-                        let a_offset = (m_start * k) as usize;
-                        let a_row_f32: Vec<f32> = if dtype == DataType::F16 {
-                            bytemuck::cast_slice::<u8, half::f16>(&a_raw[a_offset*2 .. (a_offset + (bm*k) as usize)*2]).par_iter().map(|x| x.to_f32()).collect()
-                        } else {
-                            bytemuck::cast_slice::<u8, half::bf16>(&a_raw[a_offset*2 .. (a_offset + (bm*k) as usize)*2]).par_iter().map(|x| x.to_f32()).collect()
-                        };
-                        
-                        unsafe {
-                            matrixmultiply::sgemm(
-                                bm as usize, k_usize, n_usize, 1.0,
-                                a_row_f32.as_ptr(), k as isize, 1,
-                                b_f32_ref.as_ptr(), n as isize, 1, 0.0,
-                                res_ptr.add(band_offset), n as isize, 1,
-                            );
-                        }
-                    }
-                    let done = completed_blocks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    println!("  -> [CPU Worker] Rusted Compute Progress: {} / {} blocks processed...", done, total_m_blocks);
-                }
-            });
-        }
-
-        s.spawn(|| {
-            let pipeline = &backend.matmul_pipeline;
-            let res_ptr = res_ptr as *mut f32;
-            let mut a_block = get_vec((block_m * block_k) as usize, false);
-            let mut b_block = get_vec((block_k * block_n) as usize, false);
-            let mut c_block = get_vec((block_m * block_n) as usize, true);
-
-            let k_tiles: Vec<u32> = (0..k).step_by(block_k as usize).collect();
-            loop {
-                let m_start = next_m_start.fetch_add(block_m, std::sync::atomic::Ordering::Relaxed);
-                if m_start >= m { break; }
-                let bm = std::cmp::min(block_m, m - m_start);
-
-                for &k_start in &k_tiles {
-                    let bk = std::cmp::min(block_k, k - k_start);
-                    let size_a = (bm * bk * 4) as u64;
-                    let buf_a = get_buffer(device, size_a, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, Some("MatMul A"));
-                    
-                    let cur_a_len = (bm * bk) as usize;
-                    if bm == 1 {
-                        unsafe { std::ptr::copy_nonoverlapping(ag.as_ptr().add((m_start * k + k_start) as usize), a_block.as_mut_ptr(), cur_a_len); }
-                    } else {
-                        a_block[..cur_a_len].par_chunks_mut(bk as usize).enumerate().for_each(|(i, chunk)| {
-                            let a_row_start = ( (m_start + i as u32) * k + k_start) as usize;
-                            chunk.copy_from_slice(&ag[a_row_start .. a_row_start + (bk as usize)]);
-                        });
-                    }
-                    queue.write_buffer(&buf_a, 0, bytemuck::cast_slice(&a_block[..cur_a_len]));
-
-                    let bufs_b = [
-                        get_buffer(device, (bk * block_n * 4) as u64, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, Some("MatMul B0")),
-                        get_buffer(device, (bk * block_n * 4) as u64, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, Some("MatMul B1")),
-                    ];
-
-                    let n_steps: Vec<u32> = (0..n).step_by(block_n as usize).collect();
-                    let mut staging_requests = Vec::new();
-
-                    for (ni, &n_start) in n_steps.iter().enumerate() {
-                        let bn = std::cmp::min(block_n, n - n_start);
-                        let p_idx = ni % 2;
-                        let next_p_idx = (ni + 1) % 2;
-                        let size_c = (bm * bn * 4) as u64;
-                        let band_offset = (m_start * n) as usize;
-
-                        if ni == 0 {
-                            let cur_b_len = (bk * bn) as usize;
-                            b_block[..cur_b_len].par_chunks_mut(bn as usize).enumerate().for_each(|(i, chunk)| {
-                                let b_row_start = ( (k_start + i as u32) * n + n_start) as usize;
-                                chunk.copy_from_slice(&bg[b_row_start .. b_row_start + (bn as usize)]);
-                            });
-                            queue.write_buffer(&bufs_b[p_idx], 0, bytemuck::cast_slice(&b_block[..cur_b_len]));
-                        }
-
-                        if let Some(&next_n_start) = n_steps.get(ni + 1) {
-                            let nbn = std::cmp::min(block_n, n - next_n_start);
-                            let next_b_len = (bk * nbn) as usize;
-                            b_block[..next_b_len].par_chunks_mut(nbn as usize).enumerate().for_each(|(i, chunk)| {
-                                let b_row_start = ( (k_start + i as u32) * n + next_n_start) as usize;
-                                chunk.copy_from_slice(&bg[b_row_start .. b_row_start + (nbn as usize)]);
-                            });
-                            queue.write_buffer(&bufs_b[next_p_idx], 0, bytemuck::cast_slice(&b_block[..next_b_len]));
-                        }
-
-                        let buf_c = get_buffer(device, size_c, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST, Some("MatMul C"));
-                        let buf_dims = get_buffer(device, 12, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, Some("MatMul Dims"));
-
-                        if k_start == 0 {
-                            c_block[.. (bm * bn) as usize].fill(0.0);
-                            queue.write_buffer(&buf_c, 0, bytemuck::cast_slice(&c_block[.. (bm * bn) as usize]));
-                        }
-
-                        let dims: [u32; 3] = [bm, bk, bn];
-                        queue.write_buffer(&buf_dims, 0, bytemuck::cast_slice(&dims));
-
-                        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: None, layout: &pipeline.get_bind_group_layout(0),
-                            entries: &[
-                                wgpu::BindGroupEntry { binding: 0, resource: buf_a.as_entire_binding() },
-                                wgpu::BindGroupEntry { binding: 1, resource: bufs_b[p_idx].as_entire_binding() },
-                                wgpu::BindGroupEntry { binding: 2, resource: buf_c.as_entire_binding() },
-                                wgpu::BindGroupEntry { binding: 3, resource: buf_dims.as_entire_binding() },
-                            ],
-                        });
-
-                        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-                        {
-                            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
-                            cpass.set_pipeline(pipeline);
-                            cpass.set_bind_group(0, &bind_group, &[]);
-                            cpass.dispatch_workgroups((bn + 15) / 16, (bm + 15) / 16, 1);
-                        }
-
-                        if k_start + bk >= k {
-                            let staging_buf = get_buffer(device, size_c, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, Some("Staging C"));
-                            encoder.copy_buffer_to_buffer(&buf_c, 0, &staging_buf, 0, size_c);
-                            queue.submit(Some(encoder.finish()));
-                            
-                            let (tx, rx) = std::sync::mpsc::channel();
-                            staging_buf.slice(..size_c).map_async(wgpu::MapMode::Read, move |res| tx.send(res).unwrap());
-                            staging_requests.push((rx, staging_buf, n_start, bn, size_c, band_offset));
-                        } else {
-                            queue.submit(Some(encoder.finish()));
-                        }
-
-                        recycle_buffer(buf_c, size_c, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST);
-                        recycle_buffer(buf_dims, 12, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
-                    }
-
-                    if !staging_requests.is_empty() {
-                        device.poll(wgpu::Maintain::Wait);
-                        for (rx, staging_buf, ns, b_n, s_c, b_o) in staging_requests {
-                            rx.recv().unwrap().unwrap();
-                            {
-                                let data = staging_buf.slice(..s_c).get_mapped_range();
-                                let data_f32: &[f32] = bytemuck::cast_slice(&data);
-                                unsafe {
-                                    for i in 0..bm as usize {
-                                        let src_row = &data_f32[i * b_n as usize .. (i + 1) * b_n as usize];
-                                        let dst_row_ptr = res_ptr.add(b_o + ns as usize + i * n_usize);
-                                        std::ptr::copy_nonoverlapping(src_row.as_ptr(), dst_row_ptr, b_n as usize);
-                                    }
-                                }
-                            }
-                            staging_buf.unmap();
-                            recycle_buffer(staging_buf, s_c, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
-                        }
-                    }
-
-                    let [b0, b1] = bufs_b;
-                    recycle_buffer(b0, (bk * block_n * 4) as u64, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
-                    recycle_buffer(b1, (bk * block_n * 4) as u64, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
-                    recycle_buffer(buf_a, size_a, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
-                }
-                let done = completed_blocks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                println!("  -> [GPU Worker] Rusted Compute Progress: {} / {} blocks processed...", done, total_m_blocks);
-            }
-            recycle_vec(a_block);
-            recycle_vec(b_block);
-            recycle_vec(c_block);
-        });
-    });
-
+fn upload_to_stage(src_raw: &[u8], stage: &CachedBuffer, dtype: DataType) {
+    let ptr = stage.allocation.as_ref().unwrap().mapped_ptr().unwrap().as_ptr() as *mut f32;
     if dtype == DataType::F16 {
-        let f16_vec: Vec<f16> = result_f32.par_iter().map(|&x| f16::from_f32(x)).collect();
-        bytemuck::cast_slice(&f16_vec).to_vec()
+        let slice = bytemuck::cast_slice::<u8, half::f16>(src_raw);
+        unsafe { std::slice::from_raw_parts_mut(ptr, slice.len()) }
+            .par_iter_mut().zip(slice.par_iter()).for_each(|(dst, src)| *dst = src.to_f32());
     } else if dtype == DataType::BF16 {
-        let bf16_vec: Vec<bf16> = result_f32.par_iter().map(|&x| bf16::from_f32(x)).collect();
-        bytemuck::cast_slice(&bf16_vec).to_vec()
+        let slice = bytemuck::cast_slice::<u8, half::bf16>(src_raw);
+        unsafe { std::slice::from_raw_parts_mut(ptr, slice.len()) }
+            .par_iter_mut().zip(slice.par_iter()).for_each(|(dst, src)| *dst = src.to_f32());
     } else {
-        bytemuck::cast_slice(&result_f32).to_vec()
+        unsafe { std::ptr::copy_nonoverlapping(src_raw.as_ptr(), ptr as *mut u8, src_raw.len()); }
     }
 }
 
-#[allow(dead_code)]
-pub fn execute_activation(input_raw: &[u8], op: &str, dtype: DataType, is_hybrid: bool) -> Vec<u8> {
-    let _total_elements = if dtype == DataType::F32 { input_raw.len() / 4 } else { input_raw.len() / 2 };
-    let mut result = vec![0u8; input_raw.len()];
-    execute_activation_into(input_raw, op, &mut result, dtype, is_hybrid, false);
-    result
+fn download_from_stage(dst_raw: &mut [u8], stage: &CachedBuffer, dtype: DataType) {
+    let ptr = stage.allocation.as_ref().unwrap().mapped_ptr().unwrap().as_ptr() as *const f32;
+    if dtype == DataType::F16 {
+        let slice = bytemuck::cast_slice_mut::<u8, half::f16>(dst_raw);
+        unsafe { std::slice::from_raw_parts(ptr, slice.len()) }
+            .par_iter().zip(slice.par_iter_mut()).for_each(|(src, dst)| *dst = half::f16::from_f32(*src));
+    } else if dtype == DataType::BF16 {
+        let slice = bytemuck::cast_slice_mut::<u8, half::bf16>(dst_raw);
+        unsafe { std::slice::from_raw_parts(ptr, slice.len()) }
+            .par_iter().zip(slice.par_iter_mut()).for_each(|(src, dst)| *dst = half::bf16::from_f32(*src));
+    } else {
+        unsafe { std::ptr::copy_nonoverlapping(ptr as *const u8, dst_raw.as_mut_ptr(), dst_raw.len()); }
+    }
 }
 
-pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], dtype: DataType, is_hybrid: bool, _use_staging: bool) {
-    let backend = BACKEND.get().expect("Backend not initialized");
-    let device = &backend.device;
-    let queue = &backend.queue;
-    let total_elements = if dtype == DataType::F32 { input_raw.len() / 4 } else { input_raw.len() / 2 };
+pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: DataType, _is_hybrid: bool, _use_staging: bool) {
+    let backend = BACKEND.get().unwrap();
+    let num_bytes = a_raw.len() as vk::DeviceSize;
+    let num_elements = num_bytes as u32 / if dtype == DataType::F32 { 4 } else { 2 };
+    let num_bytes_f32 = (num_elements * 4) as vk::DeviceSize;
     
-    // Performance Threshold: Avoid GPU overhead for small tensors
-    if is_hybrid && total_elements < 2_000_000 {
-        if dtype == DataType::F32 {
-            let i_f32: &[f32] = bytemuck::cast_slice(input_raw);
-            let r_f32: &mut [f32] = bytemuck::cast_slice_mut(res_raw);
-            match op {
-                "relu" => {
-                    if total_elements >= 500_000 {
-                        r_f32.par_iter_mut().zip(i_f32.par_iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { 0.0 });
-                    } else {
-                        r_f32.iter_mut().zip(i_f32.iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { 0.0 });
-                    }
-                },
-                "sigmoid" => r_f32.par_iter_mut().zip(i_f32.par_iter()).for_each(|(o, &i)| *o = 1.0 / (1.0 + (-i).exp())),
-                "silu" => r_f32.par_iter_mut().zip(i_f32.par_iter()).for_each(|(o, &i)| *o = i * (1.0 / (1.0 + (-i).exp()))),
-                _ => {}
-            }
-        } else if dtype == DataType::F16 {
-            let i_f16: &[f16] = bytemuck::cast_slice(input_raw);
-            let r_f16: &mut [f16] = bytemuck::cast_slice_mut(res_raw);
-            match op {
-                "relu" => {
-                    if total_elements >= 500_000 {
-                        r_f16.par_iter_mut().zip(i_f16.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { f16::ZERO });
-                    } else {
-                        r_f16.iter_mut().zip(i_f16.iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { f16::ZERO });
-                    }
-                },
-                "sigmoid" => r_f16.par_iter_mut().zip(i_f16.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
-                "silu" => r_f16.par_iter_mut().zip(i_f16.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(i.to_f32() * (1.0 / (1.0 + (-i.to_f32()).exp())))),
-                _ => {}
-            }
-        } else {
-            let i_bf16: &[bf16] = bytemuck::cast_slice(input_raw);
-            let r_bf16: &mut [bf16] = bytemuck::cast_slice_mut(res_raw);
-            match op {
-                "relu" => {
-                    if total_elements >= 500_000 {
-                        r_bf16.par_iter_mut().zip(i_bf16.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { bf16::ZERO });
-                    } else {
-                        r_bf16.iter_mut().zip(i_bf16.iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { bf16::ZERO });
-                    }
-                },
-                "sigmoid" => r_bf16.par_iter_mut().zip(i_bf16.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
-                "silu" => r_bf16.par_iter_mut().zip(i_bf16.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(i.to_f32() * (1.0 / (1.0 + (-i.to_f32()).exp())))),
-                _ => {}
-            }
-        }
-        return;
+    let buf_a = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, None, false);
+    let buf_b = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, None, false);
+    let buf_c = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC, None, false);
+
+    let stage_a = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, None, true);
+    let stage_b = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, None, true);
+    let stage_c = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, None, true);
+
+    upload_to_stage(a_raw, &stage_a, dtype);
+    upload_to_stage(b_raw, &stage_b, dtype);
+
+    // Transfer UP
+    let cmd_up = begin_cmd(&backend.device, backend.transfer_cmd_pool);
+    unsafe {
+        backend.device.cmd_copy_buffer(cmd_up, stage_a.buffer, buf_a.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+        backend.device.cmd_copy_buffer(cmd_up, stage_b.buffer, buf_b.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+    }
+    end_and_submit(&backend.device, backend.transfer_queue, backend.transfer_cmd_pool, cmd_up);
+
+    // Compute
+    let layouts = [backend.dsl_add];
+    let alloc_info = vk::DescriptorSetAllocateInfo::default().descriptor_pool(*backend.desc_pool.lock().unwrap()).set_layouts(&layouts);
+    let set = unsafe { backend.device.allocate_descriptor_sets(&alloc_info) }.unwrap()[0];
+    
+    let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(0).range(vk::WHOLE_SIZE)];
+    let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(0).range(vk::WHOLE_SIZE)];
+    let info_c = [vk::DescriptorBufferInfo::default().buffer(buf_c.buffer).offset(0).range(vk::WHOLE_SIZE)];
+    
+    let writes = [
+        vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_a),
+        vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_b),
+        vk::WriteDescriptorSet::default().dst_set(set).dst_binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_c),
+    ];
+    unsafe { backend.device.update_descriptor_sets(&writes, &[]) };
+
+    let cmd_comp = begin_cmd(&backend.device, backend.compute_cmd_pool);
+    unsafe {
+        backend.device.cmd_bind_pipeline(cmd_comp, vk::PipelineBindPoint::COMPUTE, backend.pipe_add);
+        backend.device.cmd_bind_descriptor_sets(cmd_comp, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_add, 0, &[set], &[]);
+        let workgroups = (num_elements + 255) / 256;
+        backend.device.cmd_dispatch(cmd_comp, workgroups, 1, 1);
+    }
+    end_and_submit(&backend.device, backend.compute_queue, backend.compute_cmd_pool, cmd_comp);
+
+    // Transfer DOWN
+    let cmd_down = begin_cmd(&backend.device, backend.transfer_cmd_pool);
+    unsafe {
+        backend.device.cmd_copy_buffer(cmd_down, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+    }
+    end_and_submit(&backend.device, backend.transfer_queue, backend.transfer_cmd_pool, cmd_down);
+
+    download_from_stage(res_raw, &stage_c, dtype);
+
+    // Cleanup
+    unsafe { backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[set]).unwrap(); }
+    recycle_buffer(buf_a);
+    recycle_buffer(buf_b);
+    recycle_buffer(buf_c);
+    recycle_buffer(stage_a);
+    recycle_buffer(stage_b);
+    recycle_buffer(stage_c);
+}
+
+pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype: DataType, _is_hybrid: bool) -> Vec<u8> {
+    let backend = BACKEND.get().unwrap();
+    let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
+    
+    let size_a_f32 = (m * k * 4) as vk::DeviceSize;
+    let size_b_f32 = (k * n * 4) as vk::DeviceSize;
+    let size_c_f32 = (m * n * 4) as vk::DeviceSize;
+    
+    let size_c_raw = (m * n * bytes_per_elem) as vk::DeviceSize;
+    let mut out_vec = vec![0u8; size_c_raw as usize];
+
+    let buf_a = get_buffer(size_a_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, None, false);
+    let buf_b = get_buffer(size_b_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, None, false);
+    let buf_c = get_buffer(size_c_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC, None, false);
+
+    let stage_a = get_buffer(size_a_f32, vk::BufferUsageFlags::TRANSFER_SRC, None, true);
+    let stage_b = get_buffer(size_b_f32, vk::BufferUsageFlags::TRANSFER_SRC, None, true);
+    let stage_c = get_buffer(size_c_f32, vk::BufferUsageFlags::TRANSFER_DST, None, true);
+    
+    // Uniform (16 bytes aligned for std140)
+    let uniform_size = 16 as vk::DeviceSize;
+    let buf_u = get_buffer(uniform_size, vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, None, false);
+    let stage_u = get_buffer(uniform_size, vk::BufferUsageFlags::TRANSFER_SRC, None, true);
+    
+    let uniform_data: [u32; 4] = [m, k, n, 0];
+
+    upload_to_stage(a_raw, &stage_a, dtype);
+    upload_to_stage(b_raw, &stage_b, dtype);
+    
+    unsafe {
+        std::ptr::copy_nonoverlapping(uniform_data.as_ptr() as _, stage_u.allocation.as_ref().unwrap().mapped_ptr().unwrap().as_ptr() as _, 16);
     }
 
-    let bytes_per_element = if dtype == DataType::F32 { 4 } else { 2 };
-    let gpu_ratio: f64 = if is_hybrid { 0.7 } else { 1.0 };
-    let gpu_elements = (total_elements as f64 * gpu_ratio) as usize;
-    let cpu_elements = total_elements - gpu_elements;
-    let gpu_bytes = gpu_elements * bytes_per_element;
+    // UP
+    let cmd_up = begin_cmd(&backend.device, backend.transfer_cmd_pool);
+    unsafe {
+        backend.device.cmd_copy_buffer(cmd_up, stage_a.buffer, buf_a.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: size_a_f32 }]);
+        backend.device.cmd_copy_buffer(cmd_up, stage_b.buffer, buf_b.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: size_b_f32 }]);
+        backend.device.cmd_copy_buffer(cmd_up, stage_u.buffer, buf_u.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: uniform_size }]);
+    }
+    end_and_submit(&backend.device, backend.transfer_queue, backend.transfer_cmd_pool, cmd_up);
 
-    let (i_gpu, i_cpu) = input_raw.split_at(gpu_bytes);
-    let (res_gpu, res_cpu) = res_raw.split_at_mut(gpu_bytes);
+    // COMPUTE
+    let layouts = [backend.dsl_matmul];
+    let alloc_info = vk::DescriptorSetAllocateInfo::default().descriptor_pool(*backend.desc_pool.lock().unwrap()).set_layouts(&layouts);
+    let set = unsafe { backend.device.allocate_descriptor_sets(&alloc_info) }.unwrap()[0];
+    
+    let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(0).range(vk::WHOLE_SIZE)];
+    let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(0).range(vk::WHOLE_SIZE)];
+    let info_c = [vk::DescriptorBufferInfo::default().buffer(buf_c.buffer).offset(0).range(vk::WHOLE_SIZE)];
+    let info_u = [vk::DescriptorBufferInfo::default().buffer(buf_u.buffer).offset(0).range(vk::WHOLE_SIZE)];
+    
+    let writes = [
+        vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_a),
+        vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_b),
+        vk::WriteDescriptorSet::default().dst_set(set).dst_binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_c),
+        vk::WriteDescriptorSet::default().dst_set(set).dst_binding(3).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER).buffer_info(&info_u),
+    ];
+    unsafe { backend.device.update_descriptor_sets(&writes, &[]) };
 
-    std::thread::scope(|s| {
-        if cpu_elements > 0 && is_hybrid {
-            let i_cpu_loc = i_cpu;
-            let res_cpu_loc = &mut *res_cpu;
-            s.spawn(move || {
-                if dtype == DataType::F32 {
-                    let i_cpu_f32: &[f32] = bytemuck::cast_slice(i_cpu_loc);
-                    let r_cpu_f32: &mut [f32] = bytemuck::cast_slice_mut(res_cpu_loc);
-                    match op {
-                        "relu" => r_cpu_f32.par_iter_mut().zip(i_cpu_f32.par_iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { 0.0 }),
-                        "sigmoid" => r_cpu_f32.par_iter_mut().zip(i_cpu_f32.par_iter()).for_each(|(o, &i)| *o = 1.0 / (1.0 + (-i).exp())),
-                        "silu" => r_cpu_f32.par_iter_mut().zip(i_cpu_f32.par_iter()).for_each(|(o, &i)| *o = i * (1.0 / (1.0 + (-i).exp()))),
-                        _ => {}
-                    }
-                } else if dtype == DataType::F16 {
-                    let i_cpu_f16: &[half::f16] = bytemuck::cast_slice(i_cpu_loc);
-                    let r_cpu_f16: &mut [half::f16] = bytemuck::cast_slice_mut(res_cpu_loc);
-                    match op {
-                        "relu" => r_cpu_f16.par_iter_mut().zip(i_cpu_f16.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { half::f16::ZERO }),
-                        "sigmoid" => r_cpu_f16.par_iter_mut().zip(i_cpu_f16.par_iter()).for_each(|(o, &i)| *o = half::f16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
-                        "silu" => r_cpu_f16.par_iter_mut().zip(i_cpu_f16.par_iter()).for_each(|(o, &i)| *o = half::f16::from_f32(i.to_f32() * (1.0 / (1.0 + (-i.to_f32()).exp())))),
-                        _ => {}
-                    }
-                } else {
-                    let i_cpu_bf16: &[half::bf16] = bytemuck::cast_slice(i_cpu_loc);
-                    let r_cpu_bf16: &mut [half::bf16] = bytemuck::cast_slice_mut(res_cpu_loc);
-                    match op {
-                        "relu" => r_cpu_bf16.par_iter_mut().zip(i_cpu_bf16.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { half::bf16::ZERO }),
-                        "sigmoid" => r_cpu_bf16.par_iter_mut().zip(i_cpu_bf16.par_iter()).for_each(|(o, &i)| *o = half::bf16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
-                        "silu" => r_cpu_bf16.par_iter_mut().zip(i_cpu_bf16.par_iter()).for_each(|(o, &i)| *o = half::bf16::from_f32(i.to_f32() * (1.0 / (1.0 + (-i.to_f32()).exp())))),
-                        _ => {}
-                    }
-                }
-            });
-        }
+    let cmd_comp = begin_cmd(&backend.device, backend.compute_cmd_pool);
+    unsafe {
+        backend.device.cmd_bind_pipeline(cmd_comp, vk::PipelineBindPoint::COMPUTE, backend.pipe_matmul);
+        backend.device.cmd_bind_descriptor_sets(cmd_comp, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_matmul, 0, &[set], &[]);
+        let workgroups_x = (n + 15) / 16;
+        let workgroups_y = (m + 15) / 16;
+        backend.device.cmd_dispatch(cmd_comp, workgroups_x, workgroups_y, 1);
+    }
+    end_and_submit(&backend.device, backend.compute_queue, backend.compute_cmd_pool, cmd_comp);
 
-        if gpu_elements > 0 {
-            // GPU Fallback to F32
-            let i_gpu_f32 = if dtype == DataType::F16 {
-                bytemuck::cast_slice::<u8, f16>(i_gpu).par_iter().map(|&x| x.to_f32()).collect::<Vec<f32>>()
-            } else if dtype == DataType::BF16 {
-                bytemuck::cast_slice::<u8, bf16>(i_gpu).par_iter().map(|&x| x.to_f32()).collect::<Vec<f32>>()
-            } else {
-                bytemuck::cast_slice::<u8, f32>(i_gpu).to_vec()
-            };
-            
-            let mut r_gpu_f32 = vec![0.0f32; gpu_elements];
-            let pipeline = match op {
-                "relu" => &backend.relu_pipeline,
-                "sigmoid" => &backend.sigmoid_pipeline,
-                "silu" => &backend.silu_pipeline,
-                _ => panic!("Unknown activation: {}", op),
-            };
+    // DOWN
+    let cmd_down = begin_cmd(&backend.device, backend.transfer_cmd_pool);
+    unsafe {
+        backend.device.cmd_copy_buffer(cmd_down, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: size_c_f32 }]);
+    }
+    end_and_submit(&backend.device, backend.transfer_queue, backend.transfer_cmd_pool, cmd_down);
 
-            // Use multi-stage path for simplicity in fallback
-            let chunk_size = 1024 * 1024;
-            let num_stages = (gpu_elements + chunk_size - 1) / chunk_size;
-            
-            for stage in 0..num_stages {
-                let start = stage * chunk_size;
-                let elements = std::cmp::min(chunk_size, gpu_elements - start);
-                let cur_size = (elements * 4) as wgpu::BufferAddress;
-                
-                let bi = get_buffer(device, cur_size, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, None);
-                let bo = get_buffer(device, cur_size, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST, None);
-                
-                queue.write_buffer(&bi, 0, bytemuck::cast_slice(&i_gpu_f32[start..start+elements]));
-                
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: None, layout: &pipeline.get_bind_group_layout(0),
-                    entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: bi.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: bo.as_entire_binding() },
-                    ],
-                });
-                
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-                {
-                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
-                    cpass.set_pipeline(pipeline);
-                    cpass.set_bind_group(0, &bg, &[]);
-                    cpass.dispatch_workgroups((elements as u32 + 63) / 64, 1, 1);
-                }
-                
-                let sb = get_buffer(device, cur_size, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, None);
-                encoder.copy_buffer_to_buffer(&bo, 0, &sb, 0, cur_size);
-                queue.submit(Some(encoder.finish()));
-                
-                let (tx, rx) = std::sync::mpsc::channel();
-                sb.slice(..cur_size).map_async(wgpu::MapMode::Read, move |res| tx.send(res).unwrap());
-                device.poll(wgpu::Maintain::Wait);
-                rx.recv().unwrap().unwrap();
-                {
-                    let data = sb.slice(..cur_size).get_mapped_range();
-                    r_gpu_f32[start .. start + elements].copy_from_slice(bytemuck::cast_slice(&data));
-                }
-                sb.unmap();
-                recycle_buffer(bi, cur_size, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
-                recycle_buffer(bo, cur_size, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST);
-                recycle_buffer(sb, cur_size, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
-            }
-            
-            // Cast back
-            if dtype == DataType::F16 {
-                let r_f16 = bytemuck::cast_slice_mut::<u8, f16>(res_gpu);
-                for i in 0..gpu_elements { r_f16[i] = f16::from_f32(r_gpu_f32[i]); }
-            } else if dtype == DataType::BF16 {
-                let r_bf16 = bytemuck::cast_slice_mut::<u8, bf16>(res_gpu);
-                for i in 0..gpu_elements { r_bf16[i] = bf16::from_f32(r_gpu_f32[i]); }
-            } else {
-                let r_f32 = bytemuck::cast_slice_mut::<u8, f32>(res_gpu);
-                r_f32[..gpu_elements].copy_from_slice(&r_gpu_f32);
-            }
-        }
-    });
+    download_from_stage(&mut out_vec, &stage_c, dtype);
+
+    unsafe { backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[set]).unwrap(); }
+    recycle_buffer(buf_a); recycle_buffer(buf_b); recycle_buffer(buf_c); recycle_buffer(buf_u);
+    recycle_buffer(stage_a); recycle_buffer(stage_b); recycle_buffer(stage_c); recycle_buffer(stage_u);
+
+    out_vec
+}
+
+pub fn execute_activation(input_raw: &[u8], op: &str, dtype: DataType, is_hybrid: bool) -> Vec<u8> {
+    let mut out_vec = vec![0u8; input_raw.len()];
+    execute_activation_into(input_raw, op, &mut out_vec, dtype, is_hybrid, false);
+    out_vec
+}
+
+pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], dtype: DataType, _is_hybrid: bool, _use_staging: bool) {
+    let backend = BACKEND.get().unwrap();
+    let num_bytes = input_raw.len() as vk::DeviceSize;
+    let num_elements = num_bytes as u32 / if dtype == DataType::F32 { 4 } else { 2 };
+    let num_bytes_f32 = (num_elements * 4) as vk::DeviceSize;
+    
+    let buf_in = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, None, false);
+    let buf_out = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC, None, false);
+
+    let stage_in = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, None, true);
+    let stage_out = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, None, true);
+
+    upload_to_stage(input_raw, &stage_in, dtype);
+
+    let cmd_up = begin_cmd(&backend.device, backend.transfer_cmd_pool);
+    unsafe { backend.device.cmd_copy_buffer(cmd_up, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]); }
+    end_and_submit(&backend.device, backend.transfer_queue, backend.transfer_cmd_pool, cmd_up);
+
+    let layouts = [backend.dsl_act];
+    let alloc_info = vk::DescriptorSetAllocateInfo::default().descriptor_pool(*backend.desc_pool.lock().unwrap()).set_layouts(&layouts);
+    let set = unsafe { backend.device.allocate_descriptor_sets(&alloc_info) }.unwrap()[0];
+    
+    let info_in = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(0).range(vk::WHOLE_SIZE)];
+    let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(0).range(vk::WHOLE_SIZE)];
+    
+    let writes = [
+        vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_in),
+        vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_out),
+    ];
+    unsafe { backend.device.update_descriptor_sets(&writes, &[]) };
+
+    let pipe = match op {
+        "relu" => backend.pipe_relu,
+        "sigmoid" => backend.pipe_sigmoid,
+        "silu" => backend.pipe_silu,
+        _ => panic!("Unsupported activation OP"),
+    };
+
+    let cmd_comp = begin_cmd(&backend.device, backend.compute_cmd_pool);
+    unsafe {
+        backend.device.cmd_bind_pipeline(cmd_comp, vk::PipelineBindPoint::COMPUTE, pipe);
+        backend.device.cmd_bind_descriptor_sets(cmd_comp, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_act, 0, &[set], &[]);
+        let workgroups = (num_elements + 255) / 256;
+        backend.device.cmd_dispatch(cmd_comp, workgroups, 1, 1);
+    }
+    end_and_submit(&backend.device, backend.compute_queue, backend.compute_cmd_pool, cmd_comp);
+
+    let cmd_down = begin_cmd(&backend.device, backend.transfer_cmd_pool);
+    unsafe { backend.device.cmd_copy_buffer(cmd_down, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]); }
+    end_and_submit(&backend.device, backend.transfer_queue, backend.transfer_cmd_pool, cmd_down);
+
+    download_from_stage(res_raw, &stage_out, dtype);
+
+    unsafe { backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[set]).unwrap(); }
+    recycle_buffer(buf_in); recycle_buffer(buf_out);
+    recycle_buffer(stage_in); recycle_buffer(stage_out);
 }

@@ -657,7 +657,7 @@ impl Tensor {
                 std::hint::spin_loop();
             }
             
-            let bytes_to_process = std::cmp::min(1048568, total_bytes - offset);
+            let bytes_to_process = std::cmp::min(1048576, total_bytes - offset);
             let elems_to_process = (bytes_to_process / bytes_per_elem as u64) as usize;
             
             let payload_slice = unsafe { 

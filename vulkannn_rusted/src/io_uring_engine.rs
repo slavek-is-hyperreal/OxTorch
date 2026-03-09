@@ -75,18 +75,21 @@ impl DirectIoEngine {
             .build()
             .user_data(1);
         
-        let mut ring = self.ring.lock().unwrap();
-        unsafe {
-            ring.submission().push(&read_e).expect("submission queue is full");
-        }
-        ring.submit_and_wait(1).expect("submit_and_wait failed");
-        
-        let mut cq = ring.completion();
-        let cqe = cq.next().expect("completion queue is empty");
-        assert_eq!(cqe.user_data(), 1);
-        if cqe.result() < 0 {
-            let err = std::io::Error::from_raw_os_error(-cqe.result());
-            panic!("io_uring read failed: {}", err);
+        let res = {
+            let mut ring = self.ring.lock().unwrap();
+            unsafe {
+                ring.submission().push(&read_e).expect("submission queue is full");
+            }
+            ring.submit_and_wait(1).expect("submit_and_wait failed");
+            
+            let cqe = ring.completion().next().expect("completion queue is empty");
+            assert_eq!(cqe.user_data(), 1);
+            cqe.result()
+        };
+
+        if res < 0 {
+            let err = std::io::Error::from_raw_os_error(-res);
+            panic!("io_uring read failed: {} (offset={}, len={})", err, offset, buffer.len());
         }
     }
     
@@ -98,18 +101,21 @@ impl DirectIoEngine {
             .build()
             .user_data(2);
             
-        let mut ring = self.ring.lock().unwrap();
-        unsafe {
-            ring.submission().push(&write_e).expect("submission queue is full");
-        }
-        ring.submit_and_wait(1).expect("submit_and_wait failed");
-        
-        let mut cq = ring.completion();
-        let cqe = cq.next().expect("completion queue is empty");
-        assert_eq!(cqe.user_data(), 2);
-        if cqe.result() < 0 {
-            let err = std::io::Error::from_raw_os_error(-cqe.result());
-            panic!("io_uring write failed: {}", err);
+        let res = {
+            let mut ring = self.ring.lock().unwrap();
+            unsafe {
+                ring.submission().push(&write_e).expect("submission queue is full");
+            }
+            ring.submit_and_wait(1).expect("submit_and_wait failed");
+            
+            let cqe = ring.completion().next().expect("completion queue is empty");
+            assert_eq!(cqe.user_data(), 2);
+            cqe.result()
+        };
+
+        if res < 0 {
+            let err = std::io::Error::from_raw_os_error(-res);
+            panic!("io_uring write failed: {} (offset={}, len={})", err, offset, buffer.len());
         }
     }
 }

@@ -9,6 +9,7 @@ VNN (VulkanNN) has achieved 100% PyTorch parity and established an unparalleled 
 - **Async 3-Stage Pipeline (v2.8)**: Triple-buffering system in `backend.rs` that overlaps I/O with compute.
 - **CPU Superiority**: Achieved lower latency than PyTorch CPU in core operations via Rayon and `matrixmultiply`.
 - **SSD L3 Cache**: Memory mapping for tensors larger than system RAM (Verified up to 40k x 40k).
+- **Raw `ash` Vulkan Backend (v3.3.0)**: Completely rewritten GPU backend from `wgpu` to `ash`. Decoupled GPU compute and PCIe DMA transfers using explicit Vulkan `Transfer` and `Compute` queues synchronized natively by Timeline Semaphores. Enabled dynamic FP16 support detecting hardware limits (e.g. AMD Bonaire).
 
 ### 🛠️ In-Progress: The "Iron Age" Stability
 Current development is focused on pushing the limits of the native Rust implementation:
@@ -39,7 +40,7 @@ Inspired by the legendary Polish minicomputer [MERA-400](https://pl.wikipedia.or
     - Lockless, Tagged-Token Dataflow circular buffer inspired by the MERA-400 CROOK system. Autonomous CPU/GPU workers polling atomic `StatefulTile` memory aligned strictly to 1MB ZFS boundaries.
 ~~3.  **Branchless AVX1 Bit-Twiddling (SWAR)**~~ (Completed v3.3.0)
     - Replacing slow scalar `f32::from()` iterators with raw `std::arch::x86_64` intrinsics, heavily simulating hardware F16C operations lacking in processors like i5-3450. Includes dynamic dispatch fallback to native F16C/AVX2 on newer architectures to maintain maximum performance.
-4.  **Asynchronous Multi-Queue Vulkan Pipelining (Raw `ash` Rewrite)**
+~~4.  **Asynchronous Multi-Queue Vulkan Pipelining (Raw `ash` Rewrite)**~~ (Completed v3.3.0)
     - Completely rewriting the GPU backend from `wgpu` to `ash` (raw Vulkan). Decoupling GPU compute and PCIe DMA transfers using explicit Vulkan `Transfer` and `Compute` queues synchronized natively by Timeline Semaphores.
 
 ---
