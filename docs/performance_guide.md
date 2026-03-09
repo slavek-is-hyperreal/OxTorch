@@ -1,6 +1,6 @@
-# ⚡ Performance & Stability Guide (v3.2.0 "Valkyrie")
+# ⚡ Performance & Stability Guide (v3.3.0 "Iron Age")
 
-This guide explains how to interpret the Valkyrie Statistical Audit and maximize the throughput of VNN Rusted.
+This guide explains how to interpret the Valkyrie/Iron Age Statistical Audit and maximize the throughput of VNN Rusted.
 
 ---
 
@@ -33,8 +33,8 @@ VNN Rusted uses adaptive tiling to maximize bandwidth on mid-range GPUs (e.g., 2
 
 ## 4. Maximizing Throughput (Hardware Saturation Method)
 1.  **Close the Browser**: While VNN is resilient, heavy browser activity increases `StdDev` on CPU tasks.
-2.  **Use `device="hybrid"` (Current approach)**: This saturates all CPU cores via Rayon (`src/tensor.rs:631`) while the GPU handles heavy SGEMM tiles via `wgpu` (`src/backend.rs:429`). *(Upcoming Phase 3 Roadmap: This static workload split will transition to the MERA Style Task Scheduler - MSTS, where tasks are autonomously load-balanced using `StatefulTile` lockless rings).*
-3.  **SSD Direct Streaming**: Always use `Tensor.from_ssd`. Currently, this uses the Linux kernel's DMA prefetching (`src/tensor.rs:92`) via `memmap2` to stream weights directly into the computation pipeline. *(Upcoming Phase 3 Roadmap: This will transition to `io_uring` with `O_DIRECT` to guarantee 1MB ZFS recordsize alignment, fully bypassing the VFS page cache).*
+2.  **Use `device="hybrid"` (Current approach)**: This saturates all CPU cores via Rayon (`src/tensor.rs:631`) while the GPU handles heavy SGEMM tiles via `wgpu` (`src/backend.rs:429`). Workloads are autonomously load-balanced utilizing the **MERA Style Task Scheduler (MSTS)** lockless ring buffers.
+3.  **SSD Direct Streaming**: Always use `Tensor.from_ssd`. This utilizes the incredible **`io_uring`** engine with `O_DIRECT` to guarantee 1MB ZFS recordsize alignment, fully bypassing the VFS page cache to stream weights directly into the computation pipeline at absolute disk IO limits.
 
 ---
 
