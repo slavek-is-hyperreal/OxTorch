@@ -466,9 +466,119 @@ impl Tensor {
             } else {
                 return Err(PyValueError::new_err("Unsupported DataType for CPU Unary Op"));
             }
-        } else {
+        } else if self.device == "hybrid" {
+            // --- MSTS Tile-Pulling Hybrid Dispatch (Phase 4) ---
+            // Divide the tensor into N tiles of ~TILE_ELEMS elements each.
+            // An AtomicUsize acts as a shared tile counter (Tagged-Token Dataflow).
+            // One GPU dispatcher thread and multiple CPU worker threads race to claim
+            // tiles via fetch_add. The fastest resource "eats" the most work.
             let (input_raw, _) = self.get_slice_raw_bytes();
-            let res_raw = crate::backend::execute_activation(input_raw, op, self.dtype, self.device == "hybrid");
+            let num_total = input_raw.len() / (if self.dtype == DataType::F32 { 4 } else { 2 });
+
+            // Tile size: ~256K elements (~1MB for F32) aligns with our ZFS block target
+            const TILE_ELEMS: usize = 256 * 1024;
+            // Vulkan dispatch has a fixed overhead of ~80ms on Bonaire (PCIe staging roundtrip).
+            // Only use the GPU dispatcher when the total data is large enough to amortize that cost.
+            // Below this threshold, pure CPU SWAR is always faster on this hardware.
+            const VULKAN_MIN_ELEMS: usize = 4 * 1024 * 1024; // ~16MB F32 / ~8MB F16
+
+            let num_tiles = num_total.div_ceil(TILE_ELEMS);
+
+            let out_bytes_len = input_raw.len();
+            let mut out_raw = vec![0u8; out_bytes_len];
+
+            // We need raw ptrs for cross-thread writes into disjoint non-overlapping slices.
+            // Safety: tiles are non-overlapping; the AtomicUsize guarantees each tile is
+            // claimed at most once. We never write the same byte from two threads.
+            let input_ptr = input_raw.as_ptr() as usize; // Send as usize (no &ref lifetime issue)
+            let output_ptr = out_raw.as_mut_ptr() as usize;
+            let total_len  = out_bytes_len;
+            let dtype      = self.dtype;
+            let op_str     = op.to_string();
+
+            let tile_counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+            rayon::scope(|s| {
+                // GPU dispatcher thread: only spawn if tensor is above the Vulkan break-even point.
+                // Below VULKAN_MIN_ELEMS the PCIe staging overhead dominates; pure CPU is faster.
+                if num_total >= VULKAN_MIN_ELEMS {
+                let counter_gpu = tile_counter.clone();
+                let op_gpu = op_str.clone();
+                s.spawn(move |_| {
+
+                    loop {
+                        let tile_id = counter_gpu.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if tile_id >= num_tiles { break; }
+                        let elem_start = tile_id * TILE_ELEMS;
+                        let elem_count = (TILE_ELEMS).min(num_total - elem_start);
+                        let bpe = if dtype == DataType::F32 { 4usize } else { 2usize };
+                        // Safety: raw ptrs are valid for `total_len` bytes
+                        let in_sl  = unsafe { std::slice::from_raw_parts    (input_ptr  as *const u8, total_len) };
+                        let out_sl = unsafe { std::slice::from_raw_parts_mut(output_ptr as *mut   u8, total_len) };
+                        let _ = bpe; // suppress lint
+                        crate::backend::execute_activation_chunked(in_sl, out_sl, elem_start, elem_count, &op_gpu, dtype);
+                    }
+                });
+                } // end if num_total >= VULKAN_MIN_ELEMS
+
+                // CPU worker threads: claim tiles from the same counter with SWAR math
+                let cpu_tiles = num_tiles; // upper bound visible to Rayon workers below
+                let counter_cpu = tile_counter.clone();
+                let op_cpu = op_str.clone();
+                s.spawn(move |_| {
+                    loop {
+                        let tile_id = counter_cpu.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if tile_id >= cpu_tiles { break; }
+                        let elem_start = tile_id * TILE_ELEMS;
+                        let elem_count = (TILE_ELEMS).min(num_total - elem_start);
+                        let bpe = if dtype == DataType::F32 { 4usize } else { 2usize };
+                        let in_sl  = unsafe { std::slice::from_raw_parts    (input_ptr  as *const u8, total_len) };
+                        let out_sl = unsafe { std::slice::from_raw_parts_mut(output_ptr as *mut   u8, total_len) };
+                        match dtype {
+                            DataType::F32 => {
+                                let in_f  = unsafe { std::slice::from_raw_parts    (in_sl.as_ptr()  .add(elem_start * bpe) as *const f32, elem_count) };
+                                let out_f = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut f32, elem_count) };
+                                match op_cpu.as_str() {
+                                    "relu"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { 0.0 }),
+                                    "sigmoid" => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = 1.0 / (1.0 + (-i).exp())),
+                                    "silu"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = i / (1.0 + (-i).exp())),
+                                    _ => panic!("Unsupported CPU op in hybrid tile worker"),
+                                }
+                            },
+                            DataType::F16 => {
+                                let in_h  = unsafe { std::slice::from_raw_parts    (in_sl.as_ptr()  .add(elem_start * bpe) as *const half::f16, elem_count) };
+                                let out_h = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut half::f16, elem_count) };
+                                match op_cpu.as_str() {
+                                    "relu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| *o = if i > half::f16::ZERO { i } else { half::f16::ZERO }),
+                                    _ => panic!("Unsupported F16 hybrid tile op"),
+                                }
+                            },
+                            DataType::BF16 => {
+                                let in_b  = unsafe { std::slice::from_raw_parts    (in_sl.as_ptr()  .add(elem_start * bpe) as *const half::bf16, elem_count) };
+                                let out_b = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut half::bf16, elem_count) };
+                                match op_cpu.as_str() {
+                                    "relu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| *o = if i > half::bf16::ZERO { i } else { half::bf16::ZERO }),
+                                    _ => panic!("Unsupported BF16 hybrid tile op"),
+                                }
+                            },
+                        }
+                    }
+                });
+            });
+
+            let storage = if dtype == DataType::F16 {
+                Storage::F16(bytemuck::cast_slice(&out_raw).to_vec())
+            } else if dtype == DataType::BF16 {
+                Storage::BF16(bytemuck::cast_slice(&out_raw).to_vec())
+            } else {
+                Storage::F32(bytemuck::cast_slice(&out_raw).to_vec())
+            };
+            Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: self.dtype, storage, mmap_data: None })
+
+        } else {
+            // Pure Vulkan path (device == "vulkan")
+            let (input_raw, _) = self.get_slice_raw_bytes();
+            let res_raw = crate::backend::execute_activation(input_raw, op, self.dtype, false);
             let storage = if self.dtype == DataType::F16 {
                 Storage::F16(bytemuck::cast_slice(&res_raw).to_vec())
             } else if self.dtype == DataType::BF16 {

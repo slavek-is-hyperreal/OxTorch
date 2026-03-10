@@ -615,6 +615,91 @@ pub fn execute_activation(input_raw: &[u8], op: &str, dtype: DataType, is_hybrid
     out_vec
 }
 
+/// MSTS Tile-Pulling: Process a chunk of [elem_offset..elem_offset+elem_count] elements on GPU.
+/// Input/output are full-tensor byte slices; only the tile window is uploaded and computed.
+/// Returns the computed bytes for this tile (always elem_count * bytes_per_elem_f32 = elem_count*4).
+pub fn execute_activation_chunked(
+    input_raw: &[u8],
+    output_raw: &mut [u8],
+    elem_offset: usize,
+    elem_count: usize,
+    op: &str,
+    dtype: DataType,
+) {
+    let bytes_per_elem = if dtype == DataType::F32 { 4usize } else { 2usize };
+    let tile_in  = &input_raw [elem_offset * bytes_per_elem .. (elem_offset + elem_count) * bytes_per_elem];
+    let tile_out = &mut output_raw[elem_offset * bytes_per_elem .. (elem_offset + elem_count) * bytes_per_elem];
+
+    let num_bytes_f32 = (elem_count * 4) as vk::DeviceSize;
+    let backend = BACKEND.get().unwrap();
+
+    let buf_in  = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Act_In"),  false);
+    let buf_out = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Out"), false);
+    let stage_in  = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Act_Stage_In"),  true);
+    let stage_out = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Stage_Out"), true);
+
+    upload_to_stage(tile_in, &stage_in, dtype);
+
+    let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
+    unsafe {
+        backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+
+        let barrier = vk::BufferMemoryBarrier::default()
+            .buffer(buf_in.buffer).size(vk::WHOLE_SIZE)
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[barrier], &[]);
+
+        let layouts = [backend.dsl_act];
+        let alloc_info = vk::DescriptorSetAllocateInfo::default().descriptor_pool(*backend.desc_pool.lock().unwrap()).set_layouts(&layouts);
+        let set = backend.device.allocate_descriptor_sets(&alloc_info).unwrap()[0];
+
+        let info_in  = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(0).range(vk::WHOLE_SIZE)];
+        let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(0).range(vk::WHOLE_SIZE)];
+        let writes = [
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_in),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_out),
+        ];
+        backend.device.update_descriptor_sets(&writes, &[]);
+
+        let pipe = match op {
+            "relu"    => backend.pipe_relu,
+            "sigmoid" => backend.pipe_sigmoid,
+            "silu"    => backend.pipe_silu,
+            _ => panic!("Unsupported chunked activation OP"),
+        };
+
+        backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipe);
+        backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_act, 0, &[set], &[]);
+        backend.device.cmd_dispatch(cmd, (elem_count as u32 + 255) / 256, 1, 1);
+
+        let barrier_out = vk::BufferMemoryBarrier::default()
+            .buffer(buf_out.buffer).size(vk::WHOLE_SIZE)
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
+
+        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+
+        backend.device.end_command_buffer(cmd).unwrap();
+        let cmds = [cmd];
+        let submit_info = vk::SubmitInfo::default().command_buffers(&cmds);
+        backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
+        backend.device.queue_wait_idle(backend.compute_queue).unwrap();
+        backend.device.free_command_buffers(backend.compute_cmd_pool, &cmds);
+        backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[set]).unwrap();
+    }
+
+    download_from_stage(tile_out, &stage_out, dtype);
+    recycle_buffer(buf_in); recycle_buffer(buf_out);
+    recycle_buffer(stage_in); recycle_buffer(stage_out);
+}
+
+
 pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], dtype: DataType, is_hybrid: bool, use_staging: bool) {
     let t_start = std::time::Instant::now();
     let (wait_id, stage_out) = submit_activation_into(input_raw, op, res_raw, dtype, is_hybrid, use_staging);

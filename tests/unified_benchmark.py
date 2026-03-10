@@ -4,8 +4,29 @@ import torch
 import os
 import sys
 import json
-import vulkannn_rusted as vnn
-from vulkannn_rusted import Tensor
+
+# Branch-aware dynamic import: tries each known branch module name in order.
+# This lets unified_benchmark.py work unmodified on any branch.
+_VNN_CANDIDATES = [
+    "vulkannn_rusted_exp",   # dev_raw_vulkan (experimental ash branch)
+    "vulkannn_rusted_dev",   # dev
+    "vulkannn_rusted_test",  # test
+    "vulkannn_rusted_main",  # main
+    "vulkannn_rusted",       # fallback (any generic build)
+]
+vnn = None
+for _mod_name in _VNN_CANDIDATES:
+    try:
+        import importlib
+        vnn = importlib.import_module(_mod_name)
+        print(f"[benchmark] Loaded VNN module: {_mod_name}")
+        break
+    except ImportError:
+        continue
+if vnn is None:
+    raise ImportError("No vulkannn_rusted module found. Please run maturin develop --release first.")
+Tensor = vnn.Tensor
+
 
 RESULTS_FILE = "tests/last_results.json"
 HISTORY_FILE = "tests/benchmark_history.log"
@@ -158,9 +179,14 @@ if __name__ == "__main__":
                 pt, v_t, ok = run_bench(f"ReLU_{dtype}_{mode}", "ReLU", (1000000,), mode=mode, dtype=dtype)
                 run_results.append({"name": f"ReLU {dtype} ({mode})", "pt": pt, "vnn": v_t, "ok": ok})
 
+                # --- LARGE TENSOR: Above GPU break-even threshold (VULKAN_MIN_ELEMS=4M) ---
+                pt, v_t, ok = run_bench(f"ReLU_{dtype}_{mode}_15M", "ReLU", (15000000,), mode=mode, dtype=dtype)
+                run_results.append({"name": f"ReLU {dtype} 15M ({mode})", "pt": pt, "vnn": v_t, "ok": ok})
+
         pt, v_t, ok = run_bench("Monster_ReLU_F32_SSD", "ReLU", (4000000000,), mode="cpu", is_ssd=True, dtype="f32")
         run_results.append({"name": "Monster ReLU 16GB SSD", "pt": pt, "vnn": v_t, "ok": ok})
         all_runs_results.append(run_results)
+
 
     # --- AGGREGATE STATS ---
     test_names = [r["name"] for r in all_runs_results[0]]
