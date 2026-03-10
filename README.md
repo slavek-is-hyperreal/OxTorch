@@ -80,15 +80,15 @@ AMD Radeon R7 260X (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
 
 | Test | PyTorch | VNN | Ratio | Notes |
 |:---|---:|---:|:---:|:---|
-| MatMul F32 2048x2048 (cpu) | 0.316s | 0.320s | 1.01x | Near parity via matrixmultiply/sgemm |
-| MatMul F32 2048x2048 (vulkan) | 0.363s | 0.391s | 1.08x | Bonaire PCIe overhead visible |
-| MatMul F32 2048x2048 (hybrid) | 0.228s | 0.397s | 1.74x | GPU threshold optimization pending |
-| ReLU F32 1M (cpu) | 0.002s | 0.002s | 0.92x | Rayon SIMD |
-| ReLU F32 1M (hybrid) | 0.003s | 0.023s | 6.7x | Below GPU threshold: CPU only |
-| MatMul F16 2048x2048 (cpu) | 103.8s | 0.298s | **0.003x** | PyTorch: scalar emulation; VNN: AVX F16C |
-| MatMul F16 2048x2048 (vulkan) | 104.0s | 0.361s | **0.003x** | VNN: Vulkan F32 compute, F16 storage |
-| MatMul BF16 2048x2048 (cpu) | 40.1s | 0.209s | **0.005x** | PyTorch: scalar; VNN: SSE2 SWAR |
-| Monster ReLU 16GB (SSD) | N/A | 46.6s | SSD limit | io_uring O_DIRECT, 1MB ZFS records |
+| MatMul F32 2048x2048 (cpu) | ~0.2x s | 0.211s | ~1.0x | Near parity via matrixmultiply/sgemm |
+| MatMul F32 2048x2048 (vulkan) | ~0.2x s | 0.091s | ~0.45x | Vulkan compute |
+| MatMul F32 2048x2048 (hybrid) | ~0.2x s | 0.089s | ~0.45x | GPU threshold optimization |
+| ReLU F32 1M (cpu) | 0.002s | 0.010s | 5.0x | Rayon SIMD |
+| ReLU F32 1M (hybrid) | 0.001s | 0.011s | 11.0x | Below GPU threshold: CPU only |
+| MatMul F16 2048x2048 (cpu) | 108.0s | 0.280s | **0.002x** | PyTorch: scalar emulation; VNN: AVX F16C |
+| MatMul F16 2048x2048 (vulkan) | 106.0s | 0.250s | **0.002x** | VNN: Vulkan F32 compute, F16 storage |
+| MatMul BF16 2048x2048 (cpu) | 40.5s | 0.230s | **0.005x** | PyTorch: scalar; VNN: SSE2 SWAR |
+| Monster ReLU 16GB (SSD) | N/A | 45.7s | SSD limit | io_uring O_DIRECT, 1MB ZFS records |
 
 > PyTorch F16/BF16 results reflect execution on the i5-3450 without native F16C acceleration in
 > PyTorch's dispatch path. VNN dispatches to hardware F16C intrinsics at runtime.
