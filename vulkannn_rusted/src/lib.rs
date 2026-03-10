@@ -13,9 +13,9 @@ fn rust_greeting(name: &str) -> PyResult<String> {
     Ok(format!("Hello from VulkanNN-Rusted, {}! The Iron Age has begun.", name))
 }
 
-/// The main entry point mapped directly to the `vulkannn_rusted` Python module.
+/// The main entry point mapped directly to the `vulkannn_rusted_dev` Python module.
 #[pymodule]
-fn vulkannn_rusted(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn vulkannn_rusted_dev(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Initialize the wgpu engine once upon module load
     backend::init_backend();
     // Initialize memory budgets
