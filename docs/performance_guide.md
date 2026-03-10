@@ -28,8 +28,8 @@ The `unified_benchmark.py` harness reports:
 - 4 cores, no hyperthreading, 6MB L3 cache
 - Has AVX and F16C but NOT AVX2 or FMA
 - F16/BF16 operations dispatch to F16C intrinsics (F16) or SSE2 SWAR (BF16)
-- F32 MatMul: near 1:1 with PyTorch (~0.32s for 2048x2048)
-- F16/BF16 MatMul: ~300-600x faster than PyTorch, which uses scalar emulation
+- F32 MatMul: near 1:1 with PyTorch (~0.21s for 2048x2048)
+- F16/BF16 MatMul: ~500x faster than PyTorch, which uses scalar emulation
 
 ### GPU (AMD Radeon R7 260X, Bonaire GCN 1.1)
 
