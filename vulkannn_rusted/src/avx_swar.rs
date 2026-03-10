@@ -24,10 +24,6 @@ pub fn convert_f32_to_bf16(src: &[f32], dst: &mut [bf16]) {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn convert_f32_to_bf16_avx2(src: &[f32], dst: &mut [bf16]) {
-    let chunks = src.chunks_exact(8);
-    let rem = chunks.remainder();
-    let mut dst_chunks = dst.chunks_exact_mut(8);
-    
     // Round to nearest even bias: 0x7FFF + ((f32_bits >> 16) & 1)
     let bias_const = _mm256_set1_epi32(0x7FFF);
     let one_const = _mm256_set1_epi32(1);
@@ -125,9 +121,6 @@ pub fn convert_f32_to_f16(src: &[f32], dst: &mut [f16]) {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "f16c")]
 unsafe fn convert_f32_to_f16_f16c(src: &[f32], dst: &mut [f16]) {
-    let chunks = src.chunks_exact(8);
-    let rem = chunks.remainder();
-    let mut dst_chunks = dst.chunks_exact_mut(8);
     
     src.par_chunks_exact(8)
         .zip(dst.par_chunks_exact_mut(8))
@@ -196,9 +189,6 @@ pub fn convert_f16_to_f32(src: &[f16], dst: &mut [f32]) {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "f16c")]
 unsafe fn convert_f16_to_f32_f16c(src: &[f16], dst: &mut [f32]) {
-    let chunks = src.chunks_exact(8);
-    let rem = chunks.remainder();
-    let mut dst_chunks = dst.chunks_exact_mut(8);
     
     src.par_chunks_exact(8)
         .zip(dst.par_chunks_exact_mut(8))

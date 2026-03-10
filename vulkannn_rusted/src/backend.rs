@@ -5,6 +5,19 @@ use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc, Allocation, Allocati
 use gpu_allocator::MemoryLocation;
 use crate::tensor::DataType;
 use crate::avx_swar::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+pub struct AsyncOp {
+    pub staging_in1: Option<CachedBuffer>,
+    pub staging_in2: Option<CachedBuffer>,
+    pub staging_out: Option<CachedBuffer>,
+    pub device_in1: Option<CachedBuffer>,
+    pub device_in2: Option<CachedBuffer>,
+    pub device_out: Option<CachedBuffer>,
+    pub cmd_buffer: vk::CommandBuffer,
+    pub desc_set: vk::DescriptorSet,
+    pub wait_id: u64,
+}
 
 pub struct AshBackend {
     pub _entry: ash::Entry,
@@ -13,7 +26,9 @@ pub struct AshBackend {
     pub device: ash::Device,
     pub compute_queue: vk::Queue,
     pub _compute_family: u32,
+    #[allow(dead_code)]
     pub transfer_queue: vk::Queue,
+    #[allow(dead_code)]
     pub _transfer_family: u32,
     pub allocator: Mutex<Allocator>,
     
@@ -33,8 +48,13 @@ pub struct AshBackend {
     pub pipe_silu: vk::Pipeline,
 
     pub compute_cmd_pool: vk::CommandPool,
+    #[allow(dead_code)]
     pub transfer_cmd_pool: vk::CommandPool,
     pub buffer_cache: Mutex<Vec<CachedBuffer>>,
+    
+    pub timeline_semaphore: vk::Semaphore,
+    pub timeline_value: AtomicU64,
+    pub pending_ops: Mutex<Vec<AsyncOp>>,
 }
 
 pub struct CachedBuffer {
@@ -43,7 +63,11 @@ pub struct CachedBuffer {
     pub buffer: vk::Buffer,
     pub allocation: Option<Allocation>,
     pub cpu_visible: bool,
+    pub mapped_ptr: Option<*mut u8>,
 }
+
+unsafe impl Send for CachedBuffer {}
+unsafe impl Sync for CachedBuffer {}
 
 pub static BACKEND: OnceLock<AshBackend> = OnceLock::new();
 
@@ -143,21 +167,21 @@ pub fn init_backend() {
 
         let features = vk::PhysicalDeviceFeatures::default();
         
-        let mut features16 = vk::PhysicalDeviceShaderFloat16Int8FeaturesKHR::default()
-            .shader_float16(true);
-            
-        let mut features11 = vk::PhysicalDeviceVulkan11Features::default()
-            .storage_buffer16_bit_access(true);
-            
-        if has_fp16 {
-            features11.p_next = &mut features16 as *mut _ as *mut std::ffi::c_void;
-        }
-            
         let mut features12 = vk::PhysicalDeviceVulkan12Features::default()
             .timeline_semaphore(true);
             
+        let mut features11 = vk::PhysicalDeviceVulkan11Features::default()
+            .storage_buffer16_bit_access(true);
+
+        // Chain features: features2 -> features12 -> features11 -> [features16 (if available)]
+        features12.p_next = &mut features11 as *mut _ as *mut std::ffi::c_void;
+
+        let mut features16 = vk::PhysicalDeviceShaderFloat16Int8FeaturesKHR::default()
+            .shader_float16(true);
+
+        #[allow(unused_assignments)]
         if has_fp16 {
-            features12.p_next = &mut features11 as *mut _ as *mut std::ffi::c_void;
+            features11.p_next = &mut features16 as *mut _ as *mut std::ffi::c_void;
         }
 
         let mut features2 = vk::PhysicalDeviceFeatures2::default()
@@ -270,6 +294,12 @@ pub fn init_backend() {
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
         let transfer_cmd_pool = unsafe { device.create_command_pool(&transfer_cmd_pool_info, None) }.unwrap();
 
+        let mut sem_type = vk::SemaphoreTypeCreateInfo::default()
+            .semaphore_type(vk::SemaphoreType::TIMELINE)
+            .initial_value(0);
+        let sem_info = vk::SemaphoreCreateInfo::default().push_next(&mut sem_type);
+        let timeline_semaphore = unsafe { device.create_semaphore(&sem_info, None) }.expect("Failed to create Timeline Semaphore. Ensure device supports Vulkan 1.2!");
+
         AshBackend {
             _entry: entry, _instance: instance, _pdevice: pdevice, device,
             compute_queue, _compute_family: compute_family,
@@ -281,8 +311,56 @@ pub fn init_backend() {
             pipe_add, pipe_matmul, pipe_relu, pipe_sigmoid, pipe_silu,
             compute_cmd_pool, transfer_cmd_pool,
             buffer_cache: Mutex::new(Vec::new()),
+            timeline_semaphore,
+            timeline_value: AtomicU64::new(0),
+            pending_ops: Mutex::new(Vec::new()),
         }
     });
+}
+
+pub fn poll_async_ops() {
+    let backend = BACKEND.get().unwrap();
+    let current_val = unsafe { backend.device.get_semaphore_counter_value(backend.timeline_semaphore).unwrap() };
+    
+    let mut pending = backend.pending_ops.lock().unwrap();
+    pending.retain(|op| {
+        if current_val >= op.wait_id {
+            // Operation finished, cleanup resources
+            if let Some(buf) = &op.staging_in1 { recycle_buffer_clone(buf); }
+            if let Some(buf) = &op.staging_in2 { recycle_buffer_clone(buf); }
+            if let Some(buf) = &op.staging_out { recycle_buffer_clone(buf); }
+            if let Some(buf) = &op.device_in1 { recycle_buffer_clone(buf); }
+            if let Some(buf) = &op.device_in2 { recycle_buffer_clone(buf); }
+            if let Some(buf) = &op.device_out { recycle_buffer_clone(buf); }
+            
+            unsafe {
+                backend.device.free_command_buffers(backend.compute_cmd_pool, &[op.cmd_buffer]);
+                backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[op.desc_set]).unwrap();
+            }
+            false // remove from pending
+        } else {
+            true // keep in pending
+        }
+    });
+}
+
+fn recycle_buffer_clone(cached: &CachedBuffer) {
+    let clone = CachedBuffer {
+        size: cached.size, usage: cached.usage, buffer: cached.buffer, allocation: None, cpu_visible: cached.cpu_visible, mapped_ptr: cached.mapped_ptr,
+    };
+    if let Ok(mut cache) = BACKEND.get().unwrap().buffer_cache.lock() { cache.push(clone); }
+}
+
+pub fn poll_async_ops_until(target_val: u64) {
+    let backend = BACKEND.get().unwrap();
+    let current = unsafe { backend.device.get_semaphore_counter_value(backend.timeline_semaphore).unwrap() };
+    if current < target_val {
+        let wait_info = vk::SemaphoreWaitInfo::default()
+            .semaphores(std::slice::from_ref(&backend.timeline_semaphore))
+            .values(std::slice::from_ref(&target_val));
+        unsafe { backend.device.wait_semaphores(&wait_info, u64::MAX).unwrap(); }
+    }
+    poll_async_ops();
 }
 
 pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Option<&str>, cpu_visible: bool) -> CachedBuffer {
@@ -316,10 +394,11 @@ pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Opti
     }).unwrap();
     
     let cpu_visible_actual = allocation.mapped_ptr().is_some();
+    let mapped_ptr = allocation.mapped_ptr().map(|p| p.as_ptr() as *mut u8);
     
     unsafe { backend.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()) }.unwrap();
     
-    CachedBuffer { size, usage, buffer, allocation: Some(allocation), cpu_visible: cpu_visible_actual }
+    CachedBuffer { size, usage, buffer, allocation: Some(allocation), cpu_visible: cpu_visible_actual, mapped_ptr }
 }
 
 pub fn recycle_buffer(cached: CachedBuffer) {
@@ -341,19 +420,10 @@ fn begin_cmd(device: &ash::Device, pool: vk::CommandPool) -> vk::CommandBuffer {
     cmd
 }
 
-fn end_and_submit(device: &ash::Device, queue: vk::Queue, pool: vk::CommandPool, cmd: vk::CommandBuffer) {
-    unsafe { device.end_command_buffer(cmd) }.unwrap();
-    let cmds = [cmd];
-    let submit_info = vk::SubmitInfo::default().command_buffers(&cmds);
-    unsafe { 
-        device.queue_submit(queue, &[submit_info], vk::Fence::null()).unwrap();
-        device.queue_wait_idle(queue).unwrap();
-        device.free_command_buffers(pool, &cmds);
-    }
-}
+
 
 fn upload_to_stage(src_raw: &[u8], stage: &CachedBuffer, dtype: DataType) {
-    let ptr = stage.allocation.as_ref().unwrap().mapped_ptr().unwrap().as_ptr() as *mut f32;
+    let ptr = stage.mapped_ptr.unwrap() as *mut f32;
     let num_elements = src_raw.len() / if dtype == DataType::F32 { 4 } else { 2 };
     let dst_slice = unsafe { std::slice::from_raw_parts_mut(ptr, num_elements) };
 
@@ -369,7 +439,7 @@ fn upload_to_stage(src_raw: &[u8], stage: &CachedBuffer, dtype: DataType) {
 }
 
 fn download_from_stage(dst_raw: &mut [u8], stage: &CachedBuffer, dtype: DataType) {
-    let ptr = stage.allocation.as_ref().unwrap().mapped_ptr().unwrap().as_ptr() as *const f32;
+    let ptr = stage.mapped_ptr.unwrap() as *const f32;
     let num_elements = dst_raw.len() / if dtype == DataType::F32 { 4 } else { 2 };
     let src_slice = unsafe { std::slice::from_raw_parts(ptr, num_elements) };
 
@@ -539,11 +609,30 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
 
 pub fn execute_activation(input_raw: &[u8], op: &str, dtype: DataType, is_hybrid: bool) -> Vec<u8> {
     let mut out_vec = vec![0u8; input_raw.len()];
-    execute_activation_into(input_raw, op, &mut out_vec, dtype, is_hybrid, false);
+    let (wait_id, stage_out) = submit_activation_into(input_raw, op, &mut out_vec, dtype, is_hybrid, false);
+    poll_async_ops_until(wait_id);
+    download_from_stage(&mut out_vec, &stage_out, dtype);
     out_vec
 }
 
-pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], dtype: DataType, _is_hybrid: bool, _use_staging: bool) {
+pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], dtype: DataType, is_hybrid: bool, use_staging: bool) {
+    let t_start = std::time::Instant::now();
+    let (wait_id, stage_out) = submit_activation_into(input_raw, op, res_raw, dtype, is_hybrid, use_staging);
+    poll_async_ops_until(wait_id);
+
+    let t_dl_start = std::time::Instant::now();
+    download_from_stage(res_raw, &stage_out, dtype);
+    let t_dl = t_dl_start.elapsed();
+
+    static PRINT_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !PRINT_ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        println!("\n[VNN PERF] Act Sync Call Download: {:.2}ms, Total Block Time: {:.2}ms", 
+                t_dl.as_secs_f64()*1000.0, t_start.elapsed().as_secs_f64()*1000.0);
+    }
+}
+
+pub fn submit_activation_into(input_raw: &[u8], op: &str, _res_raw: &mut [u8], dtype: DataType, _is_hybrid: bool, _use_staging: bool) -> (u64, CachedBuffer) {
+
     let t_start = std::time::Instant::now();
     let backend = BACKEND.get().unwrap();
     let num_bytes = input_raw.len() as vk::DeviceSize;
@@ -558,14 +647,18 @@ pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], d
     let t_buf = t_start.elapsed();
 
     upload_to_stage(input_raw, &stage_in, dtype);
-    let t_up = t_start.elapsed() - t_buf;
+    let _t_up = t_start.elapsed() - t_buf;
 
     let t_cmd_start = std::time::Instant::now();
+    let _t_desc_submit = std::time::Duration::ZERO;
+    let _t_wait_start = std::time::Instant::now();
+    let _t_wait = std::time::Duration::ZERO;
+
     let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
     unsafe {
         backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
         
-        let barrier = vk::BufferMemoryBarrier::default().buffer(buf_in.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        let barrier = vk::BufferMemoryBarrier::default().buffer(buf_in.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[barrier], &[]);
 
         let layouts = [backend.dsl_act];
@@ -592,37 +685,48 @@ pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], d
         backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_act, 0, &[set], &[]);
         backend.device.cmd_dispatch(cmd, (num_elements + 255) / 256, 1, 1);
         
+        // Wait for compute to finish BEFORE copying back to staging
         let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_out.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
         
         backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
         
         backend.device.end_command_buffer(cmd).unwrap();
+        
+        backend.timeline_value.fetch_add(1, Ordering::SeqCst);
+        let wait_id = backend.timeline_value.load(Ordering::SeqCst);
+        
+        let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default()
+            .signal_semaphore_values(std::slice::from_ref(&wait_id));
+            
         let cmds = [cmd];
-        let submit_info = vk::SubmitInfo::default().command_buffers(&cmds);
+        let submit_info = vk::SubmitInfo::default()
+            .command_buffers(&cmds)
+            .signal_semaphores(std::slice::from_ref(&backend.timeline_semaphore))
+            .push_next(&mut timeline_info);
+            
         backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
-    }
-    let t_desc_submit = t_cmd_start.elapsed();
+        
+        let stage_out_clone = CachedBuffer {
+            size: stage_out.size, usage: stage_out.usage, buffer: stage_out.buffer, allocation: None, cpu_visible: stage_out.cpu_visible, mapped_ptr: stage_out.mapped_ptr,
+        };
 
-    let t_wait_start = std::time::Instant::now();
-    unsafe {
-        backend.device.queue_wait_idle(backend.compute_queue).unwrap();
-        backend.device.free_command_buffers(backend.compute_cmd_pool, &cmds);
-        backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[set]).unwrap();
-    }
-    let t_wait = t_wait_start.elapsed();
-
-    let t_dl_start = std::time::Instant::now();
-    download_from_stage(res_raw, &stage_out, dtype);
-    let t_dl = t_dl_start.elapsed();
-
-    recycle_buffer(buf_in); recycle_buffer(buf_out);
-    recycle_buffer(stage_in); recycle_buffer(stage_out);
-
-    static PRINT_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if !PRINT_ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        println!("\n[VNN PERF] Act Overhead: Buffers: {:.2}ms, Upload: {:.2}ms, Recording+Submit: {:.2}ms, WaitIdle: {:.2}ms, Download: {:.2}ms, Total: {:.2}ms", 
-                t_buf.as_secs_f64()*1000.0, t_up.as_secs_f64()*1000.0, t_desc_submit.as_secs_f64()*1000.0, 
-                t_wait.as_secs_f64()*1000.0, t_dl.as_secs_f64()*1000.0, t_start.elapsed().as_secs_f64()*1000.0);
+        let op_info = AsyncOp {
+            staging_in1: Some(stage_in),
+            staging_in2: None,
+            staging_out: Some(stage_out),
+            device_in1: Some(buf_in),
+            device_in2: None,
+            device_out: Some(buf_out),
+            cmd_buffer: cmd,
+            desc_set: set,
+            wait_id,
+        };
+        backend.pending_ops.lock().unwrap().push(op_info);
+        
+        let _t_desc_submit = t_cmd_start.elapsed();
+        
+        // Asynchronous return, no wait idle
+        return (wait_id, stage_out_clone);
     }
 }

@@ -1243,5 +1243,183 @@
                 "failed": false
             }
         ]
+    },
+    {
+        "timestamp": "Tue Mar 10 15:21:43 2026",
+        "total_duration_seconds": 1151.4639500589983,
+        "runs": 1,
+        "results": [
+            {
+                "name": "MatMul f32 (cpu)",
+                "vnn_mean": 0.36201603984955,
+                "vnn_med": 0.36201603984955,
+                "vnn_std": 0.0,
+                "pt_mean": 0.390699191049498,
+                "pt_med": 0.390699191049498,
+                "failed": false
+            },
+            {
+                "name": "ReLU f32 (cpu)",
+                "vnn_mean": 0.0021283838505041786,
+                "vnn_med": 0.0021283838505041786,
+                "vnn_std": 0.0,
+                "pt_mean": 0.008809830348764081,
+                "pt_med": 0.008809830348764081,
+                "failed": false
+            },
+            {
+                "name": "MatMul f32 (vulkan)",
+                "vnn_mean": 0.4124796362506459,
+                "vnn_med": 0.4124796362506459,
+                "vnn_std": 0.0,
+                "pt_mean": 0.33762647314870264,
+                "pt_med": 0.33762647314870264,
+                "failed": false
+            },
+            {
+                "name": "ReLU f32 (vulkan)",
+                "vnn_mean": 0.08430364649975672,
+                "vnn_med": 0.08430364649975672,
+                "vnn_std": 0.0,
+                "pt_mean": 0.004435794250457548,
+                "pt_med": 0.004435794250457548,
+                "failed": false
+            },
+            {
+                "name": "MatMul f32 (hybrid)",
+                "vnn_mean": 0.4052361144000315,
+                "vnn_med": 0.4052361144000315,
+                "vnn_std": 0.0,
+                "pt_mean": 0.3368044827497215,
+                "pt_med": 0.3368044827497215,
+                "failed": false
+            },
+            {
+                "name": "ReLU f32 (hybrid)",
+                "vnn_mean": 0.08316055390023394,
+                "vnn_med": 0.08316055390023394,
+                "vnn_std": 0.0,
+                "pt_mean": 0.004168960549577605,
+                "pt_med": 0.004168960549577605,
+                "failed": false
+            },
+            {
+                "name": "MatMul f16 (cpu)",
+                "vnn_mean": 0.3254447649960639,
+                "vnn_med": 0.3254447649960639,
+                "vnn_std": 0.0,
+                "pt_mean": 135.22266071249032,
+                "pt_med": 135.22266071249032,
+                "failed": false
+            },
+            {
+                "name": "ReLU f16 (cpu)",
+                "vnn_mean": 0.003893374401377514,
+                "vnn_med": 0.003893374401377514,
+                "vnn_std": 0.0,
+                "pt_mean": 0.00786853869794868,
+                "pt_med": 0.00786853869794868,
+                "failed": false
+            },
+            {
+                "name": "MatMul f16 (vulkan)",
+                "vnn_mean": 0.3508885699993698,
+                "vnn_med": 0.3508885699993698,
+                "vnn_std": 0.0,
+                "pt_mean": 124.59274431200174,
+                "pt_med": 124.59274431200174,
+                "failed": false
+            },
+            {
+                "name": "ReLU f16 (vulkan)",
+                "vnn_mean": 0.07393537809839472,
+                "vnn_med": 0.07393537809839472,
+                "vnn_std": 0.0,
+                "pt_mean": 0.004304564601625316,
+                "pt_med": 0.004304564601625316,
+                "failed": false
+            },
+            {
+                "name": "MatMul f16 (hybrid)",
+                "vnn_mean": 0.34884698799578473,
+                "vnn_med": 0.34884698799578473,
+                "vnn_std": 0.0,
+                "pt_mean": 120.3237036125065,
+                "pt_med": 120.3237036125065,
+                "failed": false
+            },
+            {
+                "name": "ReLU f16 (hybrid)",
+                "vnn_mean": 0.07366650920012034,
+                "vnn_med": 0.07366650920012034,
+                "vnn_std": 0.0,
+                "pt_mean": 0.005761246601468884,
+                "pt_med": 0.005761246601468884,
+                "failed": false
+            },
+            {
+                "name": "MatMul bf16 (cpu)",
+                "vnn_mean": 0.21318519950727932,
+                "vnn_med": 0.21318519950727932,
+                "vnn_std": 0.0,
+                "pt_mean": 38.98752654099371,
+                "pt_med": 38.98752654099371,
+                "failed": false
+            },
+            {
+                "name": "ReLU bf16 (cpu)",
+                "vnn_mean": 0.00021423069993034005,
+                "vnn_med": 0.00021423069993034005,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0030918663018383087,
+                "pt_med": 0.0030918663018383087,
+                "failed": false
+            },
+            {
+                "name": "MatMul bf16 (vulkan)",
+                "vnn_mean": 0.3823484385065967,
+                "vnn_med": 0.3823484385065967,
+                "vnn_std": 0.0,
+                "pt_mean": 38.944523288999335,
+                "pt_med": 38.944523288999335,
+                "failed": false
+            },
+            {
+                "name": "ReLU bf16 (vulkan)",
+                "vnn_mean": 0.08077741629967931,
+                "vnn_med": 0.08077741629967931,
+                "vnn_std": 0.0,
+                "pt_mean": 0.003004790798877366,
+                "pt_med": 0.003004790798877366,
+                "failed": false
+            },
+            {
+                "name": "MatMul bf16 (hybrid)",
+                "vnn_mean": 0.3787649385049008,
+                "vnn_med": 0.3787649385049008,
+                "vnn_std": 0.0,
+                "pt_mean": 38.89216674650379,
+                "pt_med": 38.89216674650379,
+                "failed": false
+            },
+            {
+                "name": "ReLU bf16 (hybrid)",
+                "vnn_mean": 0.08097791289910675,
+                "vnn_med": 0.08097791289910675,
+                "vnn_std": 0.0,
+                "pt_mean": 0.004417572601232678,
+                "pt_med": 0.004417572601232678,
+                "failed": false
+            },
+            {
+                "name": "Monster ReLU 16GB SSD",
+                "vnn_mean": 47.16080716700526,
+                "vnn_med": 47.16080716700526,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0,
+                "pt_med": 0.0,
+                "failed": false
+            }
+        ]
     }
 ]
