@@ -1,71 +1,95 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.3.0] - 2026-03-09 "Iron Age"
+---
+
+## [3.3.0] - 2026-03-10 "Iron Age"
+
 ### Added
-- **Out-of-Core `io_uring` Engine (Direct I/O)**: Bypassed Linux VFS page cache using `O_DIRECT`. Streams SSD data directly to L3 cache mapped to native 1MB ZFS boundaries.
-- **MERA Style Task Scheduler (MSTS)**: Revolutionary lockless Tagged-Token ring buffer `StatefulTile` inspired by MERA-400 CROOK OS, enabling asynchronous chunked disk streaming without thread blocking.
-- **AVX1 SWAR Bit-Twiddling**: Custom hardware intrinsics (`std::arch::x86_64`) for massive F16/BF16 type casting acceleration on legacy CPUs (Ivy Bridge) lacking native F16C extension.
-- **Unprecedented Hybrid Speeds**: Achieved up to 600x speedup vs PyTorch on FP16/BF16 MatMul via active SIMD upcasting into L3 cache bounds.
+- **MSTS Tile-Pulling Hybrid Dispatch (Phase 4)**: Replaced the static 30/70 CPU/GPU split with a
+  dynamic atomic tile counter (`Arc<AtomicUsize>`). One GPU dispatcher thread and one CPU SWAR
+  thread race to claim 256K-element tiles. No locks, no static allocation. The faster resource
+  naturally claims more work, embodying the MERA-400 CROOK OS tagged-token dataflow principle.
+- **`execute_activation_chunked`**: New `backend.rs` API that processes a sub-range of elements
+  (by offset + count) to support the tile-pulling hybrid dispatch.
+- **GPU Dispatch Threshold (`VULKAN_MIN_ELEMS = 4M`)**: For tensors below 4M elements (~16MB F32),
+  Vulkan PCIe staging overhead (~80ms on Bonaire) exceeds compute time. The GPU dispatcher is
+  skipped entirely below this threshold; all tiles are claimed by CPU SWAR workers.
+- **Cross-Platform SIMD Fallback Chain (`avx_swar.rs`)**: Complete rewrite with runtime dispatch
+  covering: F16C+AVX (Ivy Bridge, Haswell) -> SSE2 SWAR branchless (any x86_64, no F16C needed)
+  -> AArch64 NEON -> scalar Rayon. All four conversion directions (F32/F16/BF16 in both ways).
+  Note: the i5-3450 (Ivy Bridge) DOES have F16C -- it dispatches to hardware intrinsics.
+- **Branch-Specific Module Naming**: Each branch compiles to a distinct Python module name for
+  parallel A/B benchmarking (`vulkannn_rusted_main`, `_test`, `_dev`, `_exp`).
+- **Branch-Aware Benchmark Import**: `unified_benchmark.py` now dynamically imports the active
+  branch module via a fallback chain. No manual edits needed when switching branches.
+- **Raw `ash` Vulkan Backend** (merged from dev_raw_vulkan): Complete rewrite from `wgpu`/WGSL to
+  `ash` (raw Vulkan 1.2). Explicit compute and transfer command pools, Timeline Semaphores for async
+  GPU operation chaining, buffer recycling cache.
+- **Out-of-Core `io_uring` Engine**: `src/io_uring_engine.rs` streams data with `O_DIRECT` at
+  1MB ZFS recordsize boundaries, bypassing the Linux VFS page cache.
+- **MERA Style Task Scheduler (MSTS)**: `src/crook_scheduler.rs` implements `StatefulTile`, a
+  lockless ring buffer with atomic state transitions inspired by the MERA-400 CROOK OS.
+- **15M Element ReLU Benchmark**: Added to `unified_benchmark.py` across all dtypes and modes to
+  reveal the GPU dispatch break-even point above the 4M element threshold.
+
+### Fixed
+- **Incorrect F16C claim**: The research document incorrectly stated the i5-3450 lacks F16C.
+  It does have F16C. The SWAR path is retained as a fallback for genuinely F16C-less CPUs.
+- **Removed dead SSSE3 mask code**: Cleaned up the unreachable SSSE3 branch in the SSE2 BF16
+  conversion path.
+
+### Changed
+- `unary_op` in `tensor.rs`: the `hybrid` device path now calls the tile-pulling ring instead of
+  the single whole-tensor `execute_activation` call.
+- Version bump to reflect the scope of the ash rewrite and Phase 4 hybrid engine.
+
+---
 
 ## [3.2.0] - 2026-03-09 "Valkyrie"
+
 ### Added
-- **Tri-Precision Engine**: Native support for `DataType::F32`, `DataType::F16`, and `DataType::BF16`.
-- **Statistical Safety Net**: Multi-run benchmarking (`--runs N`) with Median, Mean, and StdDev metrics.
-- **Session Duration Tracking**: Recorded `total_duration_seconds` for hardware-level thermal analysis.
-- **Comprehensive Documentation**: Complete overhaul of `README.md` and `docs/` with accurate source-line references.
+- **Tri-Precision Engine**: Native F32, F16, BF16 support with CPU fast paths.
+- **Statistical benchmark harness**: `--runs N` with Median, Mean, StdDev, and history logging.
+- **Session duration tracking**: `total_duration_seconds` recorded per run for thermal analysis.
+- **Documentation overhaul**: README, api_reference, architecture, performance_guide rewritten.
 
 ### Fixed
-- **PyTorch F16/BF16 Parity**: Adjusted tolerances for low-precision backends.
-- **Thermal Noise Suppression**: Median results used in regression tracking to filter system interference.
+- PyTorch F16/BF16 parity tolerance tuning.
+- Median used as primary metric to resist OS context-switch spikes.
 
-## [3.1.2] - 2026-03-05
-### Changed
-- **Optimized CPU Fallback**: Improved conversion speed for F16 compute on legacy hardware.
-- **Benchmark Iteration Sharding**: Reduced iterations for slow F16 MatMuls to decrease audit duration.
+---
 
 ## [2.9.0] - 2026-03-04
+
 ### Added
-- **Statistical Guard**: Integrated Coefficient of Variation (CV%) and P95 percentile tracking in benchmarks to filter system noise.
-- **API Reference**: Detailed documentation of all Rust/Python bindings with source line references.
-- **Hardware-Invariant Monitoring**: Switched to Ratio (VNN/PT) for regression detection.
+- Coefficient of Variation (CV%) and P95 percentile tracking in benchmark harness.
+- API Reference documentation with source line references.
+- Hardware-invariant Ratio (VNN/PT) as primary regression metric.
+
+---
 
 ## [2.8.0] - 2026-03-03
-### Added (Rusted Ed)
-- **CPU Superiority**: Achieved ~0.9x - 0.99x execution time vs PyTorch for large MatMul and ReLU operations on local RAM.
-- **Async Triple-Buffering**: New 3-stage pipeline in `backend.rs` for overlapping GPU compute with SSD/RAM I/O.
-- **256-Thread WGSL Shaders**: Modernized shader architecture for better hardware occupancy and stability.
-- **Gemma 2B & 3 4B Performance Simulation**: Verified execution latency for state-of-the-art LLM layers.
-- **Unified Benchmark**: Integrated `unified_benchmark.py` for continuous performance and parity monitoring.
+
+### Added
+- CPU near-parity with PyTorch for large RAM-resident MatMul/ReLU via Rayon + matrixmultiply.
+- Unified benchmark (`unified_benchmark.py`) for continuous parity and performance monitoring.
+- WGSL compute shaders with 256-thread workgroups.
 
 ### Changed
-- **"Rust-First" Repository Restructuring**: Archived the original Python/Taichi library into `Python_Legacy/`.
-- **Core Documentation Audit**: Complete rewrite of architecture and performance guides to reflect the v2.8 native implementation.
-- **Clean Build**: Eliminated all Rust compiler warnings in `vulkannn_rusted`, ensuring 100% codebase quality and reliability.
+- Repository restructured: original Python/Taichi library archived to `Python_Legacy/`.
+- All Rust compiler warnings eliminated.
 
-## [2.5.0] - 2026-03-01: Phase 5 and 6: VulkanNN Rusted Ed
-Introduced the native **VulkanNN Rusted Ed** library written in Rust, designed as a 1:1 "drop-in replacement" for `vulkan_nn_lib`. 
-This solution removes Python interpreter bottlenecks during out-of-core operations.
+---
 
-### Added (Rust)
-- **Module `vulkannn_rusted`**: A completely native library built using `PyO3` and the `maturin` build system.
-- **WGPU Backend**: Compute shaders written in pure WGSL supporting Addition, Matrix Multiplication (MatMul), and activation functions (ReLU, Sigmoid, SiLU). Multi-dimensional WGPU workgroups breaking the 64k dispatch allocation limit.
-- **Extremely fast DMA pipeline (Tiered Memory Cache)**: 
-  - **L3 Cache (Disk)**: Zero-copy integration via `memmap2`.
-  - Advanced OS-level prefetching utilizing POSIX `madvise(MADV_WILLNEED)`.
-  - **L1 Cache (VRAM)**: Implementation of "Ping-Pong" WGPU Buffer recycling.
-- **Full Python Parity API**: Out-of-the-box support for logical operators (+, @) and the `Tensor(data)` class mirroring its Python counterpart.
+## [2.5.0] - 2026-03-01: VulkanNN Rusted Edition
 
-### Changed (Python `vulkan_nn_lib` and others)
-- Fixed numerical precision in the Python Taichi backend. Replaced `k_reduce_sum` which prevented incorrectly returning 0.0 in reductions involving the `float32` type.
-- Integrated operations for **Kaggle Mode**. Significantly expanded the capabilities of delegating GB-threshold `MatMul` operations offline to a virtual super-machine via Kaggle API.
-- Optimized `to_numpy()` for rapid access (fast path bypass).
-- Updated CPU mode to allow holding massive tensors entirely in RAM, reducing memory footprint.
-
-### Fixed
-- Fixed `AttributeError` bugs for tensors tied to system memory (RAM-resident arrays).
-- Resolved bugs involving VRAM dropping below 2GB (removed the 512MB RAM limiter for the engine on older GPU systems), optimizing maximum output capabilities via advanced budget detection.
+Initial Rust rewrite using PyO3 and maturin. Introduced:
+- `Tensor` class with Python operator overloading (`@`, `+`)
+- `from_ssd` / `new_ssd` for memory-mapped SSD tensors
+- WGPU backend (later replaced in v3.3.0 by raw ash Vulkan)
+- memmap2 + madvise prefetching (later replaced by io_uring)

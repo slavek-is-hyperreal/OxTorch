@@ -1,47 +1,97 @@
-# 🗺️ VNN Roadmap: The Path to Universal AI
-
-VNN (VulkanNN) has achieved 100% PyTorch parity and established an unparalleled foundation for extreme low-hardware training and inference. The project has successfully deployed the **Tri-Precision Engine (v3.2.0)**, supporting F32, F16, and BF16 across all backends.
-
-### ✅ Completed Milestones
-- **Iron Age CPU/SSD Optimizations (v3.3.0)**: Integrated `io_uring` direct I/O streaming mapped exclusively to MERA-400 inspired MSTS circular buffers. Eliminated CPU bottleneck via native branchless AVX1/SSE2 SWAR bit-twiddling for F16/BF16 types, reaching 600x PyTorch parity speed.
-- **Multi-Precision Core (v3.2.0)**: Native `f16` and `bf16` support with CPU fast-paths and hardware-fallback GPU compute.
-- **Statistical Audit (v3.2.0)**: Integrated Median/StdDev tracking to filter OS noise and monitor thermal patterns.
-- **Async 3-Stage Pipeline (v2.8)**: Triple-buffering system in `backend.rs` that overlaps I/O with compute.
-- **CPU Superiority**: Achieved lower latency than PyTorch CPU in core operations via Rayon and `matrixmultiply`.
-- **SSD L3 Cache**: Memory mapping for tensors larger than system RAM (Verified up to 40k x 40k).
-- **Raw `ash` Vulkan Backend (v3.3.0)**: Completely rewritten GPU backend from `wgpu` to `ash`. Decoupled GPU compute and PCIe DMA transfers using explicit Vulkan `Transfer` and `Compute` queues synchronized natively by Timeline Semaphores. Enabled dynamic FP16 support detecting hardware limits (e.g. AMD Bonaire).
-
-### 🛠️ In-Progress: The "Iron Age" Stability
-Current development is focused on pushing the limits of the native Rust implementation:
-
-1.  **Long-Term Stress Testing (5000+ Iterations)**
-    - Long-term test validation to verify SSD aging and thermal clock-down behavior.
-2.  **Gemma 3n (MatFormer) Support**
-    - Implement `Tensor::slice()` and `Tensor::view()` to support "Elastic Inference".
-3.  **PagedAttention inside WGPU (Rust Porting)**
-    - Port legacy Python PagedAttention logic into optimized WGSL storage layouts.
-4.  **GGUF Unification**
-    - Full support for GGUF headers and block-structured memory mapping.
-
-### 🚀 Long-Term (Expansion)
-1.  **Native INT8/INT4 Quantization**
-    - On-the-fly decompression inside WGSL shader registers (Ghost Quantization).
-    - Aim for 4-bit support optimized for SSD streaming.
-2.  **Distributed VNN**
-    - Parallelization across networked consumer laptops via gRPC tunnels.
-3.  **Asymmetric Speculative Decoding**
-    - 2-engine pipeline: tiny "Draft" model in VRAM validates tokens from a "Primary" model streaming from SSD.
-
-### ⚙️ Phase 3: The "Iron Age" Extreme Optimizations
-Inspired by the legendary Polish minicomputer [MERA-400](https://pl.wikipedia.org/wiki/Mera_400) (więcej informacji na [Mera400.pl](https://mera400.pl/Strona_g%C5%82%C3%B3wna)) and its innovative CROOK OS, this phase focuses on pushing the architectural limits of constrained hardware.
-~~1.  **Out-of-Core `io_uring` Engine**~~ (Completed v3.3.0)
-    - Direct O_DIRECT disk streaming acting as extreme software DMA, completely bypassing Linux VFS page caches to prevent memory thrashing on ZFS.
-~~2.  **MERA Style Task Scheduler (MSTS)**~~ (Completed v3.3.0)
-    - Lockless, Tagged-Token Dataflow circular buffer inspired by the MERA-400 CROOK system. Autonomous CPU/GPU workers polling atomic `StatefulTile` memory aligned strictly to 1MB ZFS boundaries.
-~~3.  **Branchless AVX1 Bit-Twiddling (SWAR)**~~ (Completed v3.3.0)
-    - Replacing slow scalar `f32::from()` iterators with raw `std::arch::x86_64` intrinsics, heavily simulating hardware F16C operations lacking in processors like i5-3450. Includes dynamic dispatch fallback to native F16C/AVX2 on newer architectures to maintain maximum performance.
-~~4.  **Asynchronous Multi-Queue Vulkan Pipelining (Raw `ash` Rewrite)**~~ (Completed v3.3.0)
-    - Completely rewriting the GPU backend from `wgpu` to `ash` (raw Vulkan). Decoupling GPU compute and PCIe DMA transfers using explicit Vulkan `Transfer` and `Compute` queues synchronized natively by Timeline Semaphores.
+# Roadmap
 
 ---
-*VNN is not just a library; it's a statement that AI should be accessible to everyone, regardless of their budget.*
+
+## Completed
+
+**v3.3.0 "Iron Age"** (dev_raw_vulkan branch)
+
+- Raw `ash` Vulkan 1.2 backend replacing `wgpu`: explicit command pools, Timeline Semaphores,
+  buffer recycling cache, separate compute and transfer queues.
+- SPIR-V shader compilation at build time via `naga`.
+- MSTS Tile-Pulling Hybrid Dispatch (Phase 4): `AtomicUsize` tile counter shared between GPU
+  dispatcher and CPU SWAR threads. No locks. No static splits. 
+  Inspired by the MERA-400 CROOK OS tagged-token dataflow architecture.
+  See: [MERA-400 Wikipedia](https://pl.wikipedia.org/wiki/Mera_400) |
+       [mera400.pl](https://mera400.pl/Strona_g%C5%82%C3%B3wna) |
+       [mera400 YouTube channel](https://www.youtube.com/c/mera400)
+- GPU dispatch threshold (4M elements): skips Vulkan on small tensors where PCIe overhead
+  dominates.
+- Cross-platform SIMD fallback chain (avx_swar.rs):
+  F16C+AVX -> SSE2 SWAR -> AArch64 NEON -> scalar, for all 4 conversion directions.
+- io_uring + O_DIRECT SSD streaming at 1MB ZFS recordsize boundaries.
+- MERA Style Task Scheduler: StatefulTile lockless ring buffer in crook_scheduler.rs.
+- Tri-precision engine: F32, F16, BF16 with PyTorch numerical parity across all modes.
+- Statistical benchmark harness: multi-run Median/StdDev/Ratio tracking.
+- Branch-specific module naming for A/B benchmarking across branches.
+- Branch-aware dynamic import in unified_benchmark.py.
+
+**v3.2.0 "Valkyrie"**
+
+- Tri-precision engine (F32, F16, BF16)
+- Statistical audit harness
+- Session duration tracking for thermal analysis
+
+**v2.9.0 - v2.8.0**
+
+- CPU near-parity with PyTorch for RAM-resident F32 operations
+- Unified benchmark harness
+- Async triple-buffering pipeline
+
+---
+
+## In Progress
+
+**Hybrid MatMul Tile-Pulling**
+
+The tile-pulling Phase 4 dispatcher currently covers activation functions only.
+Matrix multiplication still dispatches the full tensor to Vulkan in a single operation.
+Phase 5 will extend the same AtomicUsize tile-pulling model to MatMul, allowing the CPU
+sgemm path and the Vulkan shader to process row-tiles concurrently.
+
+**Long-Term Stress Testing**
+
+Validating SSD wear behavior and thermal clock-down over 5000+ iteration runs.
+The benchmark history log is used to track cumulative thermal drift across sessions.
+
+---
+
+## Planned
+
+**Gemma / LLM Inference Primitives**
+
+- `Tensor::slice()` and `Tensor::view()` for slicing attention heads and KV caches
+- `Tensor::concat()` for sequence concatenation
+- These are required before any LLM forward pass can be expressed cleanly
+
+**Operator Fusion in Vulkan Shaders**
+
+Per the MERA-400 / Cray-1 vector chaining inspiration: instead of running a separate Vulkan
+dispatch per operation (MatMul, then Bias, then ReLU), fuse multiple operations into a single
+shader kernel so intermediate results stay in GPU register files without a PCIe round-trip.
+This is especially important on Bonaire where the PCIe cost is the dominant bottleneck.
+
+**GGUF Support**
+
+Full support for GGUF headers and block-quantized memory formats (Q4_K, Q8_0, etc.),
+enabling direct loading of weights from standard llama.cpp model files.
+
+**INT8 / INT4 Quantization**
+
+On-the-fly dequantization inside SPIR-V shader registers rather than on the CPU.
+Goal: run Q4 models where even F16 weights would not fit in 1GB VRAM.
+
+**Distributed VNN**
+
+Multi-machine tensor sharding over gRPC for networked consumer hardware clusters.
+
+**Asymmetric Speculative Decoding**
+
+A two-engine pipeline where a small draft model resident in VRAM validates tokens from
+a primary model streaming from SSD. Draft model runs ahead; mismatches cause backtrack.
+
+---
+
+*This library exists because AI inference should be possible on the hardware that most of the
+world actually has access to. The MERA-400 ran a distributed operating system on components with
+varying timing characteristics in 1976. Constraints breed architecture.*
