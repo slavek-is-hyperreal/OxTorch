@@ -438,6 +438,9 @@ impl Tensor {
     }
 
     fn unary_op(&self, op: &str) -> PyResult<Tensor> {
+        if self.is_ssd() {
+            return self.unary_op_ssd(op);
+        }
         if self.device == "cpu" {
             if self.dtype == DataType::F32 {
                 let (input, _) = self.get_slice_raw_f32();
@@ -474,6 +477,93 @@ impl Tensor {
                 Storage::F32(bytemuck::cast_slice(&res_raw).to_vec())
             };
             Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: self.dtype, storage, mmap_data: None })
+        }
+    }
+
+    fn unary_op_ssd(&self, op: &str) -> PyResult<Tensor> {
+        let res_path = format!("{}_{}.ssd", self.name, op);
+        let res_tensor = Self::new_ssd(&res_path, self.shape.clone(), self.dtype)?;
+        
+        let engine_in = match self.mmap_data.as_ref().unwrap() {
+            IoEngineType::ReadOnly(e) => e.clone(),
+            IoEngineType::ReadWrite(e) => e.clone(),
+        };
+        let engine_out = match res_tensor.mmap_data.as_ref().unwrap() {
+            IoEngineType::ReadWrite(e) => e.clone(),
+            _ => unreachable!(),
+        };
+        
+        let total_elements = self.shape.iter().product::<usize>();
+        let bytes_per_elem = if self.dtype == DataType::F32 { 4 } else { 2 };
+        let total_bytes = (total_elements * bytes_per_elem) as u64;
+        
+        // MSTS Ring Buffer (8 tiles of 1MB each)
+        let ring_size = 8;
+        let scheduler = crate::crook_scheduler::CrookScheduler::new(ring_size);
+        
+        // Start Workers
+        let r_sched = scheduler.clone();
+        let w_sched = scheduler.clone();
+        let r_handle = crate::crook_scheduler::CrookScheduler::start_read_worker(r_sched, engine_in, total_bytes);
+        let w_handle = crate::crook_scheduler::CrookScheduler::start_write_worker(w_sched, engine_out, total_bytes);
+        
+        // Compute Worker (Main Thread)
+        let mut offset = 0;
+        let mut tile_idx = 0;
+        while offset < total_bytes {
+            let tile = &scheduler.ring[tile_idx];
+            
+            // Spin until tile is READY_FOR_COMPUTE
+            while tile.state.compare_exchange(
+                crate::crook_scheduler::TILE_READY_FOR_COMPUTE,
+                crate::crook_scheduler::TILE_COMPUTING,
+                std::sync::atomic::Ordering::Acquire,
+                std::sync::atomic::Ordering::Relaxed
+            ).is_err() {
+                std::hint::spin_loop();
+            }
+            
+            let bytes_in_tile = std::cmp::min(1048576, (total_bytes - offset) as usize);
+            let payload = unsafe { &mut *tile.payload.get() };
+            
+            // Apply operation based on dtype
+            match self.dtype {
+                DataType::F32 => {
+                    let slice = bytemuck::cast_slice_mut::<u8, f32>(&mut payload[..bytes_in_tile]);
+                    Self::act_into_raw_parallel_f32(slice, op);
+                },
+                DataType::F16 => {
+                    let slice = bytemuck::cast_slice_mut::<u8, half::f16>(&mut payload[..bytes_in_tile]);
+                    slice.par_iter_mut().for_each(|x| {
+                        if op == "relu" && x.to_f32() < 0.0 { *x = half::f16::ZERO; }
+                    });
+                },
+                DataType::BF16 => {
+                    let slice = bytemuck::cast_slice_mut::<u8, half::bf16>(&mut payload[..bytes_in_tile]);
+                    slice.par_iter_mut().for_each(|x| {
+                        if op == "relu" && x.to_f32() < 0.0 { *x = half::bf16::ZERO; }
+                    });
+                }
+            }
+            
+            tile.state.store(crate::crook_scheduler::TILE_READY_FOR_WRITE, std::sync::atomic::Ordering::Release);
+            
+            offset += bytes_in_tile as u64;
+            tile_idx = (tile_idx + 1) % ring_size;
+        }
+        
+        r_handle.join().unwrap();
+        w_handle.join().unwrap();
+        
+        Ok(res_tensor)
+    }
+
+    fn act_into_raw_parallel_f32(slice: &mut [f32], op: &str) {
+        match op {
+            "relu" => slice.par_iter_mut().for_each(|x| if *x < 0.0 { *x = 0.0; }),
+            "sigmoid" => slice.par_iter_mut().for_each(|x| *x = 1.0 / (1.0 + (-*x).exp())),
+            "silu" => slice.par_iter_mut().for_each(|x| *x = *x / (1.0 + (-*x).exp())),
+            _ => panic!("Unsupported Op: {}", op),
         }
     }
 
@@ -638,7 +728,7 @@ impl Tensor {
         let total_bytes = (total_elems * bytes_per_elem) as u64;
         
         let scheduler = crate::crook_scheduler::CrookScheduler::new(8); // 8MB ring
-        let io_handle = crate::crook_scheduler::CrookScheduler::start_io_worker(scheduler.clone(), engine, total_bytes);
+        let io_handle = crate::crook_scheduler::CrookScheduler::start_read_worker(scheduler.clone(), engine, total_bytes);
         
         let mut offset = 0;
         let ring_size = scheduler.ring.len();
@@ -649,39 +739,39 @@ impl Tensor {
             
             // Spin wait for TILE_READY_FOR_COMPUTE
             while tile.state.compare_exchange(
-                crate::crook_scheduler::TILE_READY_FOR_COMPUTE, 
-                crate::crook_scheduler::TILE_COMPUTING, 
-                std::sync::atomic::Ordering::Acquire, 
+                crate::crook_scheduler::TILE_READY_FOR_COMPUTE,
+                crate::crook_scheduler::TILE_COMPUTING,
+                std::sync::atomic::Ordering::Acquire,
                 std::sync::atomic::Ordering::Relaxed
             ).is_err() {
                 std::hint::spin_loop();
             }
             
-            let bytes_to_process = std::cmp::min(1048576, total_bytes - offset);
-            let elems_to_process = (bytes_to_process / bytes_per_elem as u64) as usize;
-            
-            let payload_slice = unsafe { 
-                let ptr = tile.payload.get();
-                &(&(*ptr))[0..bytes_to_process as usize]
-            };
-            
-            let out_idx = (offset / bytes_per_elem as u64) as usize;
+            let bytes_in_tile = std::cmp::min(1048576, (total_bytes - offset) as usize);
+            let payload = unsafe { &*tile.payload.get() };
             
             if self.dtype == DataType::F32 {
-                let f32_slice: &[f32] = bytemuck::cast_slice(payload_slice);
-                out[out_idx..out_idx + elems_to_process].copy_from_slice(f32_slice);
+                let slice = bytemuck::cast_slice::<u8, f32>(&payload[..bytes_in_tile]);
+                let start_idx = (offset / 4) as usize;
+                out[start_idx..start_idx + slice.len()].copy_from_slice(slice);
             } else if self.dtype == DataType::F16 {
-                let f16_slice: &[half::f16] = bytemuck::cast_slice(payload_slice);
-                out[out_idx..out_idx + elems_to_process].par_iter_mut().zip(f16_slice.par_iter()).for_each(|(o, &i)| *o = i.to_f32());
+                let slice = bytemuck::cast_slice::<u8, half::f16>(&payload[..bytes_in_tile]);
+                let start_idx = (offset / 2) as usize;
+                for (i, val) in slice.iter().enumerate() {
+                    out[start_idx + i] = val.to_f32();
+                }
             } else if self.dtype == DataType::BF16 {
-                let bf16_slice: &[half::bf16] = bytemuck::cast_slice(payload_slice);
-                out[out_idx..out_idx + elems_to_process].par_iter_mut().zip(bf16_slice.par_iter()).for_each(|(o, &i)| *o = i.to_f32());
+                let slice = bytemuck::cast_slice::<u8, half::bf16>(&payload[..bytes_in_tile]);
+                let start_idx = (offset / 2) as usize;
+                for (i, val) in slice.iter().enumerate() {
+                    out[start_idx + i] = val.to_f32();
+                }
             }
             
-            // Reclaim tile back to empty state
+            // Mark as empty to allow PPU to reuse
             tile.state.store(crate::crook_scheduler::TILE_EMPTY, std::sync::atomic::Ordering::Release);
             
-            offset += bytes_to_process;
+            offset += bytes_in_tile as u64;
             tile_idx = (tile_idx + 1) % ring_size;
         }
         

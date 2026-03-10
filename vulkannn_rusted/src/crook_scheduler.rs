@@ -46,8 +46,8 @@ impl CrookScheduler {
         std::sync::Arc::new(Self { ring })
     }
     
-    /// Starts the autonomous background worker analogous to MERA's peripheral dispatcher.
-    pub fn start_io_worker(scheduler: std::sync::Arc<Self>, engine: std::sync::Arc<crate::io_uring_engine::DirectIoEngine>, total_bytes: u64) -> std::thread::JoinHandle<()> {
+    /// Starts the autonomous reading worker (Peripheral Processor - PPU).
+    pub fn start_read_worker(scheduler: std::sync::Arc<Self>, engine: std::sync::Arc<crate::io_uring_engine::DirectIoEngine>, total_bytes: u64) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let mut offset = 0;
             let mut tile_idx = 0;
@@ -57,7 +57,7 @@ impl CrookScheduler {
             while offset < total_bytes {
                 let tile = &scheduler.ring[tile_idx];
 
-                // Tagged-Token architecture: Spin until tile is empty and ready to be reloaded
+                // Spin until tile is EMPTY
                 while tile.state.compare_exchange(
                     TILE_EMPTY, 
                     TILE_READING_FROM_DISK, 
@@ -67,21 +67,15 @@ impl CrookScheduler {
                     std::hint::spin_loop();
                 }
                 
-                let bytes_to_read = std::cmp::min(1048576, total_bytes - offset); // max payload size (1MB)
-                // We pad the read to a multiple of 4096 for O_DIRECT 
-                let read_size = (bytes_to_read + 4095) & !4095;
-                
+                let bytes_to_read = std::cmp::min(1048576, total_bytes - offset);
                 let payload_slice = unsafe { 
                     let ptr = tile.payload.get();
-                    &mut (&mut *ptr)[0..std::cmp::min(1048576, read_size as usize)]
+                    &mut (&mut *ptr)[0..bytes_to_read as usize]
                 };
                 
-                // Submit IO_URING read
                 engine.read_chunk(offset, payload_slice);
                 
                 tile.tile_id.store(current_id, Ordering::Relaxed);
-                
-                // Mark tile as ready for CPU or GPU compute pipeline
                 tile.state.store(TILE_READY_FOR_COMPUTE, Ordering::Release);
                 
                 offset += bytes_to_read;
@@ -90,19 +84,41 @@ impl CrookScheduler {
             }
         })
     }
-    
-    // Acquire an empty tile using Compare-and-Swap (CAS)
-    pub fn acquire_empty(&self) -> Option<&StatefulTile> {
-        for tile in &self.ring {
-            if tile.state.compare_exchange(
-                TILE_EMPTY, 
-                TILE_READING_FROM_DISK, 
-                Ordering::Acquire, 
-                Ordering::Relaxed
-            ).is_ok() {
-                return Some(tile);
+
+    /// Starts the autonomous writing worker.
+    pub fn start_write_worker(scheduler: std::sync::Arc<Self>, engine: std::sync::Arc<crate::io_uring_engine::DirectIoEngine>, total_bytes: u64) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let mut offset = 0;
+            let mut tile_idx = 0;
+            let ring_size = scheduler.ring.len();
+            
+            while offset < total_bytes {
+                let tile = &scheduler.ring[tile_idx];
+
+                // Spin until tile is READY_FOR_WRITE
+                while tile.state.compare_exchange(
+                    TILE_READY_FOR_WRITE, 
+                    TILE_WRITING_TO_DISK, 
+                    Ordering::Acquire, 
+                    Ordering::Relaxed
+                ).is_err() {
+                    std::hint::spin_loop();
+                }
+                
+                let bytes_to_write = std::cmp::min(1048576, total_bytes - offset);
+                let payload_slice = unsafe { 
+                    let ptr = tile.payload.get();
+                    &(&*ptr)[0..bytes_to_write as usize]
+                };
+                
+                engine.write_chunk(offset, payload_slice);
+                
+                // Mark as EMPTY for the read worker to reuse
+                tile.state.store(TILE_EMPTY, Ordering::Release);
+                
+                offset += bytes_to_write;
+                tile_idx = (tile_idx + 1) % ring_size;
             }
-        }
-        None
+        })
     }
 }
