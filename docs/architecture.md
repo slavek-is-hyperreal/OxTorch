@@ -1,65 +1,167 @@
-# 🏗 Architecture Deep-Dive (v3.2.0 "Valkyrie")
+# Architecture (v3.4.0 "Iron Age Complete")
 
-VNN Rusted is a "Zero-Copy" tensor engine optimized for hybrid execution across inconsistent hardware.
-
----
-
-## 1. Core Data Structure: `Tensor`
-*   **Location**: `src/tensor.rs:31`
-*   **Design**: A `Tensor` encapsulates metadata, a `Storage` variant, and an optional memory mapping.
-*   **Tri-Precision Storage**: `src/tensor.rs:23` defines the `Storage` enum:
-    - `Storage::F32(Vec<f32>)`
-    - `Storage::F16(Vec<half::f16>)`
-    - `Storage::BF16(Vec<half::bf16>)`
-
-### Memory Mapping (L3 Cache)
-*   **Current State**: `src/tensor.rs:83` (`from_ssd`) maps binary blobs directly to the address space. It uses `libc::madvise(MADV_SEQUENTIAL)` (`src/tensor.rs:92`) to tell the Linux kernel to prefetch data from the disk controller directly into RAM, bypassing usual filesystem overhead.
-*   **Future Architecture (MSTS Roadmap)**: Due to severe kernel preemption and thrashing issues on legacy 24GB DDR3 systems, this is slated to be replaced by `io_uring` + `O_DIRECT`. This will create a lockless, software DMA bridge directly from 1MB ZFS records into the CPU's L3 Cache.
+VulkanNN Rusted is a zero-copy tensor engine optimized for hybrid CPU/GPU execution on
+consumer-grade hardware with sub-2GB VRAM, legacy CPUs, and SSD-resident model weights.
 
 ---
 
-## 2. Hybrid Execution Flow
-When a MatMul `@` is triggered (`src/tensor.rs:260`):
-1.  **Device Check**: If `device="hybrid"`, the engine splits the work (Default: 30% CPU / 70% GPU).
-2.  **Splitting**: `src/backend.rs:360` determines the tile size based on model shape (optimized for GEMV vs MatMul).
-3.  **CPU Worker**: `src/backend.rs:385` spawns a thread using `matrixmultiply::sgemm`. For F16/BF16, it performs an on-the-fly conversion to F32 intermediate (`src/backend.rs:408`) for numerical stability. *(Roadmap: This scalar conversion will be replaced by vectorized AVX1 SWAR bit-twiddling)*.
-4.  **GPU Worker**: `src/backend.rs:429` orchestrates the Vulkan submission. *(Roadmap: Will transition from a static split to the autonomous, polling MSTS StatefulTile buffer).*
+## 1. Core Data Structure: Tensor
 
-### Asynchronous Result Retrieval
-*   **Current State**: `src/backend.rs:539` implements a staging request queue. While the GPU is computing the *next* block, the CPU is already copying the *previous* block's results from the staging buffer to the final result tensor.
-*   **Future Architecture (Multi-Queue Vulkan Pipelining)**: The single queue submission will be fractured into explicit concurrent `VK_QUEUE_TRANSFER_BIT` and `VK_QUEUE_COMPUTE_BIT` queues overlapping via Vulkan Timeline Semaphores, exploiting the AMD Bonaire Asynchronous Compute Engines (ACE).
+Source: `src/tensor.rs:32`
 
----
+A `Tensor` stores metadata, a `Storage` variant, and an optional SSD engine handle.
 
-## 3. Vulkan Pipeline & Shaders
-*   **Initialization**: `src/backend.rs:28` (`init_backend`) creates the `WgpuBackend` singleton.
-*   **Hardware Compatibility**: `src/backend.rs:41` detects `SHADER_F16` capabilities. If missing, the engine transparently falls back to F32 compute while keeping F16 storage.
-*   **Double Buffering**: `src/backend.rs:458` uses two buffers for `B-matrix` weights to saturate PCI-e bandwidth.
+```rust
+pub enum Storage {
+    F32(Vec<f32>),
+    F16(Vec<half::f16>),
+    BF16(Vec<half::bf16>),
+    None,  // SSD tensors: data lives on disk
+}
+```
 
----
-
-## 4. Statistical Safety Net (Safety Hub)
-VNN v3.2.0 introduces a robust statistical audit system managed in `tests/unified_benchmark.py`:
-- **Median Tracking**: Filters out OS context-switch spikes.
-- **StdDev (Standard Deviation)**: Measures hardware thermal stability.
-- **Total Session Tracking**: Records the `total_duration_seconds` of the entire audit to analyze heat dissipation.
+The `mmap_data: Option<IoEngineType>` field holds the `Arc<DirectIoEngine>` for SSD-resident
+tensors. When present, data is streamed tile-by-tile via io_uring rather than read into RAM.
 
 ---
 
-## 5. Data Flow Diagram (Mermaid)
+## 2. Vulkan Backend (Raw ash, Vulkan 1.2)
+
+Source: `src/backend.rs`
+
+The GPU backend was rewritten in v3.4.0 from `wgpu` to `ash` (raw Vulkan 1.2 C bindings),
+providing explicit control over every GPU resource.
+
+The `AshBackend` singleton (held in `OnceLock`) contains:
+- Physical and logical Vulkan device
+- Separate compute and transfer command pools
+- Pre-built descriptor set layouts and compute pipelines (add, matmul, relu, sigmoid, silu)
+- A `timeline_semaphore` for async operation tracking
+- `pending_ops: Mutex<Vec<AsyncOp>>` — tracks in-flight GPU work for staged cleanup
+- `buffer_cache: Mutex<Vec<CachedBuffer>>` — recycles GPU buffers to avoid per-dispatch allocation
+
+Shaders are WGSL sources compiled to SPIR-V at build time by `naga` in `build.rs`.
+
+### Pipeline Execution Flow (single op)
+
+1. Acquire input/output buffers from cache (or allocate)
+2. Acquire CPU-visible staging buffers
+3. Upload: copy input bytes to staging, then `cmd_copy_buffer` staging -> device buffer
+4. Pipeline barrier: `TRANSFER_WRITE` -> `SHADER_READ`
+5. Bind descriptor set, dispatch compute shader
+6. Pipeline barrier: `SHADER_WRITE` -> `TRANSFER_READ`
+7. `cmd_copy_buffer` device buffer -> staging out
+8. Submit to compute queue; for async path: signal timeline semaphore
+9. After semaphore wait: `download_from_stage` copies staging bytes to output
+
+---
+
+## 3. MSTS Tile-Pulling Hybrid Dispatch
+
+Source: `src/tensor.rs` (unary_op hybrid branch), `src/crook_scheduler.rs`
+
+Inspired by the MERA-400's clockless asynchronous architecture and the Tagged-Token Dataflow
+model of the CROOK OS, the MSTS dispatcher eliminates static CPU/GPU work splits.
+
+### Activation Tile-Pulling (Phase 4)
+
+For `device="hybrid"` activation functions:
+
+```
+total_elements -> N tiles of 256K elements each
+tile_counter = Arc<AtomicUsize>(0)
+
+Rayon scope:
+  [GPU dispatcher thread]:  loop { tile_id = tile_counter.fetch_add(1); dispatch to Vulkan }
+  [CPU SWAR thread]:        loop { tile_id = tile_counter.fetch_add(1); compute with SIMD }
+```
+
+Each thread independently claims the next unclaimed tile. There is no negotiation, no lock,
+and no predetermined split. Whichever resource finishes faster claims more work.
+
+**GPU threshold**: if `num_elements < 4_194_304` (4M = ~16MB F32), the GPU dispatcher thread
+is not spawned. Bonaire PCIe round-trip overhead (~80ms) makes Vulkan uncompetitive on small
+tensors.
+
+### StatefulTile Ring Buffer (SSD streaming)
+
+Source: `src/crook_scheduler.rs`
+
+A ring of 1MB-aligned `StatefulTile` structures drives SSD-to-RAM streaming for out-of-core
+tensors. Each tile transitions atomically through states:
+
+```
+EMPTY -> LOADING -> READY_CPU -> READY_GPU -> GPU_COMPUTING -> GPU_DONE -> EMPTY
+```
+
+Separate io_uring threads fill tiles from disk while CPU/GPU workers consume them.
+No mutex is used in the hot path; all transitions are Compare-And-Swap.
+
+---
+
+## 4. SIMD Conversion Dispatch
+
+Source: `src/avx_swar.rs`
+
+All F16/BF16 <-> F32 conversion is handled by one of four paths, selected at runtime:
+
+| Condition | F16<->F32 | BF16<->F32 |
+|:---|:---|:---|
+| x86_64 + F16C + AVX | `_mm256_cvtps_ph` / `_mm256_cvtph_ps` | SSE2 round-to-nearest-even |
+| x86_64 + SSE2 only | SWAR branchless bit-manipulation | SSE2 round-to-nearest-even |
+| AArch64 | NEON `vcvt_f16_f32` / `vcvt_f32_f16` | NEON shift trick |
+| Other | Rayon scalar `from_f32` / `to_f32` | Rayon scalar |
+
+The i5-3450 (Ivy Bridge) has both AVX and F16C, so it uses the fastest x86_64 path
+for F16 and the SSE2 path for BF16 (AVX2 not available on Ivy Bridge).
+
+---
+
+## 5. SSD Streaming (io_uring + O_DIRECT)
+
+Source: `src/io_uring_engine.rs`
+
+`DirectIoEngine` wraps a Linux `io_uring` instance with `O_DIRECT` file access.
+This bypasses the kernel VFS page cache entirely, streaming data at the disk controller's
+DMA rate directly into user-space buffers aligned to 1MB ZFS recordsize boundaries.
+No page faults, no kernel-to-user copies.
+
+For the 16GB Monster ReLU benchmark: ~46.6 seconds for 4 billion F32 elements at ~86MB/s
+effective throughput from the ZFS pool.
+
+---
+
+## 6. Data Flow Diagram
 
 ```mermaid
 graph TD
-    A[Python Input] --> B[Tensor Object]
-    B --> C{Device?}
-    C -- CPU --> D[matrixmultiply / Rayon]
-    C -- Vulkan --> E[wgpu Backend]
-    C -- Hybrid --> F[Work Stealer / Atomic Split]
-    F --> D
-    F --> E
-    E --> G[WGSL Shaders]
-    G --> H[Staging Buffers]
-    H --> I[Memory Mapping / SSD]
-    D -- F32 Intermediate --> J[Final Result]
-    H -- Async Copy --> J
+    A[Python call] --> B[Tensor.unary_op / matmul]
+    B --> C{device?}
+    C -- cpu --> D[matrixmultiply sgemm / Rayon SIMD]
+    C -- vulkan --> E[AshBackend]
+    C -- hybrid --> F[MSTS tile counter AtomicUsize]
+    F -- tile claimed by GPU --> E
+    F -- tile claimed by CPU --> D
+    C -- ssd --> G[DirectIoEngine io_uring O_DIRECT]
+    G --> H[StatefulTile ring buffer]
+    H --> D
+    E --> I[Vulkan Timeline Semaphore]
+    I --> J[staging buffer download]
+    D --> K[Output Tensor]
+    J --> K
 ```
+
+---
+
+## 7. Statistical Benchmark Harness
+
+Source: `tests/unified_benchmark.py`
+
+Multi-run audit with per-test tracking of Median, Mean, StdDev, and VNN/PyTorch ratio.
+Results are written to `tests/last_results.json` (history of all runs) and
+`tests/benchmark_history.log` (human-readable log).
+
+Parity checking uses `numpy.testing.assert_allclose` with precision-appropriate tolerances:
+- F32: `atol=1e-4`
+- F16: `atol=0.1`
+- BF16: `atol=1.0` (7-bit mantissa accumulation error on 2k MatMul)

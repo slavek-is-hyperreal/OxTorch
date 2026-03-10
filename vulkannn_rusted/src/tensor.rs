@@ -438,6 +438,9 @@ impl Tensor {
     }
 
     fn unary_op(&self, op: &str) -> PyResult<Tensor> {
+        if self.is_ssd() {
+            return self.unary_op_ssd(op);
+        }
         if self.device == "cpu" {
             if self.dtype == DataType::F32 {
                 let (input, _) = self.get_slice_raw_f32();
@@ -463,9 +466,119 @@ impl Tensor {
             } else {
                 return Err(PyValueError::new_err("Unsupported DataType for CPU Unary Op"));
             }
-        } else {
+        } else if self.device == "hybrid" {
+            // --- MSTS Tile-Pulling Hybrid Dispatch (Phase 4) ---
+            // Divide the tensor into N tiles of ~TILE_ELEMS elements each.
+            // An AtomicUsize acts as a shared tile counter (Tagged-Token Dataflow).
+            // One GPU dispatcher thread and multiple CPU worker threads race to claim
+            // tiles via fetch_add. The fastest resource "eats" the most work.
             let (input_raw, _) = self.get_slice_raw_bytes();
-            let res_raw = crate::backend::execute_activation(input_raw, op, self.dtype, self.device == "hybrid");
+            let num_total = input_raw.len() / (if self.dtype == DataType::F32 { 4 } else { 2 });
+
+            // Tile size: ~256K elements (~1MB for F32) aligns with our ZFS block target
+            const TILE_ELEMS: usize = 256 * 1024;
+            // Vulkan dispatch has a fixed overhead of ~80ms on Bonaire (PCIe staging roundtrip).
+            // Only use the GPU dispatcher when the total data is large enough to amortize that cost.
+            // Below this threshold, pure CPU SWAR is always faster on this hardware.
+            const VULKAN_MIN_ELEMS: usize = 4 * 1024 * 1024; // ~16MB F32 / ~8MB F16
+
+            let num_tiles = num_total.div_ceil(TILE_ELEMS);
+
+            let out_bytes_len = input_raw.len();
+            let mut out_raw = vec![0u8; out_bytes_len];
+
+            // We need raw ptrs for cross-thread writes into disjoint non-overlapping slices.
+            // Safety: tiles are non-overlapping; the AtomicUsize guarantees each tile is
+            // claimed at most once. We never write the same byte from two threads.
+            let input_ptr = input_raw.as_ptr() as usize; // Send as usize (no &ref lifetime issue)
+            let output_ptr = out_raw.as_mut_ptr() as usize;
+            let total_len  = out_bytes_len;
+            let dtype      = self.dtype;
+            let op_str     = op.to_string();
+
+            let tile_counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+            rayon::scope(|s| {
+                // GPU dispatcher thread: only spawn if tensor is above the Vulkan break-even point.
+                // Below VULKAN_MIN_ELEMS the PCIe staging overhead dominates; pure CPU is faster.
+                if num_total >= VULKAN_MIN_ELEMS {
+                let counter_gpu = tile_counter.clone();
+                let op_gpu = op_str.clone();
+                s.spawn(move |_| {
+
+                    loop {
+                        let tile_id = counter_gpu.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if tile_id >= num_tiles { break; }
+                        let elem_start = tile_id * TILE_ELEMS;
+                        let elem_count = (TILE_ELEMS).min(num_total - elem_start);
+                        let bpe = if dtype == DataType::F32 { 4usize } else { 2usize };
+                        // Safety: raw ptrs are valid for `total_len` bytes
+                        let in_sl  = unsafe { std::slice::from_raw_parts    (input_ptr  as *const u8, total_len) };
+                        let out_sl = unsafe { std::slice::from_raw_parts_mut(output_ptr as *mut   u8, total_len) };
+                        let _ = bpe; // suppress lint
+                        crate::backend::execute_activation_chunked(in_sl, out_sl, elem_start, elem_count, &op_gpu, dtype);
+                    }
+                });
+                } // end if num_total >= VULKAN_MIN_ELEMS
+
+                // CPU worker threads: claim tiles from the same counter with SWAR math
+                let cpu_tiles = num_tiles; // upper bound visible to Rayon workers below
+                let counter_cpu = tile_counter.clone();
+                let op_cpu = op_str.clone();
+                s.spawn(move |_| {
+                    loop {
+                        let tile_id = counter_cpu.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if tile_id >= cpu_tiles { break; }
+                        let elem_start = tile_id * TILE_ELEMS;
+                        let elem_count = (TILE_ELEMS).min(num_total - elem_start);
+                        let bpe = if dtype == DataType::F32 { 4usize } else { 2usize };
+                        let in_sl  = unsafe { std::slice::from_raw_parts    (input_ptr  as *const u8, total_len) };
+                        let out_sl = unsafe { std::slice::from_raw_parts_mut(output_ptr as *mut   u8, total_len) };
+                        match dtype {
+                            DataType::F32 => {
+                                let in_f  = unsafe { std::slice::from_raw_parts    (in_sl.as_ptr()  .add(elem_start * bpe) as *const f32, elem_count) };
+                                let out_f = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut f32, elem_count) };
+                                match op_cpu.as_str() {
+                                    "relu"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { 0.0 }),
+                                    "sigmoid" => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = 1.0 / (1.0 + (-i).exp())),
+                                    "silu"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = i / (1.0 + (-i).exp())),
+                                    _ => panic!("Unsupported CPU op in hybrid tile worker"),
+                                }
+                            },
+                            DataType::F16 => {
+                                let in_h  = unsafe { std::slice::from_raw_parts    (in_sl.as_ptr()  .add(elem_start * bpe) as *const half::f16, elem_count) };
+                                let out_h = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut half::f16, elem_count) };
+                                match op_cpu.as_str() {
+                                    "relu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| *o = if i > half::f16::ZERO { i } else { half::f16::ZERO }),
+                                    _ => panic!("Unsupported F16 hybrid tile op"),
+                                }
+                            },
+                            DataType::BF16 => {
+                                let in_b  = unsafe { std::slice::from_raw_parts    (in_sl.as_ptr()  .add(elem_start * bpe) as *const half::bf16, elem_count) };
+                                let out_b = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut half::bf16, elem_count) };
+                                match op_cpu.as_str() {
+                                    "relu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| *o = if i > half::bf16::ZERO { i } else { half::bf16::ZERO }),
+                                    _ => panic!("Unsupported BF16 hybrid tile op"),
+                                }
+                            },
+                        }
+                    }
+                });
+            });
+
+            let storage = if dtype == DataType::F16 {
+                Storage::F16(bytemuck::cast_slice(&out_raw).to_vec())
+            } else if dtype == DataType::BF16 {
+                Storage::BF16(bytemuck::cast_slice(&out_raw).to_vec())
+            } else {
+                Storage::F32(bytemuck::cast_slice(&out_raw).to_vec())
+            };
+            Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: self.dtype, storage, mmap_data: None })
+
+        } else {
+            // Pure Vulkan path (device == "vulkan")
+            let (input_raw, _) = self.get_slice_raw_bytes();
+            let res_raw = crate::backend::execute_activation(input_raw, op, self.dtype, false);
             let storage = if self.dtype == DataType::F16 {
                 Storage::F16(bytemuck::cast_slice(&res_raw).to_vec())
             } else if self.dtype == DataType::BF16 {
@@ -474,6 +587,93 @@ impl Tensor {
                 Storage::F32(bytemuck::cast_slice(&res_raw).to_vec())
             };
             Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: self.dtype, storage, mmap_data: None })
+        }
+    }
+
+    fn unary_op_ssd(&self, op: &str) -> PyResult<Tensor> {
+        let res_path = format!("{}_{}.ssd", self.name, op);
+        let res_tensor = Self::new_ssd(&res_path, self.shape.clone(), self.dtype)?;
+        
+        let engine_in = match self.mmap_data.as_ref().unwrap() {
+            IoEngineType::ReadOnly(e) => e.clone(),
+            IoEngineType::ReadWrite(e) => e.clone(),
+        };
+        let engine_out = match res_tensor.mmap_data.as_ref().unwrap() {
+            IoEngineType::ReadWrite(e) => e.clone(),
+            _ => unreachable!(),
+        };
+        
+        let total_elements = self.shape.iter().product::<usize>();
+        let bytes_per_elem = if self.dtype == DataType::F32 { 4 } else { 2 };
+        let total_bytes = (total_elements * bytes_per_elem) as u64;
+        
+        // MSTS Ring Buffer (8 tiles of 1MB each)
+        let ring_size = 8;
+        let scheduler = crate::crook_scheduler::CrookScheduler::new(ring_size);
+        
+        // Start Workers
+        let r_sched = scheduler.clone();
+        let w_sched = scheduler.clone();
+        let r_handle = crate::crook_scheduler::CrookScheduler::start_read_worker(r_sched, engine_in, total_bytes);
+        let w_handle = crate::crook_scheduler::CrookScheduler::start_write_worker(w_sched, engine_out, total_bytes);
+        
+        // Compute Worker (Main Thread)
+        let mut offset = 0;
+        let mut tile_idx = 0;
+        while offset < total_bytes {
+            let tile = &scheduler.ring[tile_idx];
+            
+            // Spin until tile is READY_FOR_COMPUTE
+            while tile.state.compare_exchange(
+                crate::crook_scheduler::TILE_READY_FOR_COMPUTE,
+                crate::crook_scheduler::TILE_COMPUTING,
+                std::sync::atomic::Ordering::Acquire,
+                std::sync::atomic::Ordering::Relaxed
+            ).is_err() {
+                std::hint::spin_loop();
+            }
+            
+            let bytes_in_tile = std::cmp::min(1048576, (total_bytes - offset) as usize);
+            let payload = unsafe { &mut *tile.payload.get() };
+            
+            // Apply operation based on dtype
+            match self.dtype {
+                DataType::F32 => {
+                    let slice = bytemuck::cast_slice_mut::<u8, f32>(&mut payload[..bytes_in_tile]);
+                    Self::act_into_raw_parallel_f32(slice, op);
+                },
+                DataType::F16 => {
+                    let slice = bytemuck::cast_slice_mut::<u8, half::f16>(&mut payload[..bytes_in_tile]);
+                    slice.par_iter_mut().for_each(|x| {
+                        if op == "relu" && x.to_f32() < 0.0 { *x = half::f16::ZERO; }
+                    });
+                },
+                DataType::BF16 => {
+                    let slice = bytemuck::cast_slice_mut::<u8, half::bf16>(&mut payload[..bytes_in_tile]);
+                    slice.par_iter_mut().for_each(|x| {
+                        if op == "relu" && x.to_f32() < 0.0 { *x = half::bf16::ZERO; }
+                    });
+                }
+            }
+            
+            tile.state.store(crate::crook_scheduler::TILE_READY_FOR_WRITE, std::sync::atomic::Ordering::Release);
+            
+            offset += bytes_in_tile as u64;
+            tile_idx = (tile_idx + 1) % ring_size;
+        }
+        
+        r_handle.join().unwrap();
+        w_handle.join().unwrap();
+        
+        Ok(res_tensor)
+    }
+
+    fn act_into_raw_parallel_f32(slice: &mut [f32], op: &str) {
+        match op {
+            "relu" => slice.par_iter_mut().for_each(|x| if *x < 0.0 { *x = 0.0; }),
+            "sigmoid" => slice.par_iter_mut().for_each(|x| *x = 1.0 / (1.0 + (-*x).exp())),
+            "silu" => slice.par_iter_mut().for_each(|x| *x = *x / (1.0 + (-*x).exp())),
+            _ => panic!("Unsupported Op: {}", op),
         }
     }
 
@@ -638,7 +838,7 @@ impl Tensor {
         let total_bytes = (total_elems * bytes_per_elem) as u64;
         
         let scheduler = crate::crook_scheduler::CrookScheduler::new(8); // 8MB ring
-        let io_handle = crate::crook_scheduler::CrookScheduler::start_io_worker(scheduler.clone(), engine, total_bytes);
+        let io_handle = crate::crook_scheduler::CrookScheduler::start_read_worker(scheduler.clone(), engine, total_bytes);
         
         let mut offset = 0;
         let ring_size = scheduler.ring.len();
@@ -649,39 +849,39 @@ impl Tensor {
             
             // Spin wait for TILE_READY_FOR_COMPUTE
             while tile.state.compare_exchange(
-                crate::crook_scheduler::TILE_READY_FOR_COMPUTE, 
-                crate::crook_scheduler::TILE_COMPUTING, 
-                std::sync::atomic::Ordering::Acquire, 
+                crate::crook_scheduler::TILE_READY_FOR_COMPUTE,
+                crate::crook_scheduler::TILE_COMPUTING,
+                std::sync::atomic::Ordering::Acquire,
                 std::sync::atomic::Ordering::Relaxed
             ).is_err() {
                 std::hint::spin_loop();
             }
             
-            let bytes_to_process = std::cmp::min(1048568, total_bytes - offset);
-            let elems_to_process = (bytes_to_process / bytes_per_elem as u64) as usize;
-            
-            let payload_slice = unsafe { 
-                let ptr = tile.payload.get();
-                &(&(*ptr))[0..bytes_to_process as usize]
-            };
-            
-            let out_idx = (offset / bytes_per_elem as u64) as usize;
+            let bytes_in_tile = std::cmp::min(1048576, (total_bytes - offset) as usize);
+            let payload = unsafe { &*tile.payload.get() };
             
             if self.dtype == DataType::F32 {
-                let f32_slice: &[f32] = bytemuck::cast_slice(payload_slice);
-                out[out_idx..out_idx + elems_to_process].copy_from_slice(f32_slice);
+                let slice = bytemuck::cast_slice::<u8, f32>(&payload[..bytes_in_tile]);
+                let start_idx = (offset / 4) as usize;
+                out[start_idx..start_idx + slice.len()].copy_from_slice(slice);
             } else if self.dtype == DataType::F16 {
-                let f16_slice: &[half::f16] = bytemuck::cast_slice(payload_slice);
-                out[out_idx..out_idx + elems_to_process].par_iter_mut().zip(f16_slice.par_iter()).for_each(|(o, &i)| *o = i.to_f32());
+                let slice = bytemuck::cast_slice::<u8, half::f16>(&payload[..bytes_in_tile]);
+                let start_idx = (offset / 2) as usize;
+                for (i, val) in slice.iter().enumerate() {
+                    out[start_idx + i] = val.to_f32();
+                }
             } else if self.dtype == DataType::BF16 {
-                let bf16_slice: &[half::bf16] = bytemuck::cast_slice(payload_slice);
-                out[out_idx..out_idx + elems_to_process].par_iter_mut().zip(bf16_slice.par_iter()).for_each(|(o, &i)| *o = i.to_f32());
+                let slice = bytemuck::cast_slice::<u8, half::bf16>(&payload[..bytes_in_tile]);
+                let start_idx = (offset / 2) as usize;
+                for (i, val) in slice.iter().enumerate() {
+                    out[start_idx + i] = val.to_f32();
+                }
             }
             
-            // Reclaim tile back to empty state
+            // Mark as empty to allow PPU to reuse
             tile.state.store(crate::crook_scheduler::TILE_EMPTY, std::sync::atomic::Ordering::Release);
             
-            offset += bytes_to_process;
+            offset += bytes_in_tile as u64;
             tile_idx = (tile_idx + 1) % ring_size;
         }
         
