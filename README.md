@@ -160,10 +160,10 @@ Each development branch compiles to a distinctly named Python module for A/B ben
 
 | Branch | Module | Version |
 |:---|:---|:---|
-| `main` | `vulkannn_rusted_main` | v2.9.0 |
-| `test` | `vulkannn_rusted_test` | v3.2.0 |
-| `dev` | `vulkannn_rusted_dev` | v3.4.0 (Raw Vulkan) |
-| `dev_raw_vulkan` | `vulkannn_rusted_exp` | v3.4.0 (Merged) |
+| `main` | `vulkannn_rusted_main` | v3.4.0 (Iron Age Complete) |
+| `test` | `vulkannn_rusted_test` | v3.4.0 |
+| `dev` | `vulkannn_rusted_dev` | v3.4.0 |
+| `dev_raw_vulkan` | `vulkannn_rusted_exp` | v3.4.0 (Merged into dev/main) |
 
 ---
 
