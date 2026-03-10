@@ -1,6 +1,6 @@
 [package]
 name = "vulkannn_rusted_test"
-version = "3.2.0"
+version = "3.4.0"
 edition = "2021"
 
 [lib]
@@ -9,8 +9,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
-wgpu = "22.1"
-pollster = "0.3.0" 
+ash = "0.38"
+gpu-allocator = "0.27"
 memmap2 = "0.9"
 numpy = "0.22"
 bytemuck = { version = "1.15", features = ["derive"] }
@@ -20,3 +20,7 @@ matrixmultiply = { version = "0.3", features = ["threading"] }
 gemm = { version = "0.17", features = ["f16"] }
 half = { version = "2.4", features = ["bytemuck", "num-traits"] }
 num-traits = "0.2"
+io-uring = "0.6"
+
+[build-dependencies]
+naga = { version = "22.1", features = ["wgsl-in", "spv-out"] }

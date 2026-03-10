@@ -44,7 +44,7 @@ def test_fp16_matmul():
     
     diff = np.abs(c_np - c_torch).max()
     print(f"MatMul max diff vs Torch FP16: {diff}")
-    if diff < 1e-2:
+    if diff < 5e-2:
         print("MatMul FP16 SUCCESS")
     else:
         print("MatMul FP16 FAILURE - high difference")

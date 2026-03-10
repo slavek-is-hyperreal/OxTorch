@@ -4,8 +4,29 @@ import torch
 import os
 import sys
 import json
-import vulkannn_rusted as vnn
-from vulkannn_rusted import Tensor
+
+# Branch-aware dynamic import: tries each known branch module name in order.
+# This lets unified_benchmark.py work unmodified on any branch.
+_VNN_CANDIDATES = [
+    "vulkannn_rusted_exp",   # dev_raw_vulkan (experimental ash branch)
+    "vulkannn_rusted_dev",   # dev
+    "vulkannn_rusted_test",  # test
+    "vulkannn_rusted_main",  # main
+    "vulkannn_rusted",       # fallback (any generic build)
+]
+vnn = None
+for _mod_name in _VNN_CANDIDATES:
+    try:
+        import importlib
+        vnn = importlib.import_module(_mod_name)
+        print(f"[benchmark] Loaded VNN module: {_mod_name}")
+        break
+    except ImportError:
+        continue
+if vnn is None:
+    raise ImportError("No vulkannn_rusted module found. Please run maturin develop --release first.")
+Tensor = vnn.Tensor
+
 
 RESULTS_FILE = "tests/last_results.json"
 HISTORY_FILE = "tests/benchmark_history.log"
@@ -67,6 +88,7 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
     print(f"\n>>> TEST: {name} ({mode.upper()}, {dtype.upper()}) | Shape: {shape} | SSD: {is_ssd} | Iter: {iterations}")
     
     # Pre-generate or Load Data
+    import gc
     if not is_ssd:
         a_np = np.random.randn(*shape).astype(np.float32)
         if op == "MatMul":
@@ -88,6 +110,10 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
         # VNN Input
         a_vnn = Tensor(data=a_np, dtype=vnn_dtype, device=mode)
         b_vnn = Tensor(data=b_np, dtype=vnn_dtype, device=mode) if op != "ReLU" else None
+        
+        # Cleanup large numpy arrays to save RAM for the benchmark loop
+        del a_np, b_np
+        gc.collect()
     else:
         # SSD Path - Force F32 for now in Monster tests unless needed
         size_elements = np.prod(shape)
@@ -99,15 +125,26 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
         res_torch = None
 
     # VNN Execution (Warmup included)
-    if op == "MatMul": _ = a_vnn @ b_vnn
-    elif op == "Add": _ = a_vnn + b_vnn
-    elif op == "ReLU": _ = a_vnn.relu()
+    try:
+        if op == "MatMul": _ = a_vnn @ b_vnn
+        elif op == "Add": _ = a_vnn + b_vnn
+        elif op == "ReLU": _ = a_vnn.relu()
+    except Exception as e:
+        print(f"      [VNN] Error during warmup: {e}")
+        return 0, 0, False
 
     t0 = time.perf_counter()
-    for _ in range(iterations):
+    for i in range(iterations):
         if op == "MatMul": res_vnn = a_vnn @ b_vnn
         elif op == "Add": res_vnn = a_vnn + b_vnn
         elif op == "ReLU": res_vnn = a_vnn.relu()
+        
+        # Free intermediate results in the loop to prevent accumulation
+        if i < iterations - 1:
+            del res_vnn
+        if i % 5 == 0:
+            gc.collect()
+
     t_vnn = (time.perf_counter() - t0) / iterations
     
     # Validation
@@ -122,6 +159,12 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
 
     print(f"    [PyTorch] {t_pt:.4f}s")
     print(f"    [VNN]     {t_vnn:.4f}s | Parity: {parity_str}")
+    
+    # Final cleanup before returning
+    if not is_ssd:
+        del a_torch, b_torch, res_torch
+    del a_vnn, b_vnn, res_vnn
+    gc.collect()
     
     return t_pt, t_vnn, parity_ok
 
@@ -158,9 +201,14 @@ if __name__ == "__main__":
                 pt, v_t, ok = run_bench(f"ReLU_{dtype}_{mode}", "ReLU", (1000000,), mode=mode, dtype=dtype)
                 run_results.append({"name": f"ReLU {dtype} ({mode})", "pt": pt, "vnn": v_t, "ok": ok})
 
+                # --- LARGE TENSOR: Above GPU break-even threshold (VULKAN_MIN_ELEMS=4M) ---
+                pt, v_t, ok = run_bench(f"ReLU_{dtype}_{mode}_15M", "ReLU", (15000000,), mode=mode, dtype=dtype)
+                run_results.append({"name": f"ReLU {dtype} 15M ({mode})", "pt": pt, "vnn": v_t, "ok": ok})
+
         pt, v_t, ok = run_bench("Monster_ReLU_F32_SSD", "ReLU", (4000000000,), mode="cpu", is_ssd=True, dtype="f32")
         run_results.append({"name": "Monster ReLU 16GB SSD", "pt": pt, "vnn": v_t, "ok": ok})
         all_runs_results.append(run_results)
+
 
     # --- AGGREGATE STATS ---
     test_names = [r["name"] for r in all_runs_results[0]]

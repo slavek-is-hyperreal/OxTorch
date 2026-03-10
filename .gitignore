@@ -46,3 +46,4 @@ Cargo.lock
 tmp*/
 Gemma/
 gemma/
+*.ssd
