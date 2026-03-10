@@ -1,52 +1,141 @@
-# 📖 API Reference (v2.9.0)
+# API Reference (v3.4.0 "Iron Age Complete")
 
-This document provides a detailed reference for the `vulkannn_rusted` Python class.
+This document describes the public Python API exposed by `vulkannn_rusted` and its branch variants.
 
 ---
 
-## `Tensor` Class
-*   **Source**: `src/tensor.rs:14`
-*   **Constructor**: `Tensor(data=None, shape=None, device="auto", name="Tensor")` (`src/tensor.rs:28`)
-    - `data`: Optional - `numpy.ndarray` (f32).
-    - `shape`: Optional - `tuple` or `list` of dimensions.
-    - `device`: `"cpu"`, `"vulkan"`, `"hybrid"`, or `"auto"`.
-    - `name`: Human-readable label for debugging (`src/tensor.rs:20`).
+## DataType Enum
+
+Source: `src/tensor.rs:16`
+
+| Variant | Description |
+|:---|:---|
+| `DataType.F32` | 32-bit IEEE 754 float |
+| `DataType.F16` | 16-bit IEEE 754 half-precision float |
+| `DataType.BF16` | Brain Float 16 (8-bit exponent, 7-bit mantissa, same range as F32) |
+
+---
+
+## Tensor Class
+
+Source: `src/tensor.rs:32`
+
+### Constructor
+
+```python
+Tensor(data=None, shape=None, dtype=DataType.F32, device="auto", name="Tensor")
+```
+
+- `data`: Optional `numpy.ndarray` (F32). Converted to the target dtype at construction.
+- `shape`: Alternative to data. Allocates a zero-filled tensor of the given shape.
+- `dtype`: Storage precision. Conversion uses runtime-dispatched SIMD (see avx_swar.rs).
+- `device`: `"cpu"`, `"vulkan"`, `"hybrid"`, or `"auto"` (defaults to CPU).
+- `name`: Label used in debug output.
 
 ### Static Methods
-1.  **`from_ssd(path: str, shape: list)`** (`src/tensor.rs:43`)
-    - Maps an existing binary file (f32) to a Tensor via `memmap2`.
-    - Automatically hints the kernel with `MADV_SEQUENTIAL`.
-    - Returns a `ReadOnly` tensor.
-2.  **`new_ssd(path: str, shape: list)`** (`src/tensor.rs:56`)
-    - Creates a new binary file on disk and maps it as `ReadWrite`.
-    - Used for storing large results (e.g., 20GB+) that exceed RAM.
 
-### Matrix Operations
-*   **`__matmul__(other: Tensor)`** (`src/tensor.rs:98`)
-    - Operator: `@`
-    - Logic: Depending on `device`, it triggers the Vulkan tiling engine (`src/backend.rs:262`) or the CPU sgemm engine (`src/tensor.rs:228`).
-    - Support: 2D matrices (MatMul) and 1D vectors (GEMV).
+**`Tensor.from_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:85`
 
-### Element-wise Operations
-*   **`__add__(other: Tensor)`** (`src/tensor.rs:73`)
-    - Operator: `+`
-    - High-performance parallel addition via Rayon (CPU) or WGSL (Vulkan).
-*   **`relu()`** (`src/tensor.rs:88`)
-    - Standard Rectified Linear Unit.
-*   **`sigmoid()`** (`src/tensor.rs:94`)
-*   **`silu()`** (`src/tensor.rs:95`)
-    - Sigmoid Linear Unit (used in Gemma/LLama models).
+Maps an existing binary file as a read-only SSD tensor backed by `io_uring`/`O_DIRECT`.
+The file must already exist and be at least `prod(shape) * bytes_per_element` bytes.
+Returns a tensor with `device="ssd"` and no in-memory storage.
 
-### Utility Methods
-*   **`to_numpy()`** (`src/tensor.rs:65`)
-    - Converts the Tensor back to a `numpy.ndarray`.
-    - Note: This involves a copy from GPU/SSD to RAM if not already there.
-*   **`device` (property)**
-    - Get/Set the execution device (`cpu`, `vulkan`, `hybrid`). Change this at runtime to switch backends.
+**`Tensor.new_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:100`
+
+Creates a new file on disk and maps it read-write. Used for out-of-core results
+(e.g., the 16GB Monster ReLU benchmark). Aligned to 1MB ZFS recordsize boundaries.
 
 ---
 
-## ⚙️ Backend Module
-*   **Initialization**: `vulkannn_rusted.backend.init_backend()` (`src/lib.rs:17`) - done automatically on module import.
-*   **Buffer Caching**: `src/backend.rs:95` (`get_buffer`) and `src/backend.rs:106` (`recycle_buffer`). This prevents high-latency `wgpu::Device::create_buffer` calls during tight loops.
-*   **Work Stealer**: `src/backend.rs:279` implements the Atomic Fetch-Add logic to divide M-blocks between workers.
+### Matrix Operations
+
+**`__matmul__(other: Tensor)`** — `src/tensor.rs:275` — operator: `@`
+
+Dispatches based on `device`:
+
+- `"cpu"`: Uses `matrixmultiply::sgemm` (F32) or SWAR upcast + sgemm (F16/BF16).
+- `"vulkan"`: Uploads A and B to GPU via staging buffers, runs SPIR-V compute shader,
+  downloads result. All types computed as F32 on GPU (Bonaire has no native F16 math).
+- `"hybrid"`: Currently routes to Vulkan for MatMul (tile-pulling Phase 4 applies to
+  activations only; MatMul hybrid tiling is in progress).
+- `"ssd"`: Loads tiles via `load_to_f32_vec_msts()` per the MSTS ring buffer, then runs sgemm.
+
+---
+
+### Activation Functions
+
+| Method | Source line | Notes |
+|:---|:---|:---|
+| `relu()` | `src/tensor.rs:231` | Returns new Tensor |
+| `sigmoid()` | `src/tensor.rs:271` | Returns new Tensor |
+| `silu()` | `src/tensor.rs:272` | Returns new Tensor |
+| `relu_into(out)` | `src/tensor.rs:232` | Writes to pre-allocated out Tensor |
+| `sigmoid_into(out)` | `src/tensor.rs:233` | Writes to pre-allocated out Tensor |
+| `silu_into(out)` | `src/tensor.rs:234` | Writes to pre-allocated out Tensor |
+
+For `device="hybrid"`, activations use the MSTS tile-pulling dispatch:
+
+- Tensors >= 4M elements: one GPU thread + one CPU SWAR thread race for tiles.
+- Tensors < 4M elements: GPU dispatcher is skipped. Pure CPU SWAR (Bonaire PCIe cost ~80ms).
+
+---
+
+### Other Methods
+
+**`to_numpy()`** — `src/tensor.rs` — Converts F16/BF16 storage back to F32 numpy array
+via Rayon parallel SIMD upcast.
+
+**`transpose()`** — Returns a transposed view (no data copy, flips `is_transposed` flag
+and stride parameters used in sgemm dispatch).
+
+---
+
+## Backend Module
+
+Source: `src/backend.rs`
+
+### Initialization
+
+`init_backend()` creates the global `BACKEND: OnceLock<AshBackend>` singleton using Vulkan 1.2.
+Called once automatically when the Python module is imported via `lib.rs`.
+
+### Key Public Functions
+
+| Function | Description |
+|:---|:---|
+| `execute_activation(input, op, dtype, is_hybrid)` | Full-tensor GPU activation |
+| `execute_activation_chunked(input, output, offset, count, op, dtype)` | Tile-range GPU activation for MSTS dispatch |
+| `execute_activation_into(input, op, output, dtype, is_hybrid, staging)` | Sync activation with in-place output |
+| `execute_matmul(a, b, m, k, n, dtype, is_hybrid)` | Full matrix multiply on GPU |
+| `execute_add_into(a, b, out, dtype, is_hybrid, staging)` | Element-wise addition |
+| `poll_async_ops()` | Recycles completed GPU operations |
+| `poll_async_ops_until(wait_id)` | Blocks until a specific timeline semaphore value is reached |
+
+### Buffer Cache
+
+`get_buffer(size, usage, label, cpu_visible)` — returns a `CachedBuffer` from the recycle pool
+or allocates a new one via `gpu_allocator`. CPU-visible (staging) buffers use `CpuToGpu` memory;
+device buffers use `GpuOnly` to avoid coherency issues on legacy AMD (Bonaire).
+
+`recycle_buffer(buf)` — returns a buffer to the cache for reuse.
+
+---
+
+## Streaming Module
+
+Source: `src/streaming.rs`
+
+Manages RAM budget detection, prefetcher initialization, and the background SSD prefetch thread.
+
+`BUDGETS` stores `l2_ram_max_bytes`: the threshold below which the full tensor will be loaded
+into RAM before computation. Above this, the MSTS streaming path is used.
+
+---
+
+## MSTS Scheduler
+
+Source: `src/crook_scheduler.rs`
+
+`StatefulTile` — a 1MB-aligned structure with an `AtomicU32` status field representing tagged
+dataflow states (EMPTY -> LOADING -> READY_CPU -> READY_GPU -> GPU_COMPUTING -> GPU_DONE).
+Workers poll and claim tiles via Compare-And-Swap without any mutex.

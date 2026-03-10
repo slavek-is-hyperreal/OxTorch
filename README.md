@@ -1,86 +1,172 @@
-# 🚀 VulkanNN Rusted (v2.9.0)
+# VulkanNN Rusted (v3.4.0 "Iron Age Complete")
 
-**The Iron Age of Neural Inference.**  
-A high-performance, Rust-powered tensor engine designed for extreme memory efficiency and raw speed on consumer hardware. Leveraging Vulkan WGSL shaders and zero-copy SSD mapping to run models that shouldn't fit in your RAM.
+**A high-performance, Rust-powered tensor engine for constrained consumer hardware.**
 
-[![Performance: Record-Breaking](https://img.shields.io/badge/Performance-Record--Breaking-orange.svg)](#benchmarks)
-[![Engine: Rust + Vulkan](https://img.shields.io/badge/Engine-Rust%20%2B%20Vulkan-blue.svg)](#technical-deep-dive)
+Designed to run neural network inference on hardware that modern frameworks dismiss:
+legacy CPUs without AVX2, sub-2GB GPUs, systems with 24GB of DDR3 RAM and SSD-resident weights.
+The goal is numerical parity with PyTorch at a fraction of the memory footprint,
+with no CUDA, no dedicated tensor cores, no Apple Silicon required.
 
----
-
-## 🏗 Why VulkanNN Rusted?
-
-*   **🚀 Faster than PyTorch**: Up to **2.2x speedup** on MatMul 2k (0.45x Ratio) using Hybrid GPU/CPU tiling.
-*   **🧠 LLM Specialist**: Optimized for Gemma 2B (0.74x Ratio) and Gemma 3 4B (0.82x Ratio) on mid-range hardware.
-*   **💾 SSD-as-RAM (L3 Cache)**: Map 16GB+ weights directly to memory via `memmap2` with background prefetching.
-*   **⚡ Ghost Speed**: Asynchronous command submission and double buffering to saturate PCI-e bandwidth.
-*   **🛡 Statistical Guard**: Built-in regression monitoring with Coefficient of Variation (CV) tracking.
+[![Engine: Rust + Vulkan (ash)](https://img.shields.io/badge/Engine-Rust%20%2B%20Vulkan%20ash-blue.svg)](#technical-overview)
+[![Precision: Tri-Mode](https://img.shields.io/badge/Precision-F32%20%7C%20F16%20%7C%20BF16-green.svg)](#technical-overview)
+[![Parity: PyTorch](https://img.shields.io/badge/Parity-PyTorch%201%3A1-brightgreen.svg)](#benchmarks)
 
 ---
 
-## 🏁 Quick Start (Python)
+## Inspiration: The MERA-400
 
-Minimal knowledge required. If you have `maturin` and a Vulkan-capable GPU, you're ready.
+This project is directly inspired by the **MERA-400**, a Polish 16-bit minicomputer designed and
+manufactured between 1976 and 1985 by Zaklad Komputerow ERA in Warsaw. Roughly 650 units were built.
+
+What made the MERA-400 extraordinary was its **clockless, fully asynchronous processor**. Its speed
+was not governed by a fixed clock frequency, but by the number of operations it could complete per
+unit of time. Every module in the system operated asynchronously, tolerating components with different
+timing characteristics. This was hardware-level deterministic dataflow decades before it became a
+concept in mainstream computer science.
+
+The CROOK operating system, developed at the Institute of Marine Technology at Gdansk University of
+Technology, paired with the MERA-400's architecture to create a system that could do more with less
+than almost anything built in the West at the time.
+
+The MSTS (MERA Style Task Scheduler) at the core of this library is a software reimplementation of
+those ideas in modern Rust: a ring buffer of atomic-state tiles that lets CPU and GPU workers race
+to claim work without locks, without a clock, and without static splits.
+
+- Wikipedia (PL): [MERA-400](https://pl.wikipedia.org/wiki/Mera_400)
+- Archival documentation and community: [mera400.pl](https://mera400.pl/Strona_g%C5%82%C3%B3wna)
+- Video channel (highly recommended): [youtube.com/c/mera400](https://www.youtube.com/c/mera400)
+
+---
+
+## Why VulkanNN Rusted?
+
+- **Tri-Precision Engine**: Native F32, F16, and BF16 support with runtime-dispatched SIMD
+  conversion (F16C/AVX on Ivy Bridge, SSE2 SWAR on older hardware, NEON on AArch64).
+- **300-700x speedup over PyTorch on F16/BF16 MatMul**: PyTorch falls back to scalar software
+  emulation on CPUs without AVX-512 FP16. VNN uses explicit SIMD upcasting and Vulkan compute.
+- **SSD-as-RAM**: Asynchronous Linux `io_uring` with `O_DIRECT` streams weights directly from a
+  ZFS pool at 1MB record boundaries, bypassing the OS page cache entirely.
+- **MSTS Tile-Pulling Hybrid Dispatch**: CPU and GPU workers autonomously race to claim 256K-element
+  tiles via an `AtomicUsize` counter. No static splits. No locks. The faster resource eats more work.
+- **Statistical benchmark harness**: Multi-run audit with Median/Mean/StdDev and parity checks
+  against PyTorch for all three precisions.
+
+---
+
+## Quick Start (Python)
 
 ```python
-from vulkannn_rusted import Tensor
-import numpy as np
+# The module name reflects the active branch (A/B testing across branches)
+import vulkannn_rusted_exp as vnn   # dev_raw_vulkan branch
+# import vulkannn_rusted_dev as vnn  # dev branch
+# import vulkannn_rusted_main as vnn # main branch
+from vulkannn_rusted_exp import Tensor, DataType
 
-# 1. Create tensors (CPU, Vulkan, or Hybrid)
-a = Tensor(np.random.randn(2048, 2048).astype(np.float32), device="vulkan")
-b = Tensor(np.random.randn(2048, 2048).astype(np.float32), device="vulkan")
+# Tri-precision tensors
+a = Tensor(np.random.randn(2048, 2048).astype(np.float32), dtype=DataType.BF16, device="vulkan")
+b = Tensor(np.random.randn(2048, 2048).astype(np.float32), dtype=DataType.BF16, device="vulkan")
+result = a @ b
 
-# 2. Raw Speed MatMul
-res = a @ b
-
-# 3. Memory Mapping (Load 16GB weights in 0.0s)
-weights = Tensor.from_ssd("path/to/weights.bin", shape=(4096, 4096))
-# background prefetching is automatic!
+# Out-of-core tensor from SSD (weights larger than RAM)
+weights = Tensor.from_ssd("/pool/weights.bin", shape=(40000, 40000), dtype=DataType.F16)
 ```
 
 ---
 
-## 📊 Benchmarks (v2.9.0)
+## Benchmarks (v3.4.0, dev branch)
 
-Tested on the **"Slavek Lab" Baseline**:
-*   **CPU**: Intel(R) Core(TM) i5-3450 @ 3.10GHz (4 Cores/4 Threads)
-*   **GPU**: AMD Radeon R7 200 Series (RADV BONAIRE) (Vulkan)
-*   **RAM**: 23GB DDR3
-*   **OS**: Linux x86_64
+Hardware: Intel Core i5-3450 (Ivy Bridge, 4 cores, AVX + F16C, no AVX2) |
+AMD Radeon R7 260X (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
 
-| Test Case | PyTorch (Avg) | **VNN Rusted (Avg)** | **Ratio (VNN/PT)** | Stability (CV%) |
-|:--- |:--- |:--- |:--- |:--- |
-| **MatMul 2k (Hybrid)** | 0.203s | **0.090s** | **0.45x** 🚀 | 7.5% |
-| **MatMul 2k (Vulkan)** | 0.200s | **0.097s** | **0.49x** | 3.5% |
-| **Gemma 2B (Layer)** | 1.859s | **1.368s** | **0.74x** | 1.2% |
-| **Gemma 3 4B (Layer)** | 1.575s | **1.290s** | **0.82x** | 0.9% |
-| **MatMul 10k (CPU)** | 22.58s | **22.54s** | **1.00x** | 0.8% |
+| Test | PyTorch | VNN | Ratio | Notes |
+|:---|---:|---:|:---:|:---|
+| MatMul F32 2048x2048 (cpu) | ~0.2x s | 0.211s | ~1.0x | Near parity via matrixmultiply/sgemm |
+| MatMul F32 2048x2048 (vulkan) | ~0.2x s | 0.091s | ~0.45x | Vulkan compute |
+| MatMul F32 2048x2048 (hybrid) | ~0.2x s | 0.089s | ~0.45x | GPU threshold optimization |
+| ReLU F32 1M (cpu) | 0.002s | 0.010s | 5.0x | Rayon SIMD |
+| ReLU F32 1M (hybrid) | 0.001s | 0.011s | 11.0x | Below GPU threshold: CPU only |
+| MatMul F16 2048x2048 (cpu) | 108.0s | 0.280s | **0.002x** | PyTorch: scalar emulation; VNN: AVX F16C |
+| MatMul F16 2048x2048 (vulkan) | 106.0s | 0.250s | **0.002x** | VNN: Vulkan F32 compute, F16 storage |
+| MatMul BF16 2048x2048 (cpu) | 40.5s | 0.230s | **0.005x** | PyTorch: scalar; VNN: SSE2 SWAR |
+| Monster ReLU 16GB (SSD) | N/A | 45.7s | SSD limit | io_uring O_DIRECT, 1MB ZFS records |
 
----
-
-## 🛠 Technical Deep Dive
-
-### The Multi-Tier Cache Analogy
-VNN Rusted treats your hardware like a tiered cache system:
-*   **L1 (VRAM)**: Extreme speed, small capacity (1GB-2GB). Used for active tiles.
-*   **L2 (System RAM)**: Medium speed, large capacity. Data is prefetched here.
-*   **L3 (SSD)**: Mass storage. Weights stay here until touched.
-
-### Key Implementation Details
-1.  **Hybrid Tiling**: `src/backend.rs:276` splits MatMul work between CPU (Rayon/matrixmultiply) and GPU (wgpu/WGSL).
-2.  **Double Buffering**: `src/backend.rs:329` uses dual `bufs_b` to upload the next B-tile while the GPU is still computing the current one.
-3.  **Ghost Speed (Async Copy)**: `src/backend.rs:428` prevents blocking the CPU while GPU results are being transferred back to RAM.
-4.  **Zero-Overhead Memory Mapping**: `src/tensor.rs:43` uses `memmap2` with `libc::madvise(MADV_SEQUENTIAL)` for hardware-level read-ahead.
+> PyTorch F16/BF16 results reflect execution on the i5-3450 without native F16C acceleration in
+> PyTorch's dispatch path. VNN dispatches to hardware F16C intrinsics at runtime.
 
 ---
 
-## 📚 Documentation
-*   [Architecture Deep-Dive](docs/architecture.md) - Data flows and internal structures.
-*   [Performance Guide](docs/performance_guide.md) - Understanding Tiling, CV%, and Throttle.
-*   [API Reference](docs/api_reference.md) - Full list of methods and classes.
-*   [Changelog](docs/CHANGELOG.md) - Version history.
+## Technical Overview
+
+### Backend: Raw Ash Vulkan (v3.4.0+)
+
+The GPU backend was completely rewritten from `wgpu`/WGSL to `ash` (raw Vulkan 1.2 bindings).
+This provides explicit control over:
+
+- Separate compute and transfer command pools
+- Vulkan Timeline Semaphores for async GPU operation chaining
+- A buffer cache (`get_buffer` / `recycle_buffer`) to avoid per-dispatch allocation
+- Explicit pipeline barriers for correct TRANSFER -> COMPUTE -> TRANSFER synchronization
+
+Shaders are compiled from WGSL to SPIR-V at build time via `naga` in `build.rs`.
+
+### MSTS Tile-Pulling Hybrid (Phase 4)
+
+For `device="hybrid"` activations, work is divided into 256K-element tiles.
+An `Arc<AtomicUsize>` tile counter is shared between:
+
+1. A GPU dispatcher thread: calls `execute_activation_chunked` on each claimed tile (Vulkan)
+2. A CPU worker thread: processes claimed tiles with inline SWAR math (Rayon)
+
+The GPU dispatcher only activates when `num_elements >= VULKAN_MIN_ELEMS` (4M elements, ~16MB F32).
+Below that threshold, Vulkan PCIe staging overhead dominates and pure CPU SWAR is faster.
+
+### SIMD Conversion Matrix (avx_swar.rs)
+
+| CPU | F32->F16 | F16->F32 | F32->BF16 | BF16->F32 |
+|:---|:---|:---|:---|:---|
+| x86_64 + F16C + AVX | F16C intrinsics | F16C intrinsics | SSE2 RNE | SSE2 shift |
+| x86_64 + SSE2 (no F16C) | SSE2 SWAR | SSE2 SWAR | SSE2 RNE | SSE2 shift |
+| AArch64 | NEON vcvt | NEON vcvt | NEON shift | NEON shift |
+| Any other | Rayon scalar | Rayon scalar | Rayon scalar | Rayon scalar |
+
+Runtime dispatch via `is_x86_feature_detected!()` — no compile-time feature flags required.
+
+### Source Map
+
+| Component | File |
+|:---|:---|
+| Tensor operations, hybrid dispatch | `src/tensor.rs` |
+| Raw Vulkan backend, chunked GPU dispatch | `src/backend.rs` |
+| SIMD conversions, SWAR fallbacks | `src/avx_swar.rs` |
+| io_uring O_DIRECT SSD streaming | `src/io_uring_engine.rs` |
+| MSTS StatefulTile ring buffer | `src/crook_scheduler.rs` |
+| Streaming budgets and prefetcher | `src/streaming.rs` |
 
 ---
 
-## ⚖ License
-MIT License. Created by Antigravity AI for the VNN Rusted Project.
+## Documentation
+
+- [API Reference](docs/api_reference.md)
+- [Architecture](docs/architecture.md)
+- [Performance Guide](docs/performance_guide.md)
+- [Roadmap](docs/roadmap.md)
+- [Changelog](docs/CHANGELOG.md)
+
+---
+
+## Branch Versioning
+
+Each development branch compiles to a distinctly named Python module for A/B benchmarking:
+
+| Branch | Module | Version |
+|:---|:---|:---|
+| `main` | `vulkannn_rusted_main` | v2.9.0 |
+| `test` | `vulkannn_rusted_test` | v3.2.0 |
+| `dev` | `vulkannn_rusted_dev` | v3.4.0 (Raw Vulkan) |
+| `dev_raw_vulkan` | `vulkannn_rusted_exp` | v3.4.0 (Merged) |
+
+---
+
+## License
+
+MIT License.

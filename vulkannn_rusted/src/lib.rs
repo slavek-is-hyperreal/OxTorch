@@ -1,6 +1,9 @@
 mod backend;
 mod streaming;
 mod tensor;
+pub mod io_uring_engine;
+pub mod crook_scheduler;
+pub mod avx_swar;
 
 use pyo3::prelude::*;
 
@@ -21,6 +24,7 @@ fn vulkannn_rusted_main(m: &Bound<'_, PyModule>) -> PyResult<()> {
     streaming::init_prefetcher();
 
     m.add_function(wrap_pyfunction!(rust_greeting, m)?)?;
+    m.add_class::<tensor::DataType>()?;
     m.add_class::<tensor::Tensor>()?;
     Ok(())
 }

@@ -47,3 +47,4 @@ tmp*/
 Gemma/
 gemma/
 gemma-weights/
+*.ssd

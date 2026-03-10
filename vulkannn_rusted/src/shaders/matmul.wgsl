@@ -60,6 +60,6 @@ fn main(
     }
 
     if (row < M && col < N) {
-        c[row * N + col] = c[row * N + col] + sum;
+        c[row * N + col] = sum;
     }
 }
