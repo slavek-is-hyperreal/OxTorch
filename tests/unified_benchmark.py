@@ -88,6 +88,7 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
     print(f"\n>>> TEST: {name} ({mode.upper()}, {dtype.upper()}) | Shape: {shape} | SSD: {is_ssd} | Iter: {iterations}")
     
     # Pre-generate or Load Data
+    import gc
     if not is_ssd:
         a_np = np.random.randn(*shape).astype(np.float32)
         if op == "MatMul":
@@ -109,6 +110,10 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
         # VNN Input
         a_vnn = Tensor(data=a_np, dtype=vnn_dtype, device=mode)
         b_vnn = Tensor(data=b_np, dtype=vnn_dtype, device=mode) if op != "ReLU" else None
+        
+        # Cleanup large numpy arrays to save RAM for the benchmark loop
+        del a_np, b_np
+        gc.collect()
     else:
         # SSD Path - Force F32 for now in Monster tests unless needed
         size_elements = np.prod(shape)
@@ -120,15 +125,26 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
         res_torch = None
 
     # VNN Execution (Warmup included)
-    if op == "MatMul": _ = a_vnn @ b_vnn
-    elif op == "Add": _ = a_vnn + b_vnn
-    elif op == "ReLU": _ = a_vnn.relu()
+    try:
+        if op == "MatMul": _ = a_vnn @ b_vnn
+        elif op == "Add": _ = a_vnn + b_vnn
+        elif op == "ReLU": _ = a_vnn.relu()
+    except Exception as e:
+        print(f"      [VNN] Error during warmup: {e}")
+        return 0, 0, False
 
     t0 = time.perf_counter()
-    for _ in range(iterations):
+    for i in range(iterations):
         if op == "MatMul": res_vnn = a_vnn @ b_vnn
         elif op == "Add": res_vnn = a_vnn + b_vnn
         elif op == "ReLU": res_vnn = a_vnn.relu()
+        
+        # Free intermediate results in the loop to prevent accumulation
+        if i < iterations - 1:
+            del res_vnn
+        if i % 5 == 0:
+            gc.collect()
+
     t_vnn = (time.perf_counter() - t0) / iterations
     
     # Validation
@@ -143,6 +159,12 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
 
     print(f"    [PyTorch] {t_pt:.4f}s")
     print(f"    [VNN]     {t_vnn:.4f}s | Parity: {parity_str}")
+    
+    # Final cleanup before returning
+    if not is_ssd:
+        del a_torch, b_torch, res_torch
+    del a_vnn, b_vnn, res_vnn
+    gc.collect()
     
     return t_pt, t_vnn, parity_ok
 

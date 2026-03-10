@@ -323,15 +323,15 @@ pub fn poll_async_ops() {
     let current_val = unsafe { backend.device.get_semaphore_counter_value(backend.timeline_semaphore).unwrap() };
     
     let mut pending = backend.pending_ops.lock().unwrap();
-    pending.retain(|op| {
+    pending.retain_mut(|op| {
         if current_val >= op.wait_id {
-            // Operation finished, cleanup resources
-            if let Some(buf) = &op.staging_in1 { recycle_buffer_clone(buf); }
-            if let Some(buf) = &op.staging_in2 { recycle_buffer_clone(buf); }
-            if let Some(buf) = &op.staging_out { recycle_buffer_clone(buf); }
-            if let Some(buf) = &op.device_in1 { recycle_buffer_clone(buf); }
-            if let Some(buf) = &op.device_in2 { recycle_buffer_clone(buf); }
-            if let Some(buf) = &op.device_out { recycle_buffer_clone(buf); }
+            // Operation finished, cleanup and recycle buffers
+            if let Some(buf) = op.staging_in1.take() { recycle_buffer(buf); }
+            if let Some(buf) = op.staging_in2.take() { recycle_buffer(buf); }
+            if let Some(buf) = op.staging_out.take() { recycle_buffer(buf); }
+            if let Some(buf) = op.device_in1.take() { recycle_buffer(buf); }
+            if let Some(buf) = op.device_in2.take() { recycle_buffer(buf); }
+            if let Some(buf) = op.device_out.take() { recycle_buffer(buf); }
             
             unsafe {
                 backend.device.free_command_buffers(backend.compute_cmd_pool, &[op.cmd_buffer]);
@@ -342,13 +342,6 @@ pub fn poll_async_ops() {
             true // keep in pending
         }
     });
-}
-
-fn recycle_buffer_clone(cached: &CachedBuffer) {
-    let clone = CachedBuffer {
-        size: cached.size, usage: cached.usage, buffer: cached.buffer, allocation: None, cpu_visible: cached.cpu_visible, mapped_ptr: cached.mapped_ptr,
-    };
-    if let Ok(mut cache) = BACKEND.get().unwrap().buffer_cache.lock() { cache.push(clone); }
 }
 
 pub fn poll_async_ops_until(target_val: u64) {
@@ -385,13 +378,30 @@ pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Opti
         MemoryLocation::GpuOnly 
     };
     
-    let allocation = backend.allocator.lock().unwrap().allocate(&AllocationCreateDesc {
-        name: label.unwrap_or("Buffer"),
-        requirements,
-        location,
-        linear: true,
-        allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
-    }).unwrap();
+    let mut retry_count = 0;
+    let allocation = loop {
+        let result = backend.allocator.lock().unwrap().allocate(&AllocationCreateDesc {
+            name: label.unwrap_or("Buffer"),
+            requirements,
+            location,
+            linear: true,
+            allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+        });
+
+        match result {
+            Ok(alloc) => break alloc,
+            Err(e) => {
+                if retry_count == 0 {
+                    println!("[VNN] VRAM Allocation failed: {:?}. Clearing cache and retrying...", e);
+                    clear_all_caches();
+                    retry_count += 1;
+                    continue;
+                } else {
+                    panic!("[VNN] CRITICAL: VRAM Allocation failed even after clearing cache: {:?}", e);
+                }
+            }
+        }
+    };
     
     let cpu_visible_actual = allocation.mapped_ptr().is_some();
     let mapped_ptr = allocation.mapped_ptr().map(|p| p.as_ptr() as *mut u8);
@@ -402,8 +412,46 @@ pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Opti
 }
 
 pub fn recycle_buffer(cached: CachedBuffer) {
-    if let Ok(mut cache) = BACKEND.get().unwrap().buffer_cache.lock() {
+    let backend = BACKEND.get().unwrap();
+    if let Ok(mut cache) = backend.buffer_cache.lock() {
+        // Simple safety: if cache grows too large (> 512MB), start clearing it
+        let current_total: u64 = cache.iter().map(|b| b.size).sum();
+        if current_total > 512 * 1024 * 1024 {
+            // Prune OLD buffers when recycling new ones into a full cache
+            prune_buffer_cache(2); // Remove 2 oldest
+        }
         cache.push(cached);
+    }
+}
+
+pub fn prune_buffer_cache(count: usize) {
+    let backend = BACKEND.get().unwrap();
+    if let Ok(mut cache) = backend.buffer_cache.lock() {
+        let to_remove = count.min(cache.len());
+        for _ in 0..to_remove {
+            let buf = cache.remove(0);
+            destroy_cached_buffer(buf);
+        }
+    }
+}
+
+fn destroy_cached_buffer(mut buf: CachedBuffer) {
+    let backend = BACKEND.get().unwrap();
+    unsafe {
+        backend.device.destroy_buffer(buf.buffer, None);
+        if let Some(alloc) = buf.allocation.take() {
+            backend.allocator.lock().unwrap().free(alloc).unwrap();
+        }
+    }
+}
+
+pub fn clear_all_caches() {
+    let backend = BACKEND.get().unwrap();
+    if let Ok(mut cache) = backend.buffer_cache.lock() {
+        while !cache.is_empty() {
+            let buf = cache.pop().unwrap();
+            destroy_cached_buffer(buf);
+        }
     }
 }
 pub fn execute_add(a_raw: &[u8], b_raw: &[u8], dtype: DataType, is_hybrid: bool) -> Vec<u8> {
@@ -548,7 +596,7 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
     upload_to_stage(a_raw, &stage_a, dtype);
     upload_to_stage(b_raw, &stage_b, dtype);
     unsafe {
-        let ptr = stage_u.allocation.as_ref().unwrap().mapped_ptr().unwrap().as_ptr() as *mut u32;
+        let ptr = stage_u.mapped_ptr.expect("stage_u must be mapped") as *mut u32;
         std::ptr::copy_nonoverlapping(uniform_data.as_ptr(), ptr, 4);
     }
 
