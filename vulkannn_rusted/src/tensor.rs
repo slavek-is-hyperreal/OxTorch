@@ -5,6 +5,7 @@ use numpy::ndarray::Array;
 use rayon::prelude::*;
 use half::{f16, bf16};
 use crate::io_uring_engine::DirectIoEngine;
+use crate::buf_pool::BufPool;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -319,11 +320,11 @@ impl Tensor {
                             crate::avx_swar::convert_f16_to_f32(other.get_slice_raw_f16().0, &mut v);
                             v
                         };
-                        let mut res_f32 = vec![0.0; m * n];
-                        
+                        let mut res_f32 = BufPool::get(m * n);
+                        res_f32.resize(m * n, 0.0f32);
                         self.cpu_sgemm_f32(&a_f32, &b_f32, &mut res_f32, m, k, n, rsa, csa, rsb, csb);
-                        
                         out.par_iter_mut().zip(res_f32.par_iter()).for_each(|(o, &x)| *o = half::f16::from_f32(x));
+                        BufPool::put(res_f32); // Return intermediate buffer to pool
                         Storage::F16(out)
                     },
                     DataType::BF16 => {
@@ -338,9 +339,11 @@ impl Tensor {
                             crate::avx_swar::convert_bf16_to_f32(other.get_slice_raw_bf16().0, &mut v);
                             v
                         };
-                        let mut res_f32 = vec![0.0; m * n];
+                        let mut res_f32 = BufPool::get(m * n);
+                        res_f32.resize(m * n, 0.0f32);
                         self.cpu_sgemm_f32(&a_f32, &b_f32, &mut res_f32, m, k, n, rsa, csa, rsb, csb);
                         out.par_iter_mut().zip(res_f32.par_iter()).for_each(|(o, &x)| *o = half::bf16::from_f32(x));
+                        BufPool::put(res_f32); // Return intermediate buffer to pool
                         Storage::BF16(out)
                     },
                 }
@@ -361,7 +364,8 @@ impl Tensor {
                         
                         // Streamed F16/BF16: For now fallback to F32 via streaming then convert back
                         // Optimizing this for streaming BF16 next.
-                        let mut res_f32 = vec![0.0; m * n];
+                        let mut res_f32 = BufPool::get(m * n);
+                        res_f32.resize(m * n, 0.0f32);
                         let (a_f32, b_f32) = if is_f16 {
                             let a_f16: &[half::f16] = bytemuck::cast_slice(a_bytes);
                             let b_f16: &[half::f16] = bytemuck::cast_slice(b_bytes);
@@ -444,7 +448,9 @@ impl Tensor {
         if self.device == "cpu" {
             if self.dtype == DataType::F32 {
                 let (input, _) = self.get_slice_raw_f32();
-                let mut res = vec![0.0; input.len()];
+                // BufPool::get reuses warm memory from a previous call — avoids cold OS page fault.
+                // This is the primary fix for relu() being 10x slower than PyTorch on small tensors.
+                let mut res = BufPool::get(input.len());
                 Self::act_into_raw_f32(input, op, &mut res)?;
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(res), mmap_data: None })
             } else if self.dtype == DataType::F16 {
@@ -521,7 +527,11 @@ impl Tensor {
                 });
                 } // end if num_total >= VULKAN_MIN_ELEMS
 
-                // CPU worker threads: claim tiles from the same counter with SWAR math
+                // Bug #5 fix: was a single CPU worker — only 1 core used!
+                // Now spawn N CPU workers (one per Rayon thread available), racing on the
+                // tile_counter. This matches the work-stealing intent of the MSTS architecture.
+                let num_cpu_workers = rayon::current_num_threads();
+                for _ in 0..num_cpu_workers {
                 let cpu_tiles = num_tiles; // upper bound visible to Rayon workers below
                 let counter_cpu = tile_counter.clone();
                 let op_cpu = op_str.clone();
@@ -564,6 +574,7 @@ impl Tensor {
                         }
                     }
                 });
+                } // end for cpu workers
             });
 
             let storage = if dtype == DataType::F16 {
@@ -796,13 +807,18 @@ impl Tensor {
 
     fn act_into_raw_f32(i_s: &[f32], op: &str, out: &mut [f32]) -> PyResult<()> {
         let total_elements = i_s.len();
-        if total_elements < 1_000_000 {
-                match op {
-                    "relu" => out.par_iter_mut().zip(i_s.par_iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { 0.0 }),
-                    "sigmoid" => out.par_iter_mut().zip(i_s.par_iter()).for_each(|(o, &i)| *o = 1.0 / (1.0 + (-i).exp())),
-                    "silu" => out.par_iter_mut().zip(i_s.par_iter()).for_each(|(o, &i)| *o = i * (1.0 / (1.0 + (-i).exp()))),
-                    _ => {}
-                }
+        // Bug #4 fix: was threshold 1_000_000 (4MB). Rayon spawn overhead dominates for simple
+        // element-wise ops below ~32MB. Per Rayon docs: use serial iter for small workloads.
+        // PyTorch uses a single-threaded kernel for small tensors — same principle here.
+        // 8_000_000 floats = 32MB, well above L3 cache, good break-even for thread overhead.
+        if total_elements < 8_000_000 {
+            // Serial path — no thread spawn overhead
+            match op {
+                "relu"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = if i > 0.0 { i } else { 0.0 }; } },
+                "sigmoid" => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = 1.0 / (1.0 + (-i).exp()); } },
+                "silu"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = i * (1.0 / (1.0 + (-i).exp())); } },
+                _ =>{}
+            }
             } else {
                 let tile = 1024 * 1024 / 4;
                 out.par_chunks_mut(tile).enumerate().for_each(|(idx, chunk)| {
@@ -924,16 +940,27 @@ impl Tensor {
                     r[j] = b[idx as usize];
                 }
             });
-            let next_m = std::sync::atomic::AtomicUsize::new(0);
+            let next_m = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let ptr_out = out.as_mut_ptr() as usize;
+            // Bug #6 fix: Pre-allocate a_band buffers OUTSIDE the rayon scope to avoid
+            // per-iteration heap allocation inside work-stealing threads. Each thread gets
+            // its own pre-sized buffer; we use a Vec<Vec<f32>> indexed by thread position.
+            let num_threads = rayon::current_num_threads();
+            let mut a_bands: Vec<Vec<f32>> = (0..num_threads).map(|_| vec![0.0f32; blk_m * bk]).collect();
+            // Pass b_band as raw ptr (usize) so it can be shared across closures without move.
+            let b_band_ptr = b_band.as_ptr() as usize;
             rayon::scope(|s| {
-                for _ in 0..rayon::current_num_threads() {
-                    s.spawn(|_| {
+                for t in 0..num_threads {
+                    // Safety: each thread writes only to its own a_bands[t] slot.
+                    let a_band_ptr = a_bands[t].as_mut_ptr() as usize;
+                    let next_m_t = next_m.clone();
+                    s.spawn(move |_| {
                         loop {
-                            let ms = next_m.fetch_add(blk_m, std::sync::atomic::Ordering::Relaxed);
+                            let ms = next_m_t.fetch_add(blk_m, std::sync::atomic::Ordering::Relaxed);
                             if ms >= m { break; }
                             let cur_m = (m - ms).min(blk_m);
-                            let mut a_band = vec![0.0; cur_m * bk];
+                            // Reuse pre-allocated a_band buffer (Bug #6 fix)
+                            let a_band = unsafe { std::slice::from_raw_parts_mut(a_band_ptr as *mut f32, cur_m * bk) };
                             for i in 0..cur_m {
                                 let m_idx = ms + i;
                                 for j in 0..bk {
@@ -942,7 +969,7 @@ impl Tensor {
                                     a_band[i * bk + j] = a[idx as usize];
                                 }
                             }
-                            unsafe { matrixmultiply::sgemm(cur_m, bk, n, 1.0, a_band.as_ptr(), bk as isize, 1, b_band.as_ptr(), n as isize, 1, if ks == 0 { 0.0 } else { 1.0 }, (ptr_out as *mut f32).add(ms * n), n as isize, 1); }
+                            unsafe { matrixmultiply::sgemm(cur_m, bk, n, 1.0, a_band.as_ptr(), bk as isize, 1, b_band_ptr as *const f32, n as isize, 1, if ks == 0 { 0.0 } else { 1.0 }, (ptr_out as *mut f32).add(ms * n), n as isize, 1); }
                         }
                     });
                 }

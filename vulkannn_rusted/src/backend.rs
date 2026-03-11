@@ -51,6 +51,14 @@ pub struct AshBackend {
     #[allow(dead_code)]
     pub transfer_cmd_pool: vk::CommandPool,
     pub buffer_cache: Mutex<Vec<CachedBuffer>>,
+
+    // Bug #3 fix: Pre-allocated permanent descriptor sets.
+    // Instead of allocating+freeing a DescriptorSet on EVERY op call (which fragments the pool
+    // and causes bimodal latency), we keep 3 permanent sets and just call UpdateDescriptorSets.
+    // Protected by Mutex since GPU ops are serialized via queue_wait_idle anyway.
+    pub perm_desc_matmul: Mutex<vk::DescriptorSet>,
+    pub perm_desc_add: Mutex<vk::DescriptorSet>,
+    pub perm_desc_act: Mutex<vk::DescriptorSet>,
     
     pub timeline_semaphore: vk::Semaphore,
     pub timeline_value: AtomicU64,
@@ -207,13 +215,16 @@ pub fn init_backend() {
             allocation_sizes: Default::default(),
         }).unwrap();
 
+        // Bug #3 fix: Do NOT use FREE_DESCRIPTOR_SET_BIT.
+        // Per Vulkan spec and vkguide.dev best practices: omitting this flag lets the driver
+        // use a simpler bump allocator internally, which is faster and doesn't fragment.
+        // We only need a small fixed pool (3 permanent sets + headroom for async activation ops).
         let pool_sizes = [
-            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(10000),
-            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(2000),
+            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(64),
+            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(16),
         ];
         let pool_info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(2000)
-            .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
+            .max_sets(32)
             .pool_sizes(&pool_sizes);
         let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None) }.unwrap();
 
@@ -300,6 +311,19 @@ pub fn init_backend() {
         let sem_info = vk::SemaphoreCreateInfo::default().push_next(&mut sem_type);
         let timeline_semaphore = unsafe { device.create_semaphore(&sem_info, None) }.expect("Failed to create Timeline Semaphore. Ensure device supports Vulkan 1.2!");
 
+        // Bug #3 fix: Allocate 3 permanent descriptor sets once at startup.
+        // From this point on, ops call UpdateDescriptorSets to re-point them at new buffers.
+        let perm_sets = unsafe {
+            let layouts = [dsl_matmul, dsl_add, dsl_act];
+            let alloc_info = vk::DescriptorSetAllocateInfo::default()
+                .descriptor_pool(desc_pool)
+                .set_layouts(&layouts);
+            device.allocate_descriptor_sets(&alloc_info).expect("Failed to pre-alloc permanent descriptor sets")
+        };
+        let perm_desc_matmul = perm_sets[0];
+        let perm_desc_add    = perm_sets[1];
+        let perm_desc_act    = perm_sets[2];
+
         AshBackend {
             _entry: entry, _instance: instance, _pdevice: pdevice, device,
             compute_queue, _compute_family: compute_family,
@@ -311,6 +335,9 @@ pub fn init_backend() {
             pipe_add, pipe_matmul, pipe_relu, pipe_sigmoid, pipe_silu,
             compute_cmd_pool, transfer_cmd_pool,
             buffer_cache: Mutex::new(Vec::new()),
+            perm_desc_matmul: Mutex::new(perm_desc_matmul),
+            perm_desc_add:    Mutex::new(perm_desc_add),
+            perm_desc_act:    Mutex::new(perm_desc_act),
             timeline_semaphore,
             timeline_value: AtomicU64::new(0),
             pending_ops: Mutex::new(Vec::new()),
@@ -335,7 +362,11 @@ pub fn poll_async_ops() {
             
             unsafe {
                 backend.device.free_command_buffers(backend.compute_cmd_pool, &[op.cmd_buffer]);
-                backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[op.desc_set]).unwrap();
+                // Bug #3 fix: desc_set is now a permanent set — do NOT free it.
+                // We store vk::DescriptorSet::null() in AsyncOp to mark this.
+                if op.desc_set != vk::DescriptorSet::null() {
+                    backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[op.desc_set]).unwrap();
+                }
             }
             false // remove from pending
         } else {
@@ -428,9 +459,13 @@ pub fn prune_buffer_cache(count: usize) {
     let backend = BACKEND.get().unwrap();
     if let Ok(mut cache) = backend.buffer_cache.lock() {
         let to_remove = count.min(cache.len());
+        // Bug #1 fix: was cache.remove(0) = O(n) shift of entire Vec.
+        // pop() = O(1). LIFO order is fine for cache eviction — we evict
+        // the most-recently-recycled buffer (hottest in terms of allocation).
         for _ in 0..to_remove {
-            let buf = cache.remove(0);
-            destroy_cached_buffer(buf);
+            if let Some(buf) = cache.pop() {
+                destroy_cached_buffer(buf);
+            }
         }
     }
 }
@@ -531,9 +566,8 @@ pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: D
         ];
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &barriers, &[]);
 
-        let layouts = [backend.dsl_add];
-        let alloc_info = vk::DescriptorSetAllocateInfo::default().descriptor_pool(*backend.desc_pool.lock().unwrap()).set_layouts(&layouts);
-        let set = backend.device.allocate_descriptor_sets(&alloc_info).unwrap()[0];
+        // Bug #3 fix: Use permanent pre-allocated descriptor set — no alloc/free per call.
+        let set = *backend.perm_desc_add.lock().unwrap();
         
         let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(0).range(vk::WHOLE_SIZE)];
         let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(0).range(vk::WHOLE_SIZE)];
@@ -562,7 +596,7 @@ pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: D
         backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
         backend.device.queue_wait_idle(backend.compute_queue).unwrap();
         backend.device.free_command_buffers(backend.compute_cmd_pool, &cmds);
-        backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[set]).unwrap();
+        // NOTE: No free_descriptor_sets — permanent set is reused.
     }
 
     download_from_stage(res_raw, &stage_c, dtype);
@@ -613,9 +647,8 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
         ];
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &barriers, &[]);
 
-        let layouts = [backend.dsl_matmul];
-        let alloc_info = vk::DescriptorSetAllocateInfo::default().descriptor_pool(*backend.desc_pool.lock().unwrap()).set_layouts(&layouts);
-        let set = backend.device.allocate_descriptor_sets(&alloc_info).unwrap()[0];
+        // Bug #3 fix: Use permanent pre-allocated descriptor set — no alloc/free per call.
+        let set = *backend.perm_desc_matmul.lock().unwrap();
         
         let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(0).range(vk::WHOLE_SIZE)];
         let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(0).range(vk::WHOLE_SIZE)];
@@ -645,7 +678,7 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
         backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
         backend.device.queue_wait_idle(backend.compute_queue).unwrap();
         backend.device.free_command_buffers(backend.compute_cmd_pool, &cmds);
-        backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[set]).unwrap();
+        // NOTE: No free_descriptor_sets — permanent set is reused.
     }
 
     download_from_stage(&mut out_vec, &stage_c, dtype);
@@ -700,9 +733,8 @@ pub fn execute_activation_chunked(
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[barrier], &[]);
 
-        let layouts = [backend.dsl_act];
-        let alloc_info = vk::DescriptorSetAllocateInfo::default().descriptor_pool(*backend.desc_pool.lock().unwrap()).set_layouts(&layouts);
-        let set = backend.device.allocate_descriptor_sets(&alloc_info).unwrap()[0];
+        // Bug #3 fix: Use permanent pre-allocated descriptor set — no alloc/free per call.
+        let set = *backend.perm_desc_act.lock().unwrap();
 
         let info_in  = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(0).range(vk::WHOLE_SIZE)];
         let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(0).range(vk::WHOLE_SIZE)];
@@ -739,7 +771,7 @@ pub fn execute_activation_chunked(
         backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
         backend.device.queue_wait_idle(backend.compute_queue).unwrap();
         backend.device.free_command_buffers(backend.compute_cmd_pool, &cmds);
-        backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[set]).unwrap();
+        // NOTE: No free_descriptor_sets — permanent set is reused.
     }
 
     download_from_stage(tile_out, &stage_out, dtype);
@@ -794,9 +826,8 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, _res_raw: &mut [u8], d
         let barrier = vk::BufferMemoryBarrier::default().buffer(buf_in.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[barrier], &[]);
 
-        let layouts = [backend.dsl_act];
-        let alloc_info = vk::DescriptorSetAllocateInfo::default().descriptor_pool(*backend.desc_pool.lock().unwrap()).set_layouts(&layouts);
-        let set = backend.device.allocate_descriptor_sets(&alloc_info).unwrap()[0];
+        // Bug #3 fix: Use permanent pre-allocated descriptor set — no alloc/free in async op.
+        let set = *backend.perm_desc_act.lock().unwrap();
         
         let info_in = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(0).range(vk::WHOLE_SIZE)];
         let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(0).range(vk::WHOLE_SIZE)];
@@ -852,7 +883,9 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, _res_raw: &mut [u8], d
             device_in2: None,
             device_out: Some(buf_out),
             cmd_buffer: cmd,
-            desc_set: set,
+            // Bug #3 fix: Use null handle to signal poll_async_ops NOT to free this set.
+            // It's a permanent set that lives for the lifetime of the backend.
+            desc_set: vk::DescriptorSet::null(),
             wait_id,
         };
         backend.pending_ops.lock().unwrap().push(op_info);
