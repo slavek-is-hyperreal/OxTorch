@@ -69,7 +69,11 @@
 - [ ] **Native SWAR/AVX PRNG**: Rewrite `rand` and `randn` tensor creators to drop the `numpy` PyO3 dependency. Implement a native PRNG (e.g. xoshiro256++) using AVX intrinsics directly blasting into O_DIRECT aligned memory.
 - [ ] **Fused Vulkan Elementwise**: Implement `elementwise.wgsl` to natively process `mul`/`sub`/`div` within VRAM. Remove the scalar CPU fallback bypass present in `backend.rs`. 
 - [ ] **Fused Vulkan Softmax**: Implement a shared-memory coalesced Vulkan kernel for `softmax` and `log_softmax` to replace the iterative 3-pass CPU fallback.
-- [ ] **AVX2 Advanced Activations**: Implement fast-math vector approximations of `gelu`, `tanh`, and `exp` using AVX2 (akin to the existing `vmaxps` for `relu_f32`).
+- [ ] **AVX2 Advanced Activations**: Implement fast-math vector approximations of `gelu`, `tanh`, and `exp` using AVX2.
+- [ ] **VRAM Migration (Pooling)**: Implement global `vulkano::memory::pools` to avoid the "Antipattern 1" of dynamic allocation. Pre-allocate safe VRAM blocks and manage sub-allocations for logical tensors.
+- [ ] **Int8 SWAR (Legacy CPU Master)**: Implement the "Boss Walk" – 8-bit parallel arithmetic using 64-bit GPR masks for CPUs lacking any SIMD (Atom/Celeron).
+- [ ] **Cache-Oblivious i-k-j Tiling**: Rearrange CPU compute loops to maximize L1/L2 hits via spatial locality.
+
 
 **Hybrid MatMul Tile-Pulling**
 
