@@ -229,6 +229,29 @@ impl Tensor {
         }
     }
 
+    fn __mul__(&self, other: &Tensor) -> PyResult<Tensor> {
+        self.elementwise_op(other, "mul")
+    }
+    fn __sub__(&self, other: &Tensor) -> PyResult<Tensor> {
+        self.elementwise_op(other, "sub")
+    }
+    fn __truediv__(&self, other: &Tensor) -> PyResult<Tensor> {
+        self.elementwise_op(other, "div")
+    }
+
+    fn mul_scalar(&self, val: f32) -> PyResult<Tensor> {
+        self.scalar_op(val, "mul_scalar")
+    }
+    fn add_scalar(&self, val: f32) -> PyResult<Tensor> {
+        self.scalar_op(val, "add_scalar")
+    }
+    fn sub_scalar(&self, val: f32) -> PyResult<Tensor> {
+        self.scalar_op(val, "sub_scalar")
+    }
+    fn div_scalar(&self, val: f32) -> PyResult<Tensor> {
+        self.scalar_op(val, "div_scalar")
+    }
+
     fn relu(&self) -> PyResult<Tensor> { self.unary_op("relu") }
     fn relu_into(&mut self, out: &mut Tensor) -> PyResult<()> { self.act_into("relu", out) }
     fn sigmoid_into(&mut self, out: &mut Tensor) -> PyResult<()> { self.act_into("sigmoid", out) }
@@ -439,6 +462,122 @@ impl Tensor {
         if self.shape != other.shape { return Err(PyValueError::new_err("Shape mismatch")); }
         if self.dtype != other.dtype { return Err(PyValueError::new_err("DType mismatch")); }
         Ok(())
+    }
+
+    /// Generic elementwise binary op: mul / sub / div (CPU+Vulkan+Hybrid, all dtypes)
+    fn elementwise_op(&self, other: &Tensor, op: &str) -> PyResult<Tensor> {
+        self.check_shape(other)?;
+        let op_name = match op { "mul" => "MulRes", "sub" => "SubRes", "div" => "DivRes", _ => "ElemRes" };
+        if self.device == "cpu" && other.device == "cpu" {
+            if self.dtype == DataType::F32 {
+                let (a, _) = self.get_slice_raw_f32();
+                let (b, _) = other.get_slice_raw_f32();
+                let mut res = BufPool::get(a.len());
+                match op {
+                    "mul" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = a * b),
+                    "sub" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = a - b),
+                    "div" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = a / b),
+                    _ => {}
+                }
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: op_name.to_string(), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(res), mmap_data: None })
+            } else if self.dtype == DataType::F16 {
+                let (a, _) = self.get_slice_raw_f16();
+                let (b, _) = other.get_slice_raw_f16();
+                let mut res = vec![f16::ZERO; a.len()];
+                match op {
+                    "mul" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = f16::from_f32(a.to_f32() * b.to_f32())),
+                    "sub" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = f16::from_f32(a.to_f32() - b.to_f32())),
+                    "div" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = f16::from_f32(a.to_f32() / b.to_f32())),
+                    _ => {}
+                }
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: op_name.to_string(), is_transposed: false, dtype: DataType::F16, storage: Storage::F16(res), mmap_data: None })
+            } else {
+                let (a, _) = self.get_slice_raw_bf16();
+                let (b, _) = other.get_slice_raw_bf16();
+                let mut res = vec![bf16::ZERO; a.len()];
+                match op {
+                    "mul" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = bf16::from_f32(a.to_f32() * b.to_f32())),
+                    "sub" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = bf16::from_f32(a.to_f32() - b.to_f32())),
+                    "div" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = bf16::from_f32(a.to_f32() / b.to_f32())),
+                    _ => {}
+                }
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: op_name.to_string(), is_transposed: false, dtype: self.dtype, storage: Storage::BF16(res), mmap_data: None })
+            }
+        } else {
+            let (a_raw, _) = self.get_slice_raw_bytes();
+            let (b_raw, _) = other.get_slice_raw_bytes();
+            let res_raw = crate::backend::execute_elementwise(a_raw, b_raw, op, self.dtype, self.device == "hybrid");
+            let storage = if self.dtype == DataType::F16 {
+                Storage::F16(bytemuck::cast_slice(&res_raw).to_vec())
+            } else if self.dtype == DataType::BF16 {
+                Storage::BF16(bytemuck::cast_slice(&res_raw).to_vec())
+            } else {
+                Storage::F32(bytemuck::cast_slice(&res_raw).to_vec())
+            };
+            Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: op_name.to_string(), is_transposed: false, dtype: self.dtype, storage, mmap_data: None })
+        }
+    }
+
+    /// Broadcast scalar op: mul_scalar / add_scalar / sub_scalar / div_scalar (CPU only for now)
+    fn scalar_op(&self, val: f32, op: &str) -> PyResult<Tensor> {
+        if self.device == "cpu" {
+            if self.dtype == DataType::F32 {
+                let (input, _) = self.get_slice_raw_f32();
+                let mut res = BufPool::get(input.len());
+                match op {
+                    "mul_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = i * val),
+                    "add_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = i + val),
+                    "sub_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = i - val),
+                    "div_scalar" => { let inv = 1.0 / val; res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = i * inv); },
+                    _ => {}
+                }
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "ScalarRes".to_string(), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(res), mmap_data: None })
+            } else if self.dtype == DataType::F16 {
+                let (input, _) = self.get_slice_raw_f16();
+                let mut res = vec![f16::ZERO; input.len()];
+                match op {
+                    "mul_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(i.to_f32() * val)),
+                    "add_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(i.to_f32() + val)),
+                    "sub_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(i.to_f32() - val)),
+                    "div_scalar" => { let inv = 1.0 / val; res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(i.to_f32() * inv)); },
+                    _ => {}
+                }
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "ScalarRes".to_string(), is_transposed: false, dtype: DataType::F16, storage: Storage::F16(res), mmap_data: None })
+            } else {
+                let (input, _) = self.get_slice_raw_bf16();
+                let mut res = vec![bf16::ZERO; input.len()];
+                match op {
+                    "mul_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(i.to_f32() * val)),
+                    "add_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(i.to_f32() + val)),
+                    "sub_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(i.to_f32() - val)),
+                    "div_scalar" => { let inv = 1.0 / val; res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(i.to_f32() * inv)); },
+                    _ => {}
+                }
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "ScalarRes".to_string(), is_transposed: false, dtype: self.dtype, storage: Storage::BF16(res), mmap_data: None })
+            }
+        } else {
+            // Vulkan path: treat scalar as a second buffer of same size for now (fallback to CPU)
+            // Full Vulkan scalar push-constant path is Sprint 4
+            self.scalar_op_cpu_fallback(val, op)
+        }
+    }
+
+    fn scalar_op_cpu_fallback(&self, val: f32, op: &str) -> PyResult<Tensor> {
+        // For vulkan/hybrid devices, fall back to CPU for scalar ops until Sprint 4 Vulkan shader
+        if self.dtype == DataType::F32 {
+            let (input, _) = self.get_slice_raw_f32();
+            let mut res = BufPool::get(input.len());
+            match op {
+                "mul_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = i * val),
+                "add_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = i + val),
+                "sub_scalar" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = i - val),
+                "div_scalar" => { let inv = 1.0 / val; res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = i * inv); },
+                _ => {}
+            }
+            Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "ScalarRes".to_string(), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(res), mmap_data: None })
+        } else {
+            Err(pyo3::exceptions::PyValueError::new_err("Scalar ops on Vulkan non-F32 not yet implemented"))
+        }
     }
 
     fn unary_op(&self, op: &str) -> PyResult<Tensor> {

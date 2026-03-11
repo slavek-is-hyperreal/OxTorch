@@ -114,7 +114,6 @@ class TestReLU:
 # ===========================================================================
 
 class TestElementwise:
-    @pytest.mark.xfail(reason="mul not yet implemented", strict=False)
     @pytest.mark.parametrize("device", DEVICES)
     def test_mul_f32(self, device):
         a = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
@@ -124,7 +123,6 @@ class TestElementwise:
         expected = a * b
         assert np.allclose(result, expected, atol=1e-5)
 
-    @pytest.mark.xfail(reason="sub not yet implemented", strict=False)
     @pytest.mark.parametrize("device", DEVICES)
     def test_sub_f32(self, device):
         a = np.array([5.0, 3.0, 1.0], dtype=np.float32)
@@ -132,7 +130,6 @@ class TestElementwise:
         result = (make_vnn(a, F32, device) - make_vnn(b, F32, device)).to_numpy().flatten()
         assert np.allclose(result, a - b, atol=1e-5)
 
-    @pytest.mark.xfail(reason="div not yet implemented", strict=False)
     @pytest.mark.parametrize("device", DEVICES)
     def test_div_f32(self, device):
         a = np.array([6.0, 4.0, 9.0], dtype=np.float32)
@@ -140,7 +137,6 @@ class TestElementwise:
         result = (make_vnn(a, F32, device) / make_vnn(b, F32, device)).to_numpy().flatten()
         assert np.allclose(result, a / b, atol=1e-5)
 
-    @pytest.mark.xfail(reason="scalar_mul not yet implemented", strict=False)
     def test_mul_scalar(self):
         data = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         result = make_vnn(data, F32, "cpu").mul_scalar(3.0).to_numpy().flatten()

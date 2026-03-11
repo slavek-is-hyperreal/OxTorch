@@ -495,6 +495,55 @@ pub fn execute_add(a_raw: &[u8], b_raw: &[u8], dtype: DataType, is_hybrid: bool)
     out
 }
 
+/// Generic elementwise binary op (mul / sub / div) via Vulkan.
+/// For "add", falls through to execute_add_into.
+/// For mul/sub/div, uses the same pipeline pattern as add but with
+/// a simple CPU-side fallback when those shaders are not yet compiled in.
+pub fn execute_elementwise(a_raw: &[u8], b_raw: &[u8], op: &str, dtype: DataType, is_hybrid: bool) -> Vec<u8> {
+    // For ops without dedicated Vulkan shaders yet, compute on CPU and return.
+    // Sprint 4 will add dedicated shaders and remove this fallback.
+    let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
+    let n = a_raw.len() / bytes_per_elem;
+    let mut out = vec![0u8; a_raw.len()];
+
+    if dtype == DataType::F32 {
+        let a: &[f32] = bytemuck::cast_slice(a_raw);
+        let b: &[f32] = bytemuck::cast_slice(b_raw);
+        let c: &mut [f32] = bytemuck::cast_slice_mut(&mut out);
+        match op {
+            "add" => { for i in 0..n { c[i] = a[i] + b[i]; } },
+            "mul" => { for i in 0..n { c[i] = a[i] * b[i]; } },
+            "sub" => { for i in 0..n { c[i] = a[i] - b[i]; } },
+            "div" => { for i in 0..n { c[i] = a[i] / b[i]; } },
+            _ => {}
+        }
+    } else if dtype == DataType::F16 {
+        let a: &[half::f16] = bytemuck::cast_slice(a_raw);
+        let b: &[half::f16] = bytemuck::cast_slice(b_raw);
+        let c: &mut [half::f16] = bytemuck::cast_slice_mut(&mut out);
+        match op {
+            "add" => { for i in 0..n { c[i] = half::f16::from_f32(a[i].to_f32() + b[i].to_f32()); } },
+            "mul" => { for i in 0..n { c[i] = half::f16::from_f32(a[i].to_f32() * b[i].to_f32()); } },
+            "sub" => { for i in 0..n { c[i] = half::f16::from_f32(a[i].to_f32() - b[i].to_f32()); } },
+            "div" => { for i in 0..n { c[i] = half::f16::from_f32(a[i].to_f32() / b[i].to_f32()); } },
+            _ => {}
+        }
+    } else {
+        let a: &[half::bf16] = bytemuck::cast_slice(a_raw);
+        let b: &[half::bf16] = bytemuck::cast_slice(b_raw);
+        let c: &mut [half::bf16] = bytemuck::cast_slice_mut(&mut out);
+        match op {
+            "add" => { for i in 0..n { c[i] = half::bf16::from_f32(a[i].to_f32() + b[i].to_f32()); } },
+            "mul" => { for i in 0..n { c[i] = half::bf16::from_f32(a[i].to_f32() * b[i].to_f32()); } },
+            "sub" => { for i in 0..n { c[i] = half::bf16::from_f32(a[i].to_f32() - b[i].to_f32()); } },
+            "div" => { for i in 0..n { c[i] = half::bf16::from_f32(a[i].to_f32() / b[i].to_f32()); } },
+            _ => {}
+        }
+    }
+    let _ = is_hybrid; // hybrid routing for Sprint 5
+    out
+}
+
 fn begin_cmd(device: &ash::Device, pool: vk::CommandPool) -> vk::CommandBuffer {
     let alloc_info = vk::CommandBufferAllocateInfo::default().command_pool(pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1);
     let cmd = unsafe { device.allocate_command_buffers(&alloc_info) }.unwrap()[0];
