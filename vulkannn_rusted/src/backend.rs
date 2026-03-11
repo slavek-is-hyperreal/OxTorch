@@ -36,10 +36,12 @@ pub struct AshBackend {
     pub dsl_add: vk::DescriptorSetLayout,
     pub dsl_matmul: vk::DescriptorSetLayout,
     pub dsl_act: vk::DescriptorSetLayout,
+    pub dsl_reduce: vk::DescriptorSetLayout,
     
     pub pipe_layout_add: vk::PipelineLayout,
     pub pipe_layout_matmul: vk::PipelineLayout,
     pub pipe_layout_act: vk::PipelineLayout,
+    pub pipe_layout_reduce: vk::PipelineLayout,
     
     pub pipe_add: vk::Pipeline,
     pub pipe_matmul: vk::Pipeline,
@@ -51,6 +53,10 @@ pub struct AshBackend {
     pub pipe_elu: vk::Pipeline,
     pub pipe_tanh: vk::Pipeline,
     pub pipe_clamp: vk::Pipeline,
+    
+    pub pipe_reduce_sum: vk::Pipeline,
+    pub pipe_reduce_max: vk::Pipeline,
+    pub pipe_reduce_min: vk::Pipeline,
 
     pub compute_cmd_pool: vk::CommandPool,
     #[allow(dead_code)]
@@ -64,6 +70,7 @@ pub struct AshBackend {
     pub perm_desc_matmul: Mutex<vk::DescriptorSet>,
     pub perm_desc_add: Mutex<vk::DescriptorSet>,
     pub perm_desc_act: Mutex<vk::DescriptorSet>,
+    pub perm_desc_reduce: Mutex<vk::DescriptorSet>,
     
     pub timeline_semaphore: vk::Semaphore,
     pub timeline_value: AtomicU64,
@@ -264,6 +271,10 @@ pub fn init_backend() {
         let pc_act_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(8)];
         let pipe_layout_act = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_act]).push_constant_ranges(&pc_act_range), None) }.unwrap();
 
+        let dsl_reduce = dsl_act; // Re-use the exact same bindings layout (2 storage buffers)
+        let pc_reduce_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(12)];
+        let pipe_layout_reduce = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_reduce]).push_constant_ranges(&pc_reduce_range), None) }.unwrap();
+
         let load_shader = |bytes: &[u8]| -> vk::ShaderModule {
             let mut cursor = std::io::Cursor::new(bytes);
             let code = ash::util::read_spv(&mut cursor).expect("Failed to read struct spv");
@@ -274,6 +285,7 @@ pub fn init_backend() {
         let sm_add = load_shader(include_bytes!("shaders/add.wgsl.spv"));
         let sm_matmul = load_shader(include_bytes!("shaders/matmul.wgsl.spv"));
         let sm_act = load_shader(include_bytes!("shaders/activation.wgsl.spv"));
+        let sm_reduce = load_shader(include_bytes!("shaders/reduce.wgsl.spv"));
 
         let entry_main = CString::new("main").unwrap();
         let entry_relu = CString::new("relu_main").unwrap();
@@ -307,10 +319,18 @@ pub fn init_backend() {
         let pipe_tanh = create_pipe(sm_act, &entry_tanh, pipe_layout_act);
         let pipe_clamp = create_pipe(sm_act, &entry_clamp, pipe_layout_act);
 
+        let entry_sum_redu = CString::new("sum_main").unwrap();
+        let entry_max_redu = CString::new("max_main").unwrap();
+        let entry_min_redu = CString::new("min_main").unwrap();
+        let pipe_reduce_sum = create_pipe(sm_reduce, &entry_sum_redu, pipe_layout_reduce);
+        let pipe_reduce_max = create_pipe(sm_reduce, &entry_max_redu, pipe_layout_reduce);
+        let pipe_reduce_min = create_pipe(sm_reduce, &entry_min_redu, pipe_layout_reduce);
+
         unsafe {
             device.destroy_shader_module(sm_add, None);
             device.destroy_shader_module(sm_matmul, None);
             device.destroy_shader_module(sm_act, None);
+            device.destroy_shader_module(sm_reduce, None);
         }
 
         let compute_cmd_pool_info = vk::CommandPoolCreateInfo::default()
@@ -332,7 +352,7 @@ pub fn init_backend() {
         // Bug #3 fix: Allocate 3 permanent descriptor sets once at startup.
         // From this point on, ops call UpdateDescriptorSets to re-point them at new buffers.
         let perm_sets = unsafe {
-            let layouts = [dsl_matmul, dsl_add, dsl_act];
+            let layouts = [dsl_matmul, dsl_add, dsl_act, dsl_reduce];
             let alloc_info = vk::DescriptorSetAllocateInfo::default()
                 .descriptor_pool(desc_pool)
                 .set_layouts(&layouts);
@@ -341,6 +361,7 @@ pub fn init_backend() {
         let perm_desc_matmul = perm_sets[0];
         let perm_desc_add    = perm_sets[1];
         let perm_desc_act    = perm_sets[2];
+        let perm_desc_reduce = perm_sets[3];
 
         AshBackend {
             _entry: entry, _instance: instance, _pdevice: pdevice, device,
@@ -348,15 +369,17 @@ pub fn init_backend() {
             transfer_queue, _transfer_family: transfer_family,
             allocator: Mutex::new(allocator),
             desc_pool: Mutex::new(desc_pool),
-            dsl_add, dsl_matmul, dsl_act,
-            pipe_layout_add, pipe_layout_matmul, pipe_layout_act,
+            dsl_add, dsl_matmul, dsl_act, dsl_reduce,
+            pipe_layout_add, pipe_layout_matmul, pipe_layout_act, pipe_layout_reduce,
             pipe_add, pipe_matmul, pipe_relu, pipe_sigmoid, pipe_silu,
             pipe_gelu, pipe_leaky_relu, pipe_elu, pipe_tanh, pipe_clamp,
+            pipe_reduce_sum, pipe_reduce_max, pipe_reduce_min,
             compute_cmd_pool, transfer_cmd_pool,
             buffer_cache: Mutex::new(Vec::new()),
             perm_desc_matmul: Mutex::new(perm_desc_matmul),
             perm_desc_add:    Mutex::new(perm_desc_add),
             perm_desc_act:    Mutex::new(perm_desc_act),
+            perm_desc_reduce: Mutex::new(perm_desc_reduce),
             timeline_semaphore,
             timeline_value: AtomicU64::new(0),
             pending_ops: Mutex::new(Vec::new()),
@@ -874,6 +897,86 @@ pub fn execute_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: 
         println!("\n[VNN PERF] Act Sync Call Download: {:.2}ms, Total Block Time: {:.2}ms", 
                 t_dl.as_secs_f64()*1000.0, t_start.elapsed().as_secs_f64()*1000.0);
     }
+}
+
+pub fn execute_reduce(input_raw: &[u8], op: &str) -> Vec<f32> {
+    let elem_count = input_raw.len() / 4;
+    let num_bytes_f32 = input_raw.len() as vk::DeviceSize;
+    let num_blocks = (elem_count + 255) / 256;
+    let out_num_bytes = (num_blocks * 4) as vk::DeviceSize;
+
+    let backend = BACKEND.get().unwrap();
+
+    let buf_in  = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Reduce_In"),  false);
+    let buf_out = get_buffer(out_num_bytes, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("Reduce_Out"), false);
+    let stage_in  = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Reduce_Stage_In"),  true);
+    let stage_out = get_buffer(out_num_bytes, vk::BufferUsageFlags::TRANSFER_DST, Some("Reduce_Stage_Out"), true);
+
+    upload_to_stage(input_raw, &stage_in, DataType::F32);
+
+    let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
+    unsafe {
+        backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+
+        let barrier = vk::BufferMemoryBarrier::default()
+            .buffer(buf_in.buffer).size(vk::WHOLE_SIZE)
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[barrier], &[]);
+
+        let set = *backend.perm_desc_reduce.lock().unwrap();
+
+        let info_in  = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(0).range(vk::WHOLE_SIZE)];
+        let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(0).range(vk::WHOLE_SIZE)];
+        let writes = [
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_in),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_out),
+        ];
+        backend.device.update_descriptor_sets(&writes, &[]);
+
+        let pipe = match op {
+            "sum" => backend.pipe_reduce_sum,
+            "mean" => backend.pipe_reduce_sum, // mean uses sum, we divide on CPU
+            "max" => backend.pipe_reduce_max,
+            "min" => backend.pipe_reduce_min,
+            _ => panic!("Unsupported reduction OP: {}", op),
+        };
+
+        backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipe);
+        backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_reduce, 0, &[set], &[]);
+        
+        let pc_data = [elem_count as u32, 0u32, 0u32]; // size, stride, size_d
+        let pc_bytes = bytemuck::cast_slice(&pc_data);
+        backend.device.cmd_push_constants(cmd, backend.pipe_layout_reduce, vk::ShaderStageFlags::COMPUTE, 0, pc_bytes);
+        
+        backend.device.cmd_dispatch(cmd, num_blocks as u32, 1, 1);
+
+        let barrier_out = vk::BufferMemoryBarrier::default()
+            .buffer(buf_out.buffer).size(vk::WHOLE_SIZE)
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
+
+        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: out_num_bytes }]);
+
+        backend.device.end_command_buffer(cmd).unwrap();
+        let cmds = [cmd];
+        let submit_info = vk::SubmitInfo::default().command_buffers(&cmds);
+        backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
+        backend.device.queue_wait_idle(backend.compute_queue).unwrap();
+        backend.device.free_command_buffers(backend.compute_cmd_pool, &cmds);
+    }
+
+    let mut out_bytes = vec![0u8; out_num_bytes as usize];
+    download_from_stage(&mut out_bytes, &stage_out, DataType::F32);
+    recycle_buffer(buf_in); recycle_buffer(buf_out);
+    recycle_buffer(stage_in); recycle_buffer(stage_out);
+
+    bytemuck::cast_slice(&out_bytes).to_vec()
 }
 
 pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f32, _res_raw: &mut [u8], dtype: DataType, _is_hybrid: bool, _use_staging: bool) -> (u64, CachedBuffer) {

@@ -5,6 +5,7 @@ fn main() {
         "src/shaders/add.wgsl",
         "src/shaders/matmul.wgsl",
         "src/shaders/activation.wgsl",
+        "src/shaders/reduce.wgsl",
     ];
 
     for path in wgsl_files {

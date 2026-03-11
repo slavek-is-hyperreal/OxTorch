@@ -212,29 +212,42 @@ class TestActivations:
 # ===========================================================================
 
 class TestReductions:
-    @pytest.mark.xfail(reason="sum not yet implemented", strict=False)
     @pytest.mark.parametrize("device", DEVICES)
     def test_sum_full(self, device):
         data = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
         result = make_vnn(data, F32, device).sum().to_numpy().flatten()[0]
         assert abs(result - 10.0) < 1e-4
 
-    @pytest.mark.xfail(reason="mean not yet implemented", strict=False)
-    def test_mean_full(self):
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_sum_dim0(self, device):
+        data = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        expected = data.sum(axis=0)
+        result = make_vnn(data, F32, device).sum(dim=0).to_numpy()
+        assert np.allclose(result, expected, atol=1e-4)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_sum_dim1(self, device):
+        data = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        expected = data.sum(axis=1)
+        result = make_vnn(data, F32, device).sum(dim=1).to_numpy()
+        assert np.allclose(result, expected, atol=1e-4)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_mean_full(self, device):
         data = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
-        result = make_vnn(data, F32, "cpu").mean().to_numpy().flatten()[0]
+        result = make_vnn(data, F32, device).mean().to_numpy().flatten()[0]
         assert abs(result - 2.5) < 1e-4
 
-    @pytest.mark.xfail(reason="max_val not yet implemented", strict=False)
-    def test_max_val(self):
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_max_val(self, device):
         data = np.array([-1.0, 5.0, 3.0, 2.0], dtype=np.float32)
-        result = make_vnn(data, F32, "cpu").max_val().to_numpy().flatten()[0]
+        result = make_vnn(data, F32, device).max_val().to_numpy().flatten()[0]
         assert abs(result - 5.0) < 1e-4
 
-    @pytest.mark.xfail(reason="min_val not yet implemented", strict=False)
-    def test_min_val(self):
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_min_val(self, device):
         data = np.array([-1.0, 5.0, 3.0, 2.0], dtype=np.float32)
-        result = make_vnn(data, F32, "cpu").min_val().to_numpy().flatten()[0]
+        result = make_vnn(data, F32, device).min_val().to_numpy().flatten()[0]
         assert abs(result - (-1.0)) < 1e-4
 
 

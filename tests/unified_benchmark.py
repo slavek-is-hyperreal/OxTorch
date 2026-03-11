@@ -121,7 +121,7 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
             b_np = np.random.randn(*shape).astype(np.float32)
 
         a_torch = torch.from_numpy(a_np).to(torch_dtype)
-        b_torch = torch.from_numpy(b_np).to(torch_dtype) if op != "ReLU" else None
+        b_torch = torch.from_numpy(b_np).to(torch_dtype) if op not in ["ReLU", "Sum"] else None
 
         # PyTorch Reference
         pt_backend_label = get_torch_backend_label(dtype)
@@ -139,10 +139,12 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
                     res_torch = a_torch_clone
                 else:
                     res_torch = torch.relu(a_torch)
+            elif op == "Sum":
+                res_torch = torch.sum(a_torch)
         t_pt = (time.perf_counter() - t0) / iterations
 
         a_vnn = Tensor(data=a_np, dtype=vnn_dtype, device=mode)
-        b_vnn = Tensor(data=b_np, dtype=vnn_dtype, device=mode) if op != "ReLU" else None
+        b_vnn = Tensor(data=b_np, dtype=vnn_dtype, device=mode) if op not in ["ReLU", "Sum"] else None
 
         del a_np, b_np
         gc.collect()
@@ -167,6 +169,8 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
                 a_vnn.relu_into(out_vnn)
             else:
                 _ = a_vnn.relu()
+        elif op == "Sum":
+            _ = a_vnn.sum()
     except Exception as e:
         print(f"      [VNN] Error during warmup: {e}")
         return 0, 0, False, cpu_temp
@@ -182,6 +186,8 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
                 res_vnn = out_vnn
             else:
                 res_vnn = a_vnn.relu()
+        elif op == "Sum":
+            res_vnn = a_vnn.sum()
 
         if i < iterations - 1:
             if not inplace:
@@ -246,6 +252,10 @@ if __name__ == "__main__":
                 # --- MatMul ---
                 pt, v_t, ok, temp = run_bench(f"MatMul_{dtype}_{mode}", "MatMul", (2048, 2048), mode=mode, dtype=dtype)
                 run_results.append({"name": f"MatMul {dtype} ({mode})", "pt": pt, "vnn": v_t, "ok": ok, "cpu_temp_c": temp})
+
+                # --- Sum ---
+                pt, v_t, ok, temp = run_bench(f"Sum_{dtype}_{mode}", "Sum", (2048, 2048), mode=mode, dtype=dtype)
+                run_results.append({"name": f"Sum {dtype} ({mode})", "pt": pt, "vnn": v_t, "ok": ok, "cpu_temp_c": temp})
 
                 # --- ReLU 1M: alloc path ---
                 pt, v_t, ok, temp = run_bench(f"ReLU_{dtype}_{mode}", "ReLU", (1000000,), mode=mode, dtype=dtype, inplace=False)

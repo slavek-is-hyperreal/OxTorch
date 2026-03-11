@@ -201,6 +201,7 @@ impl Tensor {
         self.reshape(new_shape)
     }
 
+    #[pyo3(signature = (dim=None))]
     fn squeeze(&self, dim: Option<i64>) -> PyResult<Tensor> {
         let mut out = self.clone();
         let mut new_shape = Vec::new();
@@ -369,6 +370,15 @@ impl Tensor {
     fn tanh_into(&mut self, out: &mut Tensor) -> PyResult<()> { self.act_into("tanh", 0.0, 0.0, out) }
     fn clamp(&self, min: f32, max: f32) -> PyResult<Tensor> { self.unary_op("clamp", min, max) }
     fn clamp_into(&mut self, min: f32, max: f32, out: &mut Tensor) -> PyResult<()> { self.act_into("clamp", min, max, out) }
+
+    #[pyo3(signature = (dim=None))]
+    fn sum(&self, dim: Option<i64>) -> PyResult<Tensor> { self.reduce("sum", dim) }
+    #[pyo3(signature = (dim=None))]
+    fn mean(&self, dim: Option<i64>) -> PyResult<Tensor> { self.reduce("mean", dim) }
+    #[pyo3(signature = (dim=None))]
+    fn max_val(&self, dim: Option<i64>) -> PyResult<Tensor> { self.reduce("max", dim) }
+    #[pyo3(signature = (dim=None))]
+    fn min_val(&self, dim: Option<i64>) -> PyResult<Tensor> { self.reduce("min", dim) }
 
     fn act_into(&mut self, op: &str, param1: f32, param2: f32, out: &mut Tensor) -> PyResult<()> {
         if self.device == "cpu" {
@@ -690,6 +700,94 @@ impl Tensor {
             Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "ScalarRes".to_string(), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(res), mmap_data: None })
         } else {
             Err(pyo3::exceptions::PyValueError::new_err("Scalar ops on Vulkan non-F32 not yet implemented"))
+        }
+    }
+
+    fn reduce(&self, op: &str, dim: Option<i64>) -> PyResult<Tensor> {
+        if self.dtype == DataType::F32 {
+            let (input, _) = self.get_slice_raw_f32();
+            if let Some(d) = dim {
+                // Axis reduction
+                let d_usize = if d < 0 { (self.shape.len() as i64 + d) as usize } else { d as usize };
+                if d_usize >= self.shape.len() {
+                    return Err(pyo3::exceptions::PyValueError::new_err("Invalid dimension"));
+                }
+                
+                let mut out_shape = self.shape.clone();
+                out_shape.remove(d_usize);
+                if out_shape.is_empty() { out_shape = vec![1]; } // Keep as 1D if reducing 1D tensor
+
+                let stride_d: usize = self.shape[d_usize + 1..].iter().product();
+                let size_d = self.shape[d_usize];
+                let out_len: usize = out_shape.iter().product();
+                let mut out = vec![0.0; out_len];
+
+                out.par_iter_mut().enumerate().for_each(|(i, o)| {
+                    let n = i / stride_d;
+                    let k = i % stride_d;
+                    let mut acc = match op {
+                        "max" => f32::NEG_INFINITY,
+                        "min" => f32::INFINITY,
+                        _ => 0.0,
+                    };
+                    for m in 0..size_d {
+                        let in_idx = n * (stride_d * size_d) + m * stride_d + k;
+                        let val = input[in_idx];
+                        acc = match op {
+                            "max" => f32::max(acc, val),
+                            "min" => f32::min(acc, val),
+                            _ => acc + val, // sum, mean
+                        };
+                    }
+                    *o = match op {
+                        "mean" => acc / (size_d as f32),
+                        _ => acc,
+                    };
+                });
+
+                Ok(Tensor {
+                    shape: out_shape,
+                    device: self.device.clone(),
+                    name: format!("{}_dim_res", op),
+                    is_transposed: false,
+                    dtype: DataType::F32,
+                    storage: Storage::F32(out),
+                    mmap_data: None,
+                })
+            } else {
+                // Full reduction
+                let val = if self.device == "cpu" {
+                    match op {
+                        "sum" => input.par_iter().sum::<f32>(),
+                        "mean" => input.par_iter().sum::<f32>() / input.len() as f32,
+                        "max" => input.par_iter().cloned().reduce(|| f32::NEG_INFINITY, f32::max),
+                        "min" => input.par_iter().cloned().reduce(|| f32::INFINITY, f32::min),
+                        _ => panic!("Unsupported reduction op: {}", op),
+                    }
+                } else {
+                    let (a_raw, _) = self.get_slice_raw_bytes();
+                    let blocks = crate::backend::execute_reduce(a_raw, op);
+                    match op {
+                        "sum" => blocks.iter().sum::<f32>(),
+                        "mean" => blocks.iter().sum::<f32>() / input.len() as f32,
+                        "max" => blocks.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
+                        "min" => blocks.iter().cloned().fold(f32::INFINITY, f32::min),
+                        _ => panic!("Unsupported reduction op: {}", op),
+                    }
+                };
+                
+                Ok(Tensor {
+                    shape: vec![],
+                    device: self.device.clone(),
+                    name: format!("{}_res", op),
+                    is_transposed: false,
+                    dtype: DataType::F32,
+                    storage: Storage::F32(vec![val]),
+                    mmap_data: None,
+                })
+            }
+        } else {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err("F16/BF16 reduce not yet implemented"))
         }
     }
 
