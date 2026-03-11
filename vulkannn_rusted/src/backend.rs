@@ -46,6 +46,11 @@ pub struct AshBackend {
     pub pipe_relu: vk::Pipeline,
     pub pipe_sigmoid: vk::Pipeline,
     pub pipe_silu: vk::Pipeline,
+    pub pipe_gelu: vk::Pipeline,
+    pub pipe_leaky_relu: vk::Pipeline,
+    pub pipe_elu: vk::Pipeline,
+    pub pipe_tanh: vk::Pipeline,
+    pub pipe_clamp: vk::Pipeline,
 
     pub compute_cmd_pool: vk::CommandPool,
     #[allow(dead_code)]
@@ -254,7 +259,10 @@ pub fn init_backend() {
 
         let pipe_layout_add = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_add]), None) }.unwrap();
         let pipe_layout_matmul = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_matmul]), None) }.unwrap();
-        let pipe_layout_act = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_act]), None) }.unwrap();
+        
+        // Add push constant range for activation params (2x f32 = 8 bytes)
+        let pc_act_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(8)];
+        let pipe_layout_act = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_act]).push_constant_ranges(&pc_act_range), None) }.unwrap();
 
         let load_shader = |bytes: &[u8]| -> vk::ShaderModule {
             let mut cursor = std::io::Cursor::new(bytes);
@@ -271,6 +279,11 @@ pub fn init_backend() {
         let entry_relu = CString::new("relu_main").unwrap();
         let entry_sigm = CString::new("sigmoid_main").unwrap();
         let entry_silu = CString::new("silu_main").unwrap();
+        let entry_gelu = CString::new("gelu_main").unwrap();
+        let entry_leaky = CString::new("leaky_relu_main").unwrap();
+        let entry_elu  = CString::new("elu_main").unwrap();
+        let entry_tanh = CString::new("tanh_main").unwrap();
+        let entry_clamp = CString::new("clamp_main").unwrap();
 
         let create_pipe = |sm: vk::ShaderModule, entry: &CStr, layout: vk::PipelineLayout| -> vk::Pipeline {
             let stage = vk::PipelineShaderStageCreateInfo::default()
@@ -288,6 +301,11 @@ pub fn init_backend() {
         let pipe_relu = create_pipe(sm_act, &entry_relu, pipe_layout_act);
         let pipe_sigmoid = create_pipe(sm_act, &entry_sigm, pipe_layout_act);
         let pipe_silu = create_pipe(sm_act, &entry_silu, pipe_layout_act);
+        let pipe_gelu = create_pipe(sm_act, &entry_gelu, pipe_layout_act);
+        let pipe_leaky_relu = create_pipe(sm_act, &entry_leaky, pipe_layout_act);
+        let pipe_elu = create_pipe(sm_act, &entry_elu, pipe_layout_act);
+        let pipe_tanh = create_pipe(sm_act, &entry_tanh, pipe_layout_act);
+        let pipe_clamp = create_pipe(sm_act, &entry_clamp, pipe_layout_act);
 
         unsafe {
             device.destroy_shader_module(sm_add, None);
@@ -333,6 +351,7 @@ pub fn init_backend() {
             dsl_add, dsl_matmul, dsl_act,
             pipe_layout_add, pipe_layout_matmul, pipe_layout_act,
             pipe_add, pipe_matmul, pipe_relu, pipe_sigmoid, pipe_silu,
+            pipe_gelu, pipe_leaky_relu, pipe_elu, pipe_tanh, pipe_clamp,
             compute_cmd_pool, transfer_cmd_pool,
             buffer_cache: Mutex::new(Vec::new()),
             perm_desc_matmul: Mutex::new(perm_desc_matmul),
@@ -737,9 +756,9 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
     out_vec
 }
 
-pub fn execute_activation(input_raw: &[u8], op: &str, dtype: DataType, is_hybrid: bool) -> Vec<u8> {
+pub fn execute_activation(input_raw: &[u8], op: &str, param1: f32, param2: f32, dtype: DataType, is_hybrid: bool) -> Vec<u8> {
     let mut out_vec = vec![0u8; input_raw.len()];
-    let (wait_id, stage_out) = submit_activation_into(input_raw, op, &mut out_vec, dtype, is_hybrid, false);
+    let (wait_id, stage_out) = submit_activation_into(input_raw, op, param1, param2, &mut out_vec, dtype, is_hybrid, false);
     poll_async_ops_until(wait_id);
     download_from_stage(&mut out_vec, &stage_out, dtype);
     out_vec
@@ -754,6 +773,8 @@ pub fn execute_activation_chunked(
     elem_offset: usize,
     elem_count: usize,
     op: &str,
+    param1: f32,
+    param2: f32,
     dtype: DataType,
 ) {
     let bytes_per_elem = if dtype == DataType::F32 { 4usize } else { 2usize };
@@ -797,11 +818,21 @@ pub fn execute_activation_chunked(
             "relu"    => backend.pipe_relu,
             "sigmoid" => backend.pipe_sigmoid,
             "silu"    => backend.pipe_silu,
+            "gelu" => backend.pipe_gelu,
+            "leaky_relu" => backend.pipe_leaky_relu,
+            "elu" => backend.pipe_elu,
+            "tanh" => backend.pipe_tanh,
+            "clamp" => backend.pipe_clamp,
             _ => panic!("Unsupported chunked activation OP"),
         };
 
         backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipe);
         backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_act, 0, &[set], &[]);
+        
+        let pc_data = [param1, param2];
+        let pc_bytes = bytemuck::cast_slice(&pc_data);
+        backend.device.cmd_push_constants(cmd, backend.pipe_layout_act, vk::ShaderStageFlags::COMPUTE, 0, pc_bytes);
+        
         backend.device.cmd_dispatch(cmd, (elem_count as u32 + 255) / 256, 1, 1);
 
         let barrier_out = vk::BufferMemoryBarrier::default()
@@ -829,9 +860,9 @@ pub fn execute_activation_chunked(
 }
 
 
-pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], dtype: DataType, is_hybrid: bool, use_staging: bool) {
+pub fn execute_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f32, res_raw: &mut [u8], dtype: DataType, is_hybrid: bool, use_staging: bool) {
     let t_start = std::time::Instant::now();
-    let (wait_id, stage_out) = submit_activation_into(input_raw, op, res_raw, dtype, is_hybrid, use_staging);
+    let (wait_id, stage_out) = submit_activation_into(input_raw, op, param1, param2, res_raw, dtype, is_hybrid, use_staging);
     poll_async_ops_until(wait_id);
 
     let t_dl_start = std::time::Instant::now();
@@ -845,7 +876,7 @@ pub fn execute_activation_into(input_raw: &[u8], op: &str, res_raw: &mut [u8], d
     }
 }
 
-pub fn submit_activation_into(input_raw: &[u8], op: &str, _res_raw: &mut [u8], dtype: DataType, _is_hybrid: bool, _use_staging: bool) -> (u64, CachedBuffer) {
+pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f32, _res_raw: &mut [u8], dtype: DataType, _is_hybrid: bool, _use_staging: bool) -> (u64, CachedBuffer) {
 
     let t_start = std::time::Instant::now();
     let backend = BACKEND.get().unwrap();
@@ -891,11 +922,21 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, _res_raw: &mut [u8], d
             "relu" => backend.pipe_relu,
             "sigmoid" => backend.pipe_sigmoid,
             "silu" => backend.pipe_silu,
+            "gelu" => backend.pipe_gelu,
+            "leaky_relu" => backend.pipe_leaky_relu,
+            "elu" => backend.pipe_elu,
+            "tanh" => backend.pipe_tanh,
+            "clamp" => backend.pipe_clamp,
             _ => panic!("Unsupported activation OP"),
         };
 
         backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipe);
         backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_act, 0, &[set], &[]);
+        
+        let pc_data = [param1, param2];
+        let pc_bytes = bytemuck::cast_slice(&pc_data);
+        backend.device.cmd_push_constants(cmd, backend.pipe_layout_act, vk::ShaderStageFlags::COMPUTE, 0, pc_bytes);
+        
         backend.device.cmd_dispatch(cmd, (num_elements + 255) / 256, 1, 1);
         
         // Wait for compute to finish BEFORE copying back to staging

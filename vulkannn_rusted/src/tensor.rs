@@ -354,18 +354,29 @@ impl Tensor {
         self.scalar_op(val, "div_scalar")
     }
 
-    fn relu(&self) -> PyResult<Tensor> { self.unary_op("relu") }
-    fn relu_into(&mut self, out: &mut Tensor) -> PyResult<()> { self.act_into("relu", out) }
-    fn sigmoid_into(&mut self, out: &mut Tensor) -> PyResult<()> { self.act_into("sigmoid", out) }
-    fn silu_into(&mut self, out: &mut Tensor) -> PyResult<()> { self.act_into("silu", out) }
+    fn relu(&self) -> PyResult<Tensor> { self.unary_op("relu", 0.0, 0.0) }
+    fn relu_into(&mut self, out: &mut Tensor) -> PyResult<()> { self.act_into("relu", 0.0, 0.0, out) }
+    fn sigmoid_into(&mut self, out: &mut Tensor) -> PyResult<()> { self.act_into("sigmoid", 0.0, 0.0, out) }
+    fn silu_into(&mut self, out: &mut Tensor) -> PyResult<()> { self.act_into("silu", 0.0, 0.0, out) }
 
-    fn act_into(&mut self, op: &str, out: &mut Tensor) -> PyResult<()> {
+    fn gelu(&self) -> PyResult<Tensor> { self.unary_op("gelu", 0.0, 0.0) }
+    fn gelu_into(&mut self, out: &mut Tensor) -> PyResult<()> { self.act_into("gelu", 0.0, 0.0, out) }
+    fn leaky_relu(&self, negative_slope: f32) -> PyResult<Tensor> { self.unary_op("leaky_relu", negative_slope, 0.0) }
+    fn leaky_relu_into(&mut self, negative_slope: f32, out: &mut Tensor) -> PyResult<()> { self.act_into("leaky_relu", negative_slope, 0.0, out) }
+    fn elu(&self, alpha: f32) -> PyResult<Tensor> { self.unary_op("elu", alpha, 0.0) }
+    fn elu_into(&mut self, alpha: f32, out: &mut Tensor) -> PyResult<()> { self.act_into("elu", alpha, 0.0, out) }
+    fn tanh(&self) -> PyResult<Tensor> { self.unary_op("tanh", 0.0, 0.0) }
+    fn tanh_into(&mut self, out: &mut Tensor) -> PyResult<()> { self.act_into("tanh", 0.0, 0.0, out) }
+    fn clamp(&self, min: f32, max: f32) -> PyResult<Tensor> { self.unary_op("clamp", min, max) }
+    fn clamp_into(&mut self, min: f32, max: f32, out: &mut Tensor) -> PyResult<()> { self.act_into("clamp", min, max, out) }
+
+    fn act_into(&mut self, op: &str, param1: f32, param2: f32, out: &mut Tensor) -> PyResult<()> {
         if self.device == "cpu" {
             match self.dtype {
                 DataType::F32 => {
                     let (out_slice, _) = out.get_slice_raw_mut_f32();
                     let (i_s, _) = self.get_slice_raw_f32();
-                    Self::act_into_raw_f32(i_s, op, out_slice)
+                    Self::act_into_raw_f32(i_s, op, param1, param2, out_slice)
                 }
                 DataType::F16 => {
                     let (out_slice, _) = out.get_slice_raw_mut_f16();
@@ -389,13 +400,13 @@ impl Tensor {
         } else {
             let (input_raw, _) = self.get_slice_raw_bytes();
             let (res_raw, _) = out.get_slice_raw_mut_bytes();
-            crate::backend::execute_activation_into(input_raw, op, res_raw, self.dtype, self.device == "hybrid", false);
+            crate::backend::execute_activation_into(input_raw, op, param1, param2, res_raw, self.dtype, self.device == "hybrid", false);
             Ok(())
         }
     }
 
-    fn sigmoid(&self) -> PyResult<Tensor> { self.unary_op("sigmoid") }
-    fn silu(&self) -> PyResult<Tensor> { self.unary_op("silu") }
+    fn sigmoid(&self) -> PyResult<Tensor> { self.unary_op("sigmoid", 0.0, 0.0) }
+    fn silu(&self) -> PyResult<Tensor> { self.unary_op("silu", 0.0, 0.0) }
 
     // --- MATMUL ---
     fn __matmul__(&self, other: &Tensor) -> PyResult<Tensor> {
@@ -682,9 +693,9 @@ impl Tensor {
         }
     }
 
-    fn unary_op(&self, op: &str) -> PyResult<Tensor> {
+    fn unary_op(&self, op: &str, param1: f32, param2: f32) -> PyResult<Tensor> {
         if self.is_ssd() {
-            return self.unary_op_ssd(op);
+            return self.unary_op_ssd(op, param1, param2);
         }
         if self.device == "cpu" {
             if self.dtype == DataType::F32 {
@@ -692,7 +703,7 @@ impl Tensor {
                 // BufPool::get reuses warm memory from a previous call — avoids cold OS page fault.
                 // This is the primary fix for relu() being 10x slower than PyTorch on small tensors.
                 let mut res = BufPool::get(input.len());
-                Self::act_into_raw_f32(input, op, &mut res)?;
+                Self::act_into_raw_f32(input, op, param1, param2, &mut res)?;
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(res), mmap_data: None })
             } else if self.dtype == DataType::F16 {
                 let (input, _) = self.get_slice_raw_f16();
@@ -763,7 +774,7 @@ impl Tensor {
                         let in_sl  = unsafe { std::slice::from_raw_parts    (input_ptr  as *const u8, total_len) };
                         let out_sl = unsafe { std::slice::from_raw_parts_mut(output_ptr as *mut   u8, total_len) };
                         let _ = bpe; // suppress lint
-                        crate::backend::execute_activation_chunked(in_sl, out_sl, elem_start, elem_count, &op_gpu, dtype);
+                        crate::backend::execute_activation_chunked(in_sl, out_sl, elem_start, elem_count, &op_gpu, param1, param2, dtype);
                     }
                 });
                 } // end if num_total >= VULKAN_MIN_ELEMS
@@ -793,6 +804,11 @@ impl Tensor {
                                     "relu"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { 0.0 }),
                                     "sigmoid" => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = 1.0 / (1.0 + (-i).exp())),
                                     "silu"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = i / (1.0 + (-i).exp())),
+                                    "gelu"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = 0.5 * i * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (i + 0.044715 * i.powi(3))).tanh())),
+                                    "leaky_relu" => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { i * param1 }),
+                                    "elu"     => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { param1 * (i.exp() - 1.0) }),
+                                    "tanh"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = i.tanh()),
+                                    "clamp"   => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = i.clamp(param1, param2)),
                                     _ => panic!("Unsupported CPU op in hybrid tile worker"),
                                 }
                             },
@@ -830,7 +846,7 @@ impl Tensor {
         } else {
             // Pure Vulkan path (device == "vulkan")
             let (input_raw, _) = self.get_slice_raw_bytes();
-            let res_raw = crate::backend::execute_activation(input_raw, op, self.dtype, false);
+            let res_raw = crate::backend::execute_activation(input_raw, op, param1, param2, self.dtype, false);
             let storage = if self.dtype == DataType::F16 {
                 Storage::F16(bytemuck::cast_slice(&res_raw).to_vec())
             } else if self.dtype == DataType::BF16 {
@@ -842,7 +858,7 @@ impl Tensor {
         }
     }
 
-    fn unary_op_ssd(&self, op: &str) -> PyResult<Tensor> {
+    fn unary_op_ssd(&self, op: &str, param1: f32, param2: f32) -> PyResult<Tensor> {
         let res_path = format!("{}_{}.ssd", self.name, op);
         let res_tensor = Self::new_ssd(&res_path, self.shape.clone(), self.dtype)?;
         
@@ -892,7 +908,7 @@ impl Tensor {
             match self.dtype {
                 DataType::F32 => {
                     let slice = bytemuck::cast_slice_mut::<u8, f32>(&mut payload[..bytes_in_tile]);
-                    Self::act_into_raw_parallel_f32(slice, op);
+                    Self::act_into_raw_parallel_f32(slice, op, param1, param2);
                 },
                 DataType::F16 => {
                     let slice = bytemuck::cast_slice_mut::<u8, half::f16>(&mut payload[..bytes_in_tile]);
@@ -920,11 +936,16 @@ impl Tensor {
         Ok(res_tensor)
     }
 
-    fn act_into_raw_parallel_f32(slice: &mut [f32], op: &str) {
+    fn act_into_raw_parallel_f32(slice: &mut [f32], op: &str, param1: f32, param2: f32) {
         match op {
             "relu" => slice.par_iter_mut().for_each(|x| if *x < 0.0 { *x = 0.0; }),
             "sigmoid" => slice.par_iter_mut().for_each(|x| *x = 1.0 / (1.0 + (-*x).exp())),
             "silu" => slice.par_iter_mut().for_each(|x| *x = *x / (1.0 + (-*x).exp())),
+            "gelu" => slice.par_iter_mut().for_each(|x| *x = 0.5 * *x * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (*x + 0.044715 * x.powi(3))).tanh())),
+            "leaky_relu" => slice.par_iter_mut().for_each(|x| if *x < 0.0 { *x *= param1; }),
+            "elu" => slice.par_iter_mut().for_each(|x| if *x < 0.0 { *x = param1 * (x.exp() - 1.0); }),
+            "tanh" => slice.par_iter_mut().for_each(|x| *x = x.tanh()),
+            "clamp" => slice.par_iter_mut().for_each(|x| *x = x.clamp(param1, param2)),
             _ => panic!("Unsupported Op: {}", op),
         }
     }
@@ -1046,7 +1067,7 @@ impl Tensor {
         Ok(())
     }
 
-    fn act_into_raw_f32(i_s: &[f32], op: &str, out: &mut [f32]) -> PyResult<()> {
+    fn act_into_raw_f32(i_s: &[f32], op: &str, param1: f32, param2: f32, out: &mut [f32]) -> PyResult<()> {
         let total_elements = i_s.len();
         // Bug #4 fix: was threshold 1_000_000 (4MB). Rayon spawn overhead dominates for simple
         // element-wise ops below ~32MB. Per Rayon docs: use serial iter for small workloads.
@@ -1058,6 +1079,11 @@ impl Tensor {
                 "relu"    => crate::avx_swar::relu_f32(i_s, out),
                 "sigmoid" => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = 1.0 / (1.0 + (-i).exp()); } },
                 "silu"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = i * (1.0 / (1.0 + (-i).exp())); } },
+                "gelu"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = 0.5 * i * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (i + 0.044715 * i.powi(3))).tanh()); } },
+                "leaky_relu" => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = if i > 0.0 { i } else { i * param1 }; } },
+                "elu"     => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = if i > 0.0 { i } else { param1 * (i.exp() - 1.0) }; } },
+                "tanh"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = i.tanh(); } },
+                "clamp"   => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = i.clamp(param1, param2); } },
                 _ =>{}
             }
             } else {
@@ -1072,6 +1098,11 @@ impl Tensor {
                             "relu" => crate::avx_swar::relu_f32(isub, &mut chunk[..process_len]),
                             "sigmoid" => for k in 0..process_len { chunk[k] = 1.0 / (1.0 + (-isub[k]).exp()); },
                             "silu" => for k in 0..process_len { chunk[k] = isub[k] * (1.0 / (1.0 + (-isub[k]).exp())); },
+                            "gelu" => for k in 0..process_len { chunk[k] = 0.5 * isub[k] * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (isub[k] + 0.044715 * isub[k].powi(3))).tanh()); },
+                            "leaky_relu" => for k in 0..process_len { chunk[k] = if isub[k] > 0.0 { isub[k] } else { isub[k] * param1 }; },
+                            "elu" => for k in 0..process_len { chunk[k] = if isub[k] > 0.0 { isub[k] } else { param1 * (isub[k].exp() - 1.0) }; },
+                            "tanh" => for k in 0..process_len { chunk[k] = isub[k].tanh(); },
+                            "clamp" => for k in 0..process_len { chunk[k] = isub[k].clamp(param1, param2); },
                             _ => {}
                         }
                     }
