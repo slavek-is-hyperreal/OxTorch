@@ -13,6 +13,41 @@ with no CUDA, no dedicated tensor cores, no Apple Silicon required.
 
 ---
 
+## 🚀 Getting Started: From Zero to Inference
+
+If you are new to Rust or compilation, follow these steps to get VulkanNN Rusted running on your machine:
+
+### 1. Install the Rust Compiler
+VulkanNN is written in Rust for maximum speed. You need the Rust toolchain:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+```
+
+### 2. Set Up Your Python Environment
+We recommend using a virtual environment to keep things clean:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install maturin numpy half torch  # torch is used for parity checks
+```
+
+### 3. Compile for Your Architecture
+We support **x86_64** (Intel/AMD) and **AArch64** (ARM/Raspberry Pi). The compiler automatically detects your CPU features (AVX, SSE2, NEON):
+```bash
+# This compiles the library and installs it into your virtual environment
+maturin develop --release
+```
+
+**What if I have multiple branches?**
+The module name depends on which branch you are on:
+- `main` branch → `import vulkannn_rusted_main as vnn`
+- `dev` branch  → `import vulkannn_rusted_dev as vnn`
+- `test` branch → `import vulkannn_rusted_test as vnn`
+- `dev_raw_vulkan` branch → `import vulkannn_rusted_exp as vnn`
+
+---
+
 ## Inspiration: The MERA-400
 
 This project is directly inspired by the **MERA-400**, a Polish 16-bit minicomputer designed and
