@@ -109,6 +109,66 @@ impl Tensor {
         Ok(Tensor { shape, device: "ssd".to_string(), name: "SSDResult".to_string(), is_transposed: false, dtype, storage: Storage::None, mmap_data: Some(IoEngineType::ReadWrite(Arc::new(engine))) })
     }
 
+    #[staticmethod]
+    #[pyo3(signature = (shape, dtype=DataType::F32, device="cpu"))]
+    fn zeros(shape: Vec<usize>, dtype: DataType, device: &str) -> PyResult<Self> {
+        Self::new(None, Some(shape), dtype, device, "Zeros")
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (shape, dtype=DataType::F32, device="cpu"))]
+    fn ones(shape: Vec<usize>, dtype: DataType, device: &str) -> PyResult<Self> {
+        let mut t = Self::new(None, Some(shape.clone()), dtype, device, "Ones")?;
+        if device == "cpu" {
+            match dtype {
+                DataType::F32 => t.get_slice_raw_mut_f32().0.fill(1.0),
+                DataType::F16 => t.get_slice_raw_mut_f16().0.fill(half::f16::from_f32(1.0)),
+                DataType::BF16 => t.get_slice_raw_mut_bf16().0.fill(half::bf16::from_f32(1.0)),
+            }
+        } else {
+            let mut cpu_t = Self::ones(shape, dtype, "cpu")?;
+            t.storage = cpu_t.storage;
+        }
+        Ok(t)
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (shape, fill_value, dtype=DataType::F32, device="cpu"))]
+    fn full(shape: Vec<usize>, fill_value: f32, dtype: DataType, device: &str) -> PyResult<Self> {
+        let mut t = Self::new(None, Some(shape.clone()), dtype, device, "Full")?;
+        if device == "cpu" {
+            match dtype {
+                DataType::F32 => t.get_slice_raw_mut_f32().0.fill(fill_value),
+                DataType::F16 => t.get_slice_raw_mut_f16().0.fill(half::f16::from_f32(fill_value)),
+                DataType::BF16 => t.get_slice_raw_mut_bf16().0.fill(half::bf16::from_f32(fill_value)),
+            }
+        } else {
+            let mut cpu_t = Self::full(shape, fill_value, dtype, "cpu")?;
+            t.storage = cpu_t.storage;
+        }
+        Ok(t)
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (shape, dtype=DataType::F32, device="cpu"))]
+    fn rand<'py>(py: Python<'py>, shape: Vec<usize>, dtype: DataType, device: &str) -> PyResult<Self> {
+        let np = py.import_bound("numpy.random")?;
+        let arr = np.call_method1("rand", pyo3::types::PyTuple::new_bound(py, &shape))?;
+        let arr_f32 = arr.call_method1("astype", ("float32",))?;
+        let readonly: PyReadonlyArrayDyn<f32> = arr_f32.extract()?;
+        Self::new(Some(readonly), None, dtype, device, "Rand")
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (shape, dtype=DataType::F32, device="cpu"))]
+    fn randn<'py>(py: Python<'py>, shape: Vec<usize>, dtype: DataType, device: &str) -> PyResult<Self> {
+        let np = py.import_bound("numpy.random")?;
+        let arr = np.call_method1("randn", pyo3::types::PyTuple::new_bound(py, &shape))?;
+        let arr_f32 = arr.call_method1("astype", ("float32",))?;
+        let readonly: PyReadonlyArrayDyn<f32> = arr_f32.extract()?;
+        Self::new(Some(readonly), None, dtype, device, "RandN")
+    }
+
     fn to_numpy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, numpy::PyArrayDyn<f32>>> {
         let vec = match self.dtype {
             DataType::F32 => {
@@ -379,6 +439,11 @@ impl Tensor {
     fn max_val(&self, dim: Option<i64>) -> PyResult<Tensor> { self.reduce("max", dim) }
     #[pyo3(signature = (dim=None))]
     fn min_val(&self, dim: Option<i64>) -> PyResult<Tensor> { self.reduce("min", dim) }
+
+    #[pyo3(signature = (dim))]
+    fn softmax(&self, dim: i64) -> PyResult<Tensor> { self.apply_softmax(dim, false) }
+    #[pyo3(signature = (dim))]
+    fn log_softmax(&self, dim: i64) -> PyResult<Tensor> { self.apply_softmax(dim, true) }
 
     fn act_into(&mut self, op: &str, param1: f32, param2: f32, out: &mut Tensor) -> PyResult<()> {
         if self.device == "cpu" {
@@ -703,6 +768,129 @@ impl Tensor {
         }
     }
 
+    fn apply_softmax(&self, dim: i64, is_log: bool) -> PyResult<Tensor> {
+        let d_usize = if dim < 0 { (self.shape.len() as i64 + dim) as usize } else { dim as usize };
+        if d_usize >= self.shape.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err("Invalid dimension"));
+        }
+
+        if self.device == "cpu" {
+            let stride_d: usize = self.shape[d_usize + 1..].iter().product();
+            let size_d = self.shape[d_usize];
+            let out_len: usize = self.shape.iter().product();
+            let outer_stride = stride_d * size_d;
+            let num_outer = if outer_stride == 0 { 0 } else { out_len / outer_stride };
+
+            match self.dtype {
+                DataType::F32 => {
+                    let (input, _) = self.get_slice_raw_f32();
+                    let mut out = vec![0.0; out_len];
+                    let out_ptr = out.as_mut_ptr() as usize;
+                    (0..num_outer).into_par_iter().for_each(|n| {
+                        let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, out_len) };
+                        for k in 0..stride_d {
+                            let mut max_val = f32::NEG_INFINITY;
+                            for m in 0..size_d {
+                                let idx = n * outer_stride + m * stride_d + k;
+                                max_val = f32::max(max_val, input[idx]);
+                            }
+                            let mut sum_exp = 0.0;
+                            for m in 0..size_d {
+                                let idx = n * outer_stride + m * stride_d + k;
+                                sum_exp += f32::exp(input[idx] - max_val);
+                            }
+                            if is_log {
+                                let log_sum = f32::ln(sum_exp);
+                                for m in 0..size_d {
+                                    let idx = n * outer_stride + m * stride_d + k;
+                                    out_slice[idx] = input[idx] - max_val - log_sum;
+                                }
+                            } else {
+                                let inv_sum = 1.0 / sum_exp;
+                                for m in 0..size_d {
+                                    let idx = n * outer_stride + m * stride_d + k;
+                                    out_slice[idx] = f32::exp(input[idx] - max_val) * inv_sum;
+                                }
+                            }
+                        }
+                    });
+                    Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: if is_log { "LogSoftmax".to_string() } else { "Softmax".to_string() }, is_transposed: false, dtype: DataType::F32, storage: Storage::F32(out), mmap_data: None })
+                }
+                DataType::F16 => {
+                    let (input, _) = self.get_slice_raw_f16();
+                    let mut out = vec![f16::ZERO; out_len];
+                    let out_ptr = out.as_mut_ptr() as usize;
+                    (0..num_outer).into_par_iter().for_each(|n| {
+                        let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f16, out_len) };
+                        for k in 0..stride_d {
+                            let mut max_val = f32::NEG_INFINITY;
+                            for m in 0..size_d {
+                                max_val = f32::max(max_val, input[n * outer_stride + m * stride_d + k].to_f32());
+                            }
+                            let mut sum_exp = 0.0;
+                            for m in 0..size_d {
+                                sum_exp += f32::exp(input[n * outer_stride + m * stride_d + k].to_f32() - max_val);
+                            }
+                            if is_log {
+                                let log_sum = f32::ln(sum_exp);
+                                for m in 0..size_d {
+                                    let idx = n * outer_stride + m * stride_d + k;
+                                    out_slice[idx] = f16::from_f32(input[idx].to_f32() - max_val - log_sum);
+                                }
+                            } else {
+                                let inv_sum = 1.0 / sum_exp;
+                                for m in 0..size_d {
+                                    let idx = n * outer_stride + m * stride_d + k;
+                                    out_slice[idx] = f16::from_f32(f32::exp(input[idx].to_f32() - max_val) * inv_sum);
+                                }
+                            }
+                        }
+                    });
+                    Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: if is_log { "LogSoftmax".to_string() } else { "Softmax".to_string() }, is_transposed: false, dtype: DataType::F16, storage: Storage::F16(out), mmap_data: None })
+                }
+                DataType::BF16 => {
+                    let (input, _) = self.get_slice_raw_bf16();
+                    let mut out = vec![bf16::ZERO; out_len];
+                    let out_ptr = out.as_mut_ptr() as usize;
+                    (0..num_outer).into_par_iter().for_each(|n| {
+                        let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut bf16, out_len) };
+                        for k in 0..stride_d {
+                            let mut max_val = f32::NEG_INFINITY;
+                            for m in 0..size_d {
+                                max_val = f32::max(max_val, input[n * outer_stride + m * stride_d + k].to_f32());
+                            }
+                            let mut sum_exp = 0.0;
+                            for m in 0..size_d {
+                                sum_exp += f32::exp(input[n * outer_stride + m * stride_d + k].to_f32() - max_val);
+                            }
+                            if is_log {
+                                let log_sum = f32::ln(sum_exp);
+                                for m in 0..size_d {
+                                    let idx = n * outer_stride + m * stride_d + k;
+                                    out_slice[idx] = bf16::from_f32(input[idx].to_f32() - max_val - log_sum);
+                                }
+                            } else {
+                                let inv_sum = 1.0 / sum_exp;
+                                for m in 0..size_d {
+                                    let idx = n * outer_stride + m * stride_d + k;
+                                    out_slice[idx] = bf16::from_f32(f32::exp(input[idx].to_f32() - max_val) * inv_sum);
+                                }
+                            }
+                        }
+                    });
+                    Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: if is_log { "LogSoftmax".to_string() } else { "Softmax".to_string() }, is_transposed: false, dtype: DataType::BF16, storage: Storage::BF16(out), mmap_data: None })
+                }
+            }
+        } else {
+            // Vulkan / Hybrid fallback to CPU initially
+            let mut cpu_tensor = self.clone();
+            cpu_tensor.device = "cpu".to_string();
+            let mut res = cpu_tensor.apply_softmax(dim, is_log)?;
+            res.device = self.device.clone();
+            Ok(res)
+        }
+    }
+
     fn reduce(&self, op: &str, dim: Option<i64>) -> PyResult<Tensor> {
         if self.dtype == DataType::F32 {
             let (input, _) = self.get_slice_raw_f32();
@@ -786,8 +974,34 @@ impl Tensor {
                     mmap_data: None,
                 })
             }
+        } else if self.dtype == DataType::F16 {
+            let (input, _) = self.get_slice_raw_f16();
+            if dim.is_some() {
+                return Err(pyo3::exceptions::PyNotImplementedError::new_err("Axis reduction not yet implemented for F16"));
+            }
+            let val = match op {
+                "sum" => input.par_iter().map(|&x| x.to_f32()).sum::<f32>(),
+                "mean" => input.par_iter().map(|&x| x.to_f32()).sum::<f32>() / input.len() as f32,
+                "max" => input.par_iter().map(|&x| x.to_f32()).reduce(|| f32::NEG_INFINITY, f32::max),
+                "min" => input.par_iter().map(|&x| x.to_f32()).reduce(|| f32::INFINITY, f32::min),
+                _ => panic!("Unsupported reduction op: {}", op),
+            };
+            Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F16, storage: Storage::F16(vec![half::f16::from_f32(val)]), mmap_data: None })
+        } else if self.dtype == DataType::BF16 {
+            let (input, _) = self.get_slice_raw_bf16();
+            if dim.is_some() {
+                return Err(pyo3::exceptions::PyNotImplementedError::new_err("Axis reduction not yet implemented for BF16"));
+            }
+            let val = match op {
+                "sum" => input.par_iter().map(|&x| x.to_f32()).sum::<f32>(),
+                "mean" => input.par_iter().map(|&x| x.to_f32()).sum::<f32>() / input.len() as f32,
+                "max" => input.par_iter().map(|&x| x.to_f32()).reduce(|| f32::NEG_INFINITY, f32::max),
+                "min" => input.par_iter().map(|&x| x.to_f32()).reduce(|| f32::INFINITY, f32::min),
+                _ => panic!("Unsupported reduction op: {}", op),
+            };
+            Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::BF16, storage: Storage::BF16(vec![half::bf16::from_f32(val)]), mmap_data: None })
         } else {
-            Err(pyo3::exceptions::PyNotImplementedError::new_err("F16/BF16 reduce not yet implemented"))
+            Err(pyo3::exceptions::PyNotImplementedError::new_err("Reduce not supported for this dtype"))
         }
     }
 
@@ -808,6 +1022,13 @@ impl Tensor {
                 let mut res = vec![f16::ZERO; input.len()];
                 match op {
                     "relu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { f16::ZERO }),
+                    "sigmoid" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
+                    "silu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = f16::from_f32(f / (1.0 + (-f).exp())) }),
+                    "gelu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = f16::from_f32(0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) }),
+                    "leaky_relu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = f16::from_f32(if f > 0.0 { f } else { f * param1 }) }),
+                    "elu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = f16::from_f32(if f > 0.0 { f } else { param1 * (f.exp() - 1.0) }) }),
+                    "tanh" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(i.to_f32().tanh())),
+                    "clamp" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(i.to_f32().clamp(param1, param2))),
                     _ => panic!("Unsupported F16 CPU op: {}", op),
                 }
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F16, storage: Storage::F16(res), mmap_data: None })
@@ -816,6 +1037,13 @@ impl Tensor {
                 let mut res = vec![bf16::ZERO; input.len()];
                 match op {
                     "relu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { bf16::ZERO }),
+                    "sigmoid" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
+                    "silu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = bf16::from_f32(f / (1.0 + (-f).exp())) }),
+                    "gelu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = bf16::from_f32(0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) }),
+                    "leaky_relu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = bf16::from_f32(if f > 0.0 { f } else { f * param1 }) }),
+                    "elu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = bf16::from_f32(if f > 0.0 { f } else { param1 * (f.exp() - 1.0) }) }),
+                    "tanh" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(i.to_f32().tanh())),
+                    "clamp" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(i.to_f32().clamp(param1, param2))),
                     _ => panic!("Unsupported BF16 CPU op: {}", op),
                 }
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::BF16, storage: Storage::BF16(res), mmap_data: None })
@@ -915,6 +1143,13 @@ impl Tensor {
                                 let out_h = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut half::f16, elem_count) };
                                 match op_cpu.as_str() {
                                     "relu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| *o = if i > half::f16::ZERO { i } else { half::f16::ZERO }),
+                                    "sigmoid" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| *o = half::f16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
+                                    "silu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::f16::from_f32(f / (1.0 + (-f).exp())) }),
+                                    "gelu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::f16::from_f32(0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) }),
+                                    "leaky_relu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::f16::from_f32(if f > 0.0 { f } else { f * param1 }) }),
+                                    "elu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::f16::from_f32(if f > 0.0 { f } else { param1 * (f.exp() - 1.0) }) }),
+                                    "tanh" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| *o = half::f16::from_f32(i.to_f32().tanh())),
+                                    "clamp" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| *o = half::f16::from_f32(i.to_f32().clamp(param1, param2))),
                                     _ => panic!("Unsupported F16 hybrid tile op"),
                                 }
                             },
@@ -923,6 +1158,13 @@ impl Tensor {
                                 let out_b = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut half::bf16, elem_count) };
                                 match op_cpu.as_str() {
                                     "relu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| *o = if i > half::bf16::ZERO { i } else { half::bf16::ZERO }),
+                                    "sigmoid" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| *o = half::bf16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
+                                    "silu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::bf16::from_f32(f / (1.0 + (-f).exp())) }),
+                                    "gelu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::bf16::from_f32(0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) }),
+                                    "leaky_relu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::bf16::from_f32(if f > 0.0 { f } else { f * param1 }) }),
+                                    "elu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::bf16::from_f32(if f > 0.0 { f } else { param1 * (f.exp() - 1.0) }) }),
+                                    "tanh" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| *o = half::bf16::from_f32(i.to_f32().tanh())),
+                                    "clamp" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| *o = half::bf16::from_f32(i.to_f32().clamp(param1, param2))),
                                     _ => panic!("Unsupported BF16 hybrid tile op"),
                                 }
                             },
@@ -1167,11 +1409,9 @@ impl Tensor {
 
     fn act_into_raw_f32(i_s: &[f32], op: &str, param1: f32, param2: f32, out: &mut [f32]) -> PyResult<()> {
         let total_elements = i_s.len();
-        // Bug #4 fix: was threshold 1_000_000 (4MB). Rayon spawn overhead dominates for simple
-        // element-wise ops below ~32MB. Per Rayon docs: use serial iter for small workloads.
-        // PyTorch uses a single-threaded kernel for small tensors — same principle here.
-        // 8_000_000 floats = 32MB, well above L3 cache, good break-even for thread overhead.
-        if total_elements < 8_000_000 {
+        // Use serial execution for very small arrays (L1 cache size, < 32k items)
+        // For larger arrays, Rayon overhead is well compensated by utilizing all cores.
+        if total_elements < 32_000 {
             // Serial path — AVX1 vmaxps (8 floats/cycle) for relu, scalar fallback for rest
             match op {
                 "relu"    => crate::avx_swar::relu_f32(i_s, out),

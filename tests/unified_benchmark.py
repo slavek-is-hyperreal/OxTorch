@@ -151,10 +151,12 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
                         res_torch = torch.relu(a_torch)
                 elif op == "Sum":
                     res_torch = torch.sum(a_torch)
+                elif op == "Softmax":
+                    res_torch = torch.nn.functional.softmax(a_torch, dim=-1)
             t_pt = (time.perf_counter() - t0) / iterations
 
         a_vnn = Tensor(data=a_np, dtype=vnn_dtype, device=mode)
-        b_vnn = Tensor(data=b_np, dtype=vnn_dtype, device=mode) if op not in ["ReLU", "Sum"] else None
+        b_vnn = Tensor(data=b_np, dtype=vnn_dtype, device=mode) if op not in ["ReLU", "Sum", "Softmax"] else None
 
         del a_np, b_np
         gc.collect()
@@ -181,6 +183,8 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
                 _ = a_vnn.relu()
         elif op == "Sum":
             _ = a_vnn.sum()
+        elif op == "Softmax":
+            _ = a_vnn.softmax(-1)
     except Exception as e:
         print(f"      [VNN] Error during warmup: {e}")
         return 0, 0, False, cpu_temp
@@ -198,6 +202,8 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
                 res_vnn = a_vnn.relu()
         elif op == "Sum":
             res_vnn = a_vnn.sum()
+        elif op == "Softmax":
+            res_vnn = a_vnn.softmax(-1)
 
         if i < iterations - 1:
             if not inplace:
@@ -283,6 +289,10 @@ if __name__ == "__main__":
                 # --- Sum ---
                 pt, v_t, ok, temp = run_bench(f"Sum_{dtype}_{mode}", "Sum", (2048, 2048), mode=mode, dtype=dtype, pt_cache_time=FAST_PT_CACHE.get(f"Sum {dtype} ({mode})"))
                 run_results.append({"name": f"Sum {dtype} ({mode})", "pt": pt, "vnn": v_t, "ok": ok, "cpu_temp_c": temp})
+
+                # --- Softmax ---
+                pt, v_t, ok, temp = run_bench(f"Softmax_{dtype}_{mode}", "Softmax", (2048, 2048), mode=mode, dtype=dtype, pt_cache_time=FAST_PT_CACHE.get(f"Softmax {dtype} ({mode})"))
+                run_results.append({"name": f"Softmax {dtype} ({mode})", "pt": pt, "vnn": v_t, "ok": ok, "cpu_temp_c": temp})
 
                 # --- ReLU 1M: alloc path ---
                 pt, v_t, ok, temp = run_bench(f"ReLU_{dtype}_{mode}", "ReLU", (1000000,), mode=mode, dtype=dtype, inplace=False, pt_cache_time=FAST_PT_CACHE.get(f"ReLU {dtype} 1M alloc ({mode})"))

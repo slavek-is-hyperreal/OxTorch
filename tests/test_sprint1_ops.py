@@ -37,6 +37,12 @@ F32 = DataType.F32
 F16 = DataType.F16
 BF16 = DataType.BF16
 
+DTYPES = [
+    (F32, np.float32, torch.float32, 1e-4),
+    (F16, np.float16, torch.float16, 1e-2),
+    (BF16, np.float32, torch.bfloat16, 1e-1), # Numpy lacks bf16, use float32 locally
+]
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -325,3 +331,117 @@ if __name__ == "__main__":
         exp = np.maximum(data, 0.0)
         ok = np.allclose(r, exp, atol=1e-5)
         print(f"  ReLU({dev}): {'✅ OK' if ok else '❌ FAIL'}")
+
+# --- Softmax & Log-Softmax ---
+@pytest.mark.parametrize("dev", DEVICES)
+@pytest.mark.parametrize("dtype_setup", DTYPES)
+@pytest.mark.parametrize("shape, dim", [
+    ((10,), 0),
+    ((10, 20), 1),
+    ((10, 20), -1),
+    ((10, 20), 0),
+    ((2, 3, 4), 2),
+    ((2, 3, 4), 1),
+    ((2, 3, 4), -1),
+])
+def test_softmax(dev, dtype_setup, shape, dim):
+    vnn_dt, np_dt, tc_dt, tol = dtype_setup
+    rng = np.random.default_rng(42)
+    # Scaled down to prevent fp16 overflow during exp if values get too large
+    # but actual softmax impl subtracts max first so overflow is avoided anyway.
+    data = (rng.standard_normal(shape) * 5.0).astype(np_dt)
+    
+    t_vnn = make_vnn(data, vnn_dt, dev)
+    r_vnn = t_vnn.softmax(dim).to_numpy()
+    
+    t_tc = torch.from_numpy(data)
+    r_tc = torch.nn.functional.softmax(t_tc, dim=dim).numpy()
+    
+    # Softmax output validation: sums to 1.0 along dim
+    sums_vnn = np.sum(r_vnn, axis=dim)
+    np.testing.assert_allclose(sums_vnn, np.ones_like(sums_vnn), rtol=tol, atol=tol)
+    
+    np.testing.assert_allclose(r_vnn, r_tc, rtol=tol, atol=tol)
+
+@pytest.mark.parametrize("dev", DEVICES)
+@pytest.mark.parametrize("dtype_setup", DTYPES)
+@pytest.mark.parametrize("shape, dim", [
+    ((10, 20), -1),
+    ((10, 20), 0),
+    ((2, 3, 4), 1),
+])
+def test_log_softmax(dev, dtype_setup, shape, dim):
+    vnn_dt, np_dt, tc_dt, tol = dtype_setup
+    rng = np.random.default_rng(43)
+    data = (rng.standard_normal(shape) * 10.0).astype(np_dt)
+    
+    t_vnn = make_vnn(data, vnn_dt, dev)
+    r_vnn = t_vnn.log_softmax(dim).to_numpy()
+    
+    t_tc = torch.from_numpy(data)
+    r_tc = torch.nn.functional.log_softmax(t_tc, dim=dim).numpy()
+    
+    np.testing.assert_allclose(r_vnn, r_tc, rtol=tol, atol=tol)
+
+
+# ===========================================================================
+# GROUP 6: Creators (zeros, ones, full, rand, randn)
+# ===========================================================================
+
+class TestCreators:
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_setup", DTYPES)
+    def test_zeros(self, device, dtype_setup):
+        vnn_dt, np_dt, tc_dt, tol = dtype_setup
+        shape = (10, 20)
+        t = Tensor.zeros(shape, dtype=vnn_dt, device=device)
+        assert t.shape == list(shape)
+        assert t.device == device
+        assert np.all(t.to_numpy() == 0.0)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_setup", DTYPES)
+    def test_ones(self, device, dtype_setup):
+        vnn_dt, np_dt, tc_dt, tol = dtype_setup
+        shape = (4, 4, 4)
+        t = Tensor.ones(shape, dtype=vnn_dt, device=device)
+        assert t.shape == list(shape)
+        assert t.device == device
+        assert np.all(t.to_numpy() == 1.0)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_setup", DTYPES)
+    def test_full(self, device, dtype_setup):
+        vnn_dt, np_dt, tc_dt, tol = dtype_setup
+        shape = (5, 5)
+        # using integer or explicitly checking bounds
+        val = 3.0
+        t = Tensor.full(shape, val, dtype=vnn_dt, device=device)
+        assert t.shape == list(shape)
+        assert t.device == device
+        assert np.allclose(t.to_numpy(), val, atol=tol)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_setup", DTYPES)
+    def test_rand(self, device, dtype_setup):
+        vnn_dt, np_dt, tc_dt, tol = dtype_setup
+        shape = (1000,)
+        t = Tensor.rand(shape, dtype=vnn_dt, device=device)
+        arr = t.to_numpy()
+        assert t.shape == list(shape)
+        assert t.device == device
+        assert np.all((arr >= 0.0) & (arr <= 1.0))
+        assert np.mean(arr) > 0.4 and np.mean(arr) < 0.6
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_setup", DTYPES)
+    def test_randn(self, device, dtype_setup):
+        vnn_dt, np_dt, tc_dt, tol = dtype_setup
+        shape = (10000,)
+        t = Tensor.randn(shape, dtype=vnn_dt, device=device)
+        arr = t.to_numpy()
+        assert t.shape == list(shape)
+        assert t.device == device
+        # Standard normal distribution checks
+        assert abs(np.mean(arr)) < 0.1
+        assert 0.8 < np.std(arr) < 1.2
