@@ -198,9 +198,18 @@ on the billions of machines that modern frameworks have quietly abandoned.
 
 ### Current PyTorch Parity Stage (March 2026)
 
-We have officially **completed Sprint 1**. This means VulkanNN currently possesses full numerical and functional parity with PyTorch for all operations required to execute an **MLP Forward Pass** (Feedforward Networks). 
-- Every foundational operation (`matmul`, `add`, `mul`, `div`, `sub`, activations, reductions, and `softmax`) is rigorously verified against PyTorch internals via `pytest` for all 3 precisions (F32, F16, BF16).
-- For a deeper dive into our strict optimization guidelines pushing our engine performance, see our [Performance Audit Details & Roadmap](docs/roadmap.md).
+We have officially **completed Sprint 1**. This means VulkanNN currently possesses **100% functional correspondence** with PyTorch for the operations required to execute an **MLP (Multi-Layer Perceptron) Forward Pass**:
+
+- **Core Tensors**: Full parity for `shape`, `dtype` (F32/F16/BF16), and zero-copy `view`/`reshape`.
+- **Primary Operators**: `@` (MatMul), `+`, `-`, `*`, `/` (Elementwise) are fully implemented across all 3 modes (CPU, Vulkan, Hybrid).
+- **Activations**: 1:1 behavioral match for `ReLU`, `GELU`, `Sigmoid`, `SiLU`, `Tanh`, `ELU`, and `LeakyReLU`.
+- **Reductions**: Precise parity for `sum`, `mean`, `max`, and `min` (including dimension-specific reductions).
+- **Classifiers**: Functional parity for numerically stable `softmax` and `log_softmax`.
+- **Creators**: Native static methods `zeros()`, `ones()`, `full()`, `rand()`, and `randn()`.
+
+Every operation is rigorously verified via our [Tri-Precision Statistical Audit](docs/performance_guide.md) against `torch.nn.functional` to guarantee that output tensors match PyTorch internals within floating-point epsilon.
+
+For a detailed breakdown of remaining gaps (e.g., Batch MatMul for Transformers), see our [Full PyTorch Gap Analysis](docs/roadmap.md).
 
 ### How We're Getting There — 7 Sprints
 
