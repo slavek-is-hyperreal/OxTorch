@@ -29,6 +29,8 @@ use std::arch::aarch64::*;
 // convert_f32_to_f16
 // ============================================================
 
+/// Performs a high-performance vectorised conversion from F32 (IEEE 754) to F16.
+/// Automatically dispatches to F16C (AVX1), SSE2 SWAR, or NEON based on CPU capabilities.
 pub fn convert_f32_to_f16(src: &[f32], dst: &mut [f16]) {
     assert_eq!(src.len(), dst.len());
 
@@ -149,6 +151,8 @@ unsafe fn convert_f32_to_f16_neon(src: &[f32], dst: &mut [f16]) {
 // convert_f16_to_f32
 // ============================================================
 
+/// Performs a high-performance vectorised conversion from F16 to F32 (IEEE 754).
+/// Utilizes F16C hardware instructions or branchless bit-twiddling SWAR logic.
 pub fn convert_f16_to_f32(src: &[f16], dst: &mut [f32]) {
     assert_eq!(src.len(), dst.len());
 
@@ -262,6 +266,8 @@ unsafe fn convert_f16_to_f32_neon(src: &[f16], dst: &mut [f32]) {
 // convert_f32_to_bf16
 // ============================================================
 
+/// Performs a high-performance vectorised conversion from F32 to BF16 (Brain Float).
+/// Implements round-to-nearest-even precision to match PyTorch/TensorFlow behavior exactly.
 pub fn convert_f32_to_bf16(src: &[f32], dst: &mut [bf16]) {
     assert_eq!(src.len(), dst.len());
 

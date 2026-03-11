@@ -22,6 +22,8 @@ pub enum DataType {
     BF16,
 }
 
+/// Backbone data storage for the Tensor engine.
+/// Encapsulates the multi-precision vectors (F32, F16, BF16) or SSD-mapped handles.
 #[derive(Clone)]
 pub enum Storage {
     F32(Vec<f32>),
@@ -30,6 +32,8 @@ pub enum Storage {
     None,
 }
 
+/// A multi-precision, multi-device, stateful Tensor object.
+/// Bridges Rust's high-speed core with Python's ease of use via PyO3.
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct Tensor {
@@ -431,17 +435,23 @@ impl Tensor {
     fn clamp(&self, min: f32, max: f32) -> PyResult<Tensor> { self.unary_op("clamp", min, max) }
     fn clamp_into(&mut self, min: f32, max: f32, out: &mut Tensor) -> PyResult<()> { self.act_into("clamp", min, max, out) }
 
+    /// Sum reduction. Returns a scalar-shaped Tensor (1 element).
     #[pyo3(signature = (dim=None))]
     fn sum(&self, dim: Option<i64>) -> PyResult<Tensor> { self.reduce("sum", dim) }
+    /// Mean reduction.
     #[pyo3(signature = (dim=None))]
     fn mean(&self, dim: Option<i64>) -> PyResult<Tensor> { self.reduce("mean", dim) }
+    /// Max reduction.
     #[pyo3(signature = (dim=None))]
     fn max_val(&self, dim: Option<i64>) -> PyResult<Tensor> { self.reduce("max", dim) }
+    /// Min reduction.
     #[pyo3(signature = (dim=None))]
     fn min_val(&self, dim: Option<i64>) -> PyResult<Tensor> { self.reduce("min", dim) }
 
+    /// Softmax activation along specified dimension.
     #[pyo3(signature = (dim))]
     fn softmax(&self, dim: i64) -> PyResult<Tensor> { self.apply_softmax(dim, false) }
+    /// Log-Softmax activation. Numerically stable.
     #[pyo3(signature = (dim))]
     fn log_softmax(&self, dim: i64) -> PyResult<Tensor> { self.apply_softmax(dim, true) }
 
@@ -483,7 +493,8 @@ impl Tensor {
     fn sigmoid(&self) -> PyResult<Tensor> { self.unary_op("sigmoid", 0.0, 0.0) }
     fn silu(&self) -> PyResult<Tensor> { self.unary_op("silu", 0.0, 0.0) }
 
-    // --- MATMUL ---
+    /// Matrix Multiplication (dot product).
+    /// Dispatches to `matrixmultiply::sgemm` on CPU or specialized SPIR-V kernel on GPU.
     fn __matmul__(&self, other: &Tensor) -> PyResult<Tensor> {
         if self.shape.len() != 2 || other.shape.len() != 2 { return Err(PyValueError::new_err("2D required")); }
         let m = self.shape[0]; let k = self.shape[1]; let k2 = other.shape[0]; let n = other.shape[1];

@@ -77,6 +77,8 @@ pub struct AshBackend {
     pub pending_ops: Mutex<Vec<AsyncOp>>,
 }
 
+/// A reusable Vulkan buffer paired with its native memory allocation.
+/// Tracked by the memory allocator to enable zero-copy VRAM reuse.
 pub struct CachedBuffer {
     pub size: vk::DeviceSize,
     pub usage: vk::BufferUsageFlags,
@@ -91,6 +93,9 @@ unsafe impl Sync for CachedBuffer {}
 
 pub static BACKEND: OnceLock<AshBackend> = OnceLock::new();
 
+/// Bootstraps the raw Ash Vulkan 1.2 engine.
+/// Configures physical devices, asynchronous compute and transfer queues,
+/// and allocates persistent command pools mapping to the hardware ACEs.
 pub fn init_backend() {
     BACKEND.get_or_init(|| {
         println!("[vulkannn_rusted v{}] Initializing Raw Ash Vulkan Engine...", env!("CARGO_PKG_VERSION"));
@@ -387,6 +392,8 @@ pub fn init_backend() {
     });
 }
 
+/// Checks the global Vulkan timeline semaphore and cleans up completed asynchronous
+/// operations. Reclaims all associated memory blocks into the caching pool.
 pub fn poll_async_ops() {
     let backend = BACKEND.get().unwrap();
     let current_val = unsafe { backend.device.get_semaphore_counter_value(backend.timeline_semaphore).unwrap() };
@@ -417,6 +424,7 @@ pub fn poll_async_ops() {
     });
 }
 
+/// Blocks the host CPU until the Vulkan timeline semaphore reaches the target value.
 pub fn poll_async_ops_until(target_val: u64) {
     let backend = BACKEND.get().unwrap();
     let current = unsafe { backend.device.get_semaphore_counter_value(backend.timeline_semaphore).unwrap() };
@@ -429,6 +437,10 @@ pub fn poll_async_ops_until(target_val: u64) {
     poll_async_ops();
 }
 
+/// Requests a Vulkan memory allocation.
+/// Attempts to fetch a suitable existing block from the shared `buffer_cache`.
+/// If no matching blocks exist or if VRAM boundaries are exceeded (triggering OOM retry logic),
+/// a fresh buffer and `vk::DeviceMemory` allocation is created.
 pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Option<&str>, cpu_visible: bool) -> CachedBuffer {
     let backend = BACKEND.get().unwrap();
     if let Ok(mut cache) = backend.buffer_cache.lock() {
@@ -484,6 +496,8 @@ pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Opti
     CachedBuffer { size, usage, buffer, allocation: Some(allocation), cpu_visible: cpu_visible_actual, mapped_ptr }
 }
 
+/// Returns a `CachedBuffer` back to the internal caching pool for immediate recycling.
+/// Protects against VRAM exhaustion by safely pruning the LRU tail if total caching expands beyond the 512MB limit.
 pub fn recycle_buffer(cached: CachedBuffer) {
     let backend = BACKEND.get().unwrap();
     if let Ok(mut cache) = backend.buffer_cache.lock() {
@@ -497,6 +511,8 @@ pub fn recycle_buffer(cached: CachedBuffer) {
     }
 }
 
+/// Drops and permanently frees a designated number of the least recently used buffers
+/// within the caching pool to respect the Bonaire 1GB VRAM constraints.
 pub fn prune_buffer_cache(count: usize) {
     let backend = BACKEND.get().unwrap();
     if let Ok(mut cache) = backend.buffer_cache.lock() {
@@ -522,6 +538,8 @@ fn destroy_cached_buffer(mut buf: CachedBuffer) {
     }
 }
 
+/// Completely flushes all reserved caching memory, releasing it entirely back to the native allocator.
+/// Triggered during automated Host OOM retries or explicit Python garbage collection phases.
 pub fn clear_all_caches() {
     let backend = BACKEND.get().unwrap();
     if let Ok(mut cache) = backend.buffer_cache.lock() {
@@ -531,6 +549,8 @@ pub fn clear_all_caches() {
         }
     }
 }
+/// Executes an elementwise addition utilizing the Vulkan computational pipeline.
+/// Returns the resulting tensor memory block copied back to host DDR3.
 pub fn execute_add(a_raw: &[u8], b_raw: &[u8], dtype: DataType, is_hybrid: bool) -> Vec<u8> {
     let mut out = vec![0u8; a_raw.len()];
     execute_add_into(a_raw, b_raw, &mut out, dtype, is_hybrid, false);
@@ -628,6 +648,8 @@ fn download_from_stage(dst_raw: &mut [u8], stage: &CachedBuffer, dtype: DataType
     }
 }
 
+/// Executes element-wise addition on the GPU using a fused Vulkan compute shader.
+/// Handles F32, F16, and BF16 with automatic staging buffer management.
 pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: DataType, _is_hybrid: bool, _use_staging: bool) {
     let backend = BACKEND.get().unwrap();
     let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
@@ -696,6 +718,8 @@ pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: D
     recycle_buffer(stage_a); recycle_buffer(stage_b); recycle_buffer(stage_c);
 }
 
+/// Executes full Matrix Multiplication on the GPU.
+/// Uses a specialized MatMul SPIR-V kernel with uniform-buffered dimensions.
 pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype: DataType, _is_hybrid: bool) -> Vec<u8> {
     let backend = BACKEND.get().unwrap();
     let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
@@ -779,6 +803,8 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
     out_vec
 }
 
+/// Executes a vectorized activation function (ReLU, Sigmoid, SiLU, etc.) on the GPU.
+/// Synchronous call: blocks until the operation and download are complete.
 pub fn execute_activation(input_raw: &[u8], op: &str, param1: f32, param2: f32, dtype: DataType, is_hybrid: bool) -> Vec<u8> {
     let mut out_vec = vec![0u8; input_raw.len()];
     let (wait_id, stage_out) = submit_activation_into(input_raw, op, param1, param2, &mut out_vec, dtype, is_hybrid, false);
@@ -883,6 +909,8 @@ pub fn execute_activation_chunked(
 }
 
 
+/// Executes an activation function into a pre-allocated buffer on the GPU.
+/// Optimally used for in-place or pre-allocated tensor operations.
 pub fn execute_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f32, res_raw: &mut [u8], dtype: DataType, is_hybrid: bool, use_staging: bool) {
     let t_start = std::time::Instant::now();
     let (wait_id, stage_out) = submit_activation_into(input_raw, op, param1, param2, res_raw, dtype, is_hybrid, use_staging);
@@ -899,6 +927,8 @@ pub fn execute_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: 
     }
 }
 
+/// Executes a tree-reduction (Sum, Mean, Max, Min) on the GPU.
+/// Uses a two-pass reduction strategy with shared memory kernels for maximum throughput.
 pub fn execute_reduce(input_raw: &[u8], op: &str) -> Vec<f32> {
     let elem_count = input_raw.len() / 4;
     let num_bytes_f32 = input_raw.len() as vk::DeviceSize;

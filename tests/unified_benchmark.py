@@ -141,6 +141,10 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
                     res_torch = torch.matmul(a_torch, b_torch)
                 elif op == "Add":
                     res_torch = a_torch + b_torch
+                elif op == "Sub":
+                    res_torch = a_torch - b_torch
+                elif op == "Mul":
+                    res_torch = a_torch * b_torch
                 elif op == "ReLU":
                     if inplace:
                         # In-place: reuse a_torch buffer — fair comparison to relu_into()
@@ -149,6 +153,8 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
                         res_torch = a_torch_clone
                     else:
                         res_torch = torch.relu(a_torch)
+                elif op == "GELU":
+                    res_torch = torch.nn.functional.gelu(a_torch)
                 elif op == "Sum":
                     res_torch = torch.sum(a_torch)
                 elif op == "Softmax":
@@ -156,7 +162,7 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
             t_pt = (time.perf_counter() - t0) / iterations
 
         a_vnn = Tensor(data=a_np, dtype=vnn_dtype, device=mode)
-        b_vnn = Tensor(data=b_np, dtype=vnn_dtype, device=mode) if op not in ["ReLU", "Sum", "Softmax"] else None
+        b_vnn = Tensor(data=b_np, dtype=vnn_dtype, device=mode) if op not in ["ReLU", "GELU", "Sum", "Softmax"] else None
 
         del a_np, b_np
         gc.collect()
@@ -174,6 +180,8 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
     try:
         if op == "MatMul": _ = a_vnn @ b_vnn
         elif op == "Add": _ = a_vnn + b_vnn
+        elif op == "Sub": _ = a_vnn - b_vnn
+        elif op == "Mul": _ = a_vnn * b_vnn
         elif op == "ReLU":
             if inplace:
                 # Pre-allocate output tensor for relu_into
@@ -181,6 +189,8 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
                 a_vnn.relu_into(out_vnn)
             else:
                 _ = a_vnn.relu()
+        elif op == "GELU":
+            _ = a_vnn.gelu()
         elif op == "Sum":
             _ = a_vnn.sum()
         elif op == "Softmax":
@@ -194,12 +204,16 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
     for i in range(iterations):
         if op == "MatMul": res_vnn = a_vnn @ b_vnn
         elif op == "Add": res_vnn = a_vnn + b_vnn
+        elif op == "Sub": res_vnn = a_vnn - b_vnn
+        elif op == "Mul": res_vnn = a_vnn * b_vnn
         elif op == "ReLU":
             if inplace:
                 a_vnn.relu_into(out_vnn)
                 res_vnn = out_vnn
             else:
                 res_vnn = a_vnn.relu()
+        elif op == "GELU":
+            res_vnn = a_vnn.gelu()
         elif op == "Sum":
             res_vnn = a_vnn.sum()
         elif op == "Softmax":
@@ -266,7 +280,7 @@ if __name__ == "__main__":
             print(f"Failed to load fast cache: {e}")
 
     print("="*60)
-    print(f" VNN RUSTED SAFETY NET: TRI-PRECISION AUDIT v3.3")
+    print(f" VNN RUSTED SAFETY NET: TRI-PRECISION AUDIT v3.4")
     print(f" (Mode: Statistical Analysis - {args.runs} runs | Fast: {args.fast})")
     print(f" CPU Temp sensor: thermal_zone0 (Ivy Bridge package die)")
     print("="*60)
@@ -293,6 +307,16 @@ if __name__ == "__main__":
                 # --- Softmax ---
                 pt, v_t, ok, temp = run_bench(f"Softmax_{dtype}_{mode}", "Softmax", (2048, 2048), mode=mode, dtype=dtype, pt_cache_time=FAST_PT_CACHE.get(f"Softmax {dtype} ({mode})"))
                 run_results.append({"name": f"Softmax {dtype} ({mode})", "pt": pt, "vnn": v_t, "ok": ok, "cpu_temp_c": temp})
+
+                # --- Elementwise Math ---
+                pt, v_t, ok, temp = run_bench(f"Mul_{dtype}_{mode}", "Mul", (2048, 2048), mode=mode, dtype=dtype, pt_cache_time=FAST_PT_CACHE.get(f"Mul {dtype} ({mode})"))
+                run_results.append({"name": f"Mul {dtype} ({mode})", "pt": pt, "vnn": v_t, "ok": ok, "cpu_temp_c": temp})
+                pt, v_t, ok, temp = run_bench(f"Sub_{dtype}_{mode}", "Sub", (2048, 2048), mode=mode, dtype=dtype, pt_cache_time=FAST_PT_CACHE.get(f"Sub {dtype} ({mode})"))
+                run_results.append({"name": f"Sub {dtype} ({mode})", "pt": pt, "vnn": v_t, "ok": ok, "cpu_temp_c": temp})
+                
+                # --- Activations ---
+                pt, v_t, ok, temp = run_bench(f"GELU_{dtype}_{mode}", "GELU", (2048, 2048), mode=mode, dtype=dtype, pt_cache_time=FAST_PT_CACHE.get(f"GELU {dtype} ({mode})"))
+                run_results.append({"name": f"GELU {dtype} ({mode})", "pt": pt, "vnn": v_t, "ok": ok, "cpu_temp_c": temp})
 
                 # --- ReLU 1M: alloc path ---
                 pt, v_t, ok, temp = run_bench(f"ReLU_{dtype}_{mode}", "ReLU", (1000000,), mode=mode, dtype=dtype, inplace=False, pt_cache_time=FAST_PT_CACHE.get(f"ReLU {dtype} 1M alloc ({mode})"))

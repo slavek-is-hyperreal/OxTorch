@@ -16,6 +16,7 @@ unsafe impl Send for AlignedBuffer {}
 unsafe impl Sync for AlignedBuffer {}
 
 impl AlignedBuffer {
+    /// Allocates a new zeroed buffer aligned strictly to 1MB, padded to 4096 bytes for O_DIRECT safely.
     pub fn new(size: usize) -> Self {
         // Enforce 1MB alignment for optimal ZFS Recordsize interactions
         let align = 1048576; 
@@ -29,10 +30,12 @@ impl AlignedBuffer {
         Self { ptr, layout, size: padded_size } // We track the padded size
     }
 
+    /// Returns the buffer as a mutable slice.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.size) }
     }
     
+    /// Returns the buffer as a read-only slice.
     pub fn as_slice(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr, self.size) }
     }
@@ -51,6 +54,7 @@ pub struct DirectIoEngine {
 }
 
 impl DirectIoEngine {
+    /// Initializes a new Direct I/O engine bypassing the VFS page cache.
     pub fn new(path: &str, read_only: bool) -> Self {
         let mut options = OpenOptions::new();
         options.read(true);

@@ -1,4 +1,4 @@
-# VulkanNN Rusted (v3.4.0 "Iron Age Complete")
+# VulkanNN Rusted (v3.5.0 "Sprint 1 — MLP Forward Pass")
 
 **A high-performance, Rust-powered tensor engine for constrained consumer hardware.**
 
@@ -195,6 +195,12 @@ This is not about replacing PyTorch for research. It's about making AI inference
 on the billions of machines that modern frameworks have quietly abandoned.
 
 ---
+
+### Current PyTorch Parity Stage (March 2026)
+
+We have officially **completed Sprint 1**. This means VulkanNN currently possesses full numerical and functional parity with PyTorch for all operations required to execute an **MLP Forward Pass** (Feedforward Networks). 
+- Every foundational operation (`matmul`, `add`, `mul`, `div`, `sub`, activations, reductions, and `softmax`) is rigorously verified against PyTorch internals via `pytest` for all 3 precisions (F32, F16, BF16).
+- For a deeper dive into our strict optimization guidelines pushing our engine performance, see our [Performance Audit Details & Roadmap](docs/roadmap.md).
 
 ### How We're Getting There — 7 Sprints
 

@@ -8,6 +8,7 @@ use memmap2::{Mmap, MmapOptions};
 pub struct L3Cache;
 
 impl L3Cache {
+    /// Maps a raw SSD tensor directly into host memory using `mmap`.
     #[allow(dead_code)]
     pub fn map_ssd_tensor(path: &str) -> std::io::Result<Arc<Mmap>> {
         let file = File::open(path)?;
@@ -62,6 +63,7 @@ pub fn get_available_ram() -> usize {
 
 pub static BUDGETS: OnceLock<Mutex<MemoryBudgets>> = OnceLock::new();
 
+/// Initializes system-wide memory budgets (VRAM defaults to 1GB, RAM scales to available OS memory).
 pub fn init_budgets() {
     BUDGETS.get_or_init(|| {
         let avail_ram = get_available_ram();
@@ -89,6 +91,8 @@ pub struct PrefetchRequest {
 
 pub static PREFETCHER: OnceLock<PrefetchEngine> = OnceLock::new();
 
+/// Initializes the background SSD prefetch engine, spawning a worker thread
+/// to touch pages continuously and trigger asynchronous VFS read-ahead.
 pub fn init_prefetcher() {
     PREFETCHER.get_or_init(|| {
         let (tx, rx) = std::sync::mpsc::channel::<PrefetchRequest>();
@@ -118,6 +122,7 @@ pub fn init_prefetcher() {
     });
 }
 
+/// Enqueues a mapped tensor to be prefetched into the L2 RAM cache by the background worker.
 #[allow(dead_code)]
 pub fn prefetch_tensor(mmap: Arc<Mmap>) {
     if let Some(engine) = PREFETCHER.get() {

@@ -1,4 +1,4 @@
-# Performance Guide (v3.4.0 "Iron Age Complete")
+# Performance Guide (v3.5.0 "Sprint 1 — MLP Forward Pass")
 
 This guide explains how to interpret benchmark results and how to maximize throughput
 on the target hardware (i5-3450, AMD Bonaire R7 260X, 24GB DDR3, ZFS SSD pool).

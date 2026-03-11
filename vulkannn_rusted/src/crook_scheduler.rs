@@ -22,6 +22,7 @@ unsafe impl Sync for StatefulTile {}
 unsafe impl Send for StatefulTile {}
 
 impl StatefulTile {
+    /// Constructs a clear, EMPTY Stateful Tile ready for ZFS I/O ingestion.
     pub fn new() -> Self {
         Self {
             state: AtomicU32::new(TILE_EMPTY),
@@ -32,11 +33,14 @@ impl StatefulTile {
     }
 }
 
+/// Manages a continuous flow of `StatefulTile` buffers, executing lockless I/O
+/// reads and writes decoupled from primary execution threads.
 pub struct CrookScheduler {
     pub ring: Vec<Box<StatefulTile>>,
 }
 
 impl CrookScheduler {
+    /// Instantiates a new scheduler holding an allocated continuous circular cache of given size.
     pub fn new(ring_size: usize) -> std::sync::Arc<Self> {
         let mut ring = Vec::with_capacity(ring_size);
         for _ in 0..ring_size {

@@ -9,14 +9,6 @@
 //!   Bucket index = ceil_log2(n).  We cover 2^0 = 1 .. 2^30 = ~1G elements.
 //! - Per-bucket free-list capped at MAX_BUFS to bound memory usage.
 //! - Thread safety: try_lock per bucket (non-blocking — graceful degradation).
-//!
-//! Usage in tensor.rs:
-//!   let mut v = BufPool::get(n);   // pop from pool or alloc fresh
-//!   v.resize(n, 0.0f32);          // ensure correct length (pool buf may be larger)
-//!   // ... fill v ...
-//!   // Either return result (let pool pick up on next get), OR:
-//!   BufPool::put(v);               // explicitly return to pool
-
 use std::sync::{Mutex, OnceLock};
 
 /// Maximum number of free buffers retained per size class.
@@ -32,6 +24,7 @@ struct Pool {
 
 static INNER_POOL: OnceLock<Pool> = OnceLock::new();
 
+/// Initializes and returns the global singleton `Pool` instance.
 fn inner() -> &'static Pool {
     INNER_POOL.get_or_init(|| {
         let mut buckets = Vec::with_capacity(NUM_CLASSES);
@@ -76,14 +69,12 @@ impl BufPool {
     pub fn put(mut v: Vec<f32>) {
         if v.capacity() == 0 { return; }
         let cls = size_class(v.capacity()).min(NUM_CLASSES - 1);
-        v.clear(); // length → 0, capacity stays
+        v.clear();
         if let Ok(mut bucket) = inner().buckets[cls].try_lock() {
             if bucket.len() < MAX_BUFS_PER_CLASS {
                 bucket.push(v);
             }
-            // else: bucket full, Vec drops and OS reclaims
         }
-        // lock contended: Vec drops, that's fine
     }
 }
 

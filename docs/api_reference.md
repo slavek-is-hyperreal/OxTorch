@@ -1,4 +1,4 @@
-# API Reference (v3.4.0 "Iron Age Complete")
+# API Reference (v3.5.0 "Sprint 1 — MLP Forward Pass")
 
 This document describes the public Python API exposed by `vulkannn_rusted` and its branch variants.
 
@@ -18,7 +18,7 @@ Source: `src/tensor.rs:16`
 
 ## Tensor Class
 
-Source: `src/tensor.rs:32`
+Source: `src/tensor.rs:35`
 
 ### Constructor
 
@@ -34,13 +34,13 @@ Tensor(data=None, shape=None, dtype=DataType.F32, device="auto", name="Tensor")
 
 ### Static Methods
 
-**`Tensor.from_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:85`
+**`Tensor.from_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:89`
 
 Maps an existing binary file as a read-only SSD tensor backed by `io_uring`/`O_DIRECT`.
 The file must already exist and be at least `prod(shape) * bytes_per_element` bytes.
 Returns a tensor with `device="ssd"` and no in-memory storage.
 
-**`Tensor.new_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:100`
+**`Tensor.new_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:103`
 
 Creates a new file on disk and maps it read-write. Used for out-of-core results
 (e.g., the 16GB Monster ReLU benchmark). Aligned to 1MB ZFS recordsize boundaries.
@@ -49,7 +49,7 @@ Creates a new file on disk and maps it read-write. Used for out-of-core results
 
 ### Matrix Operations
 
-**`__matmul__(other: Tensor)`** — `src/tensor.rs:275` — operator: `@`
+**`__matmul__(other: Tensor)`** — `src/tensor.rs:487` — operator: `@`
 
 Dispatches based on `device`:
 
@@ -66,12 +66,12 @@ Dispatches based on `device`:
 
 | Method | Source line | Notes |
 |:---|:---|:---|
-| `relu()` | `src/tensor.rs:231` | Returns new Tensor |
-| `sigmoid()` | `src/tensor.rs:271` | Returns new Tensor |
-| `silu()` | `src/tensor.rs:272` | Returns new Tensor |
-| `relu_into(out)` | `src/tensor.rs:232` | Writes to pre-allocated out Tensor |
-| `sigmoid_into(out)` | `src/tensor.rs:233` | Writes to pre-allocated out Tensor |
-| `silu_into(out)` | `src/tensor.rs:234` | Writes to pre-allocated out Tensor |
+| `relu()` | `src/tensor.rs:418` | Returns new Tensor |
+| `sigmoid()` | `src/tensor.rs:483` | Returns new Tensor |
+| `silu()` | `src/tensor.rs:484` | Returns new Tensor |
+| `relu_into(out)` | `src/tensor.rs:419` | Writes to pre-allocated out Tensor |
+| `sigmoid_into(out)` | `src/tensor.rs:420` | Writes to pre-allocated out Tensor |
+| `silu_into(out)` | `src/tensor.rs:421` | Writes to pre-allocated out Tensor |
 
 For `device="hybrid"`, activations use the MSTS tile-pulling dispatch:
 

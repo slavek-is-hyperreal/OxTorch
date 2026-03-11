@@ -4,6 +4,16 @@
 
 ## Completed
 
+**v3.5.0 "Sprint 1 — MLP Forward Pass"** (main)
+
+- **Completed Sprint 1**: All foundation operations implemented with tri-precision (F32, F16, BF16) CPU/Vulkan/Hybrid paths.
+- **Core Arithmetic**: `mul`, `sub`, `div`, broadcasted scalar arithmetic.
+- **Shape Manipulation**: `reshape`, `view`, `squeeze`, `unsqueeze`, `flatten`.
+- **Activations**: `gelu`, `leaky_relu`, `elu`, `tanh`, `clamp`.
+- **Reductions & Functional**: `sum`, `mean`, `max`, `min`, `softmax`, `log_softmax`, including tree-reduction and shared memory kernel paths.
+- **Tensor Creation**: `zeros`, `ones`, `full`, `rand`, `randn` directly bridging to NumPy.
+- **Benchmark Update**: Added full Softmax, Elementwise, and Activation sweeps.
+
 **v3.4.0 "Iron Age Complete"** (main)
 
 - Merged experimental raw Vulkan 1.2 backend into `dev`.
@@ -53,6 +63,14 @@
 
 ## In Progress
 
+### Sprint 1.5 — "Extreme Engine Optimization" (Audit Debt)
+*Target: Align newly added Sprint 1 ops with `deep_research_on_optimization.md` axioms.*
+
+- [ ] **Native SWAR/AVX PRNG**: Rewrite `rand` and `randn` tensor creators to drop the `numpy` PyO3 dependency. Implement a native PRNG (e.g. xoshiro256++) using AVX intrinsics directly blasting into O_DIRECT aligned memory.
+- [ ] **Fused Vulkan Elementwise**: Implement `elementwise.wgsl` to natively process `mul`/`sub`/`div` within VRAM. Remove the scalar CPU fallback bypass present in `backend.rs`. 
+- [ ] **Fused Vulkan Softmax**: Implement a shared-memory coalesced Vulkan kernel for `softmax` and `log_softmax` to replace the iterative 3-pass CPU fallback.
+- [ ] **AVX2 Advanced Activations**: Implement fast-math vector approximations of `gelu`, `tanh`, and `exp` using AVX2 (akin to the existing `vmaxps` for `relu_f32`).
+
 **Hybrid MatMul Tile-Pulling**
 
 The tile-pulling Phase 4 dispatcher currently covers activation functions only.
@@ -90,34 +108,38 @@ MLP forward pass works. Completing Sprint 2 means transformer inference works.
 *Target: run any feedforward network end-to-end*
 
 #### Core Arithmetic
-- [ ] `mul` — elementwise multiply (`*` operator), all dtypes, CPU+Vulkan+Hybrid
-- [ ] `sub` — elementwise subtract (`-` operator)
-- [ ] `div` — elementwise divide (`/` operator)
-- [ ] `scalar_mul` / `scalar_add` — broadcast scalar over tensor (e.g. `x * 2.0`)
+- [x] `mul` — elementwise multiply (`*` operator), all dtypes, CPU+Vulkan+Hybrid
+- [x] `sub` — elementwise subtract (`-` operator)
+- [x] `div` — elementwise divide (`/` operator)
+- [x] `scalar_mul` / `scalar_add` — broadcast scalar over tensor (e.g. `x * 2.0`)
 
 #### Shape Manipulation
-- [ ] `reshape` / `view` — reinterpret shape without copy
-- [ ] `squeeze(dim)` / `unsqueeze(dim)` — remove/add size-1 dimensions
-- [ ] `flatten(start, end)` — flatten a range of dims into one
+- [x] `reshape` / `view` — reinterpret shape without copy
+- [x] `squeeze(dim)` / `unsqueeze(dim)` — remove/add size-1 dimensions
+- [x] `flatten(start, end)` — flatten a range of dims into one
 
 #### Activations
-- [ ] `gelu` — Gaussian Error Linear Unit (dominant in GPT/BERT/LLaMA)
-- [ ] `leaky_relu(negative_slope)` — for detection/GAN models
-- [ ] `elu` — Exponential Linear Unit
+- [x] `gelu` — Gaussian Error Linear Unit (dominant in GPT/BERT/LLaMA)
+- [x] `leaky_relu(negative_slope)` — for detection/GAN models
+- [x] `elu` — Exponential Linear Unit
+- [x] `tanh` — Hyperbolic Tangent
+- [x] `clamp(min, max)` — clamp values
 
 #### Reductions
-- [ ] `sum(dim)` — sum along axis (or whole tensor)
-- [ ] `mean(dim)` — mean along axis
-- [ ] `max(dim)` / `min(dim)` — max/min values
+- [x] `sum(dim)` — sum along axis (or whole tensor)
+- [x] `mean(dim)` — mean along axis
+- [x] `max(dim)` / `min(dim)` — max/min values
 
 #### Functional Ops
-- [ ] `softmax(dim)` — implemented as exp → sum → div (reuses above ops)
-- [ ] `log_softmax(dim)` — for cross-entropy
+- [x] `softmax(dim)` — implemented as exp → sum → div (reuses above ops)
+- [x] `log_softmax(dim)` — for cross-entropy
 
 #### Tensor Creation
-- [ ] `Tensor.zeros(shape, dtype, device)` — without going via numpy
-- [ ] `Tensor.ones(shape, dtype, device)`
-- [ ] `Tensor.full(shape, fill_value, dtype, device)`
+- [x] `Tensor.zeros(shape, dtype, device)` — without going via numpy
+- [x] `Tensor.ones(shape, dtype, device)`
+- [x] `Tensor.full(shape, fill_value, dtype, device)`
+- [x] `Tensor.rand(shape, dtype, device)`
+- [x] `Tensor.randn(shape, dtype, device)`
 
 #### Implementation approach:
 All Sprint 1 ops follow the same pattern as `__add__`:

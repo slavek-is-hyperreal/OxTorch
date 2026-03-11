@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.5.0] - 2026-03-11 "Sprint 1 — MLP Forward Pass"
+
+### Added
+- **Sprint 1 Complete**: Full functional and numerical parity with PyTorch for feedforward networks.
+- **New Operations**: `mul`, `sub`, `div`, `reshape`, `view`, `squeeze`, `unsqueeze`, `flatten`, `GELU`, `LeakyReLU`, `ELU`, `Tanh`, `Clamp`, `sum`, `mean`, `max`, `min`, `softmax`, `log_softmax`.
+- **Tensor Creators**: Added `Tensor.zeros`, `ones`, `full`, `rand`, `randn` static methods.
+- **Tree-Reduction Shaders**: Implemented shared-memory parallel reduction for Sum/Mean/Max/Min on Vulkan.
+- **Sprint 1 Performance Audit**: Comprehensive analysis of engine efficiency vs. optimization axioms.
+
+### Changed
+- All project manuals synchronized to v3.5.0 with updated internal code line references.
+- Documentation sweep: Added comprehensive Rustdoc comments to all public functions in `lib.rs`, `tensor.rs`, `backend.rs`, `avx_swar.rs`, `buf_pool.rs`, `io_uring_engine.rs`, `crook_scheduler.rs`, and `streaming.rs`.
+
+---
+
 ## [3.4.0] - 2026-03-10 "Iron Age Complete"
 
 ### Added
