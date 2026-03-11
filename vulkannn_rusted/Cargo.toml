@@ -1,10 +1,10 @@
 [package]
-name = "vulkannn_rusted_main"
+name = "vulkannn_rusted_exp"
 version = "3.5.0"
 edition = "2021"
 
 [lib]
-name = "vulkannn_rusted_main"
+name = "vulkannn_rusted_exp"
 crate-type = ["cdylib"]
 
 [dependencies]
