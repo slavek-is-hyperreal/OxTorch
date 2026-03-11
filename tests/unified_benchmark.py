@@ -5,6 +5,9 @@ import os
 import sys
 import json
 
+# Force line-buffered output even when piped (fixes invisible partial results)
+sys.stdout.reconfigure(line_buffering=True)
+
 # Branch-aware dynamic import: tries each known branch module name in order.
 _VNN_CANDIDATES = [
     "vulkannn_rusted_exp",   # dev_raw_vulkan (experimental ash branch)
@@ -107,7 +110,7 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
     cpu_temp, load = get_system_metrics()
     temp_label = f"CPU Die: {cpu_temp:.1f}°C" if cpu_temp > 0 else "CPU Die: N/A"
     inplace_tag = " [inplace]" if inplace else ""
-    print(f"\n>>> TEST: {name}{inplace_tag} ({mode.upper()}, {dtype.upper()}) | Shape: {shape} | SSD: {is_ssd} | Iter: {iterations} | {temp_label} | Load (1m): {load:.2f}")
+    print(f"\n>>> TEST: {name}{inplace_tag} ({mode.upper()}, {dtype.upper()}) | Shape: {shape} | SSD: {is_ssd} | Iter: {iterations} | {temp_label} | Load (1m): {load:.2f}", flush=True)
 
     import gc
     if not is_ssd:
@@ -198,8 +201,8 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
     else:
         parity_str = "N/A (OOM-Safe)"
 
-    print(f"    [PyTorch] {t_pt:.4f}s  ({pt_backend_label})")
-    print(f"    [VNN]     {t_vnn:.4f}s | Parity: {parity_str}")
+    print(f"    [PyTorch] {t_pt:.4f}s  ({pt_backend_label})", flush=True)
+    print(f"    [VNN]     {t_vnn:.4f}s | Parity: {parity_str}", flush=True)
 
     if not is_ssd:
         del a_torch, b_torch, res_torch
