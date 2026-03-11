@@ -31,6 +31,7 @@ pub enum Storage {
 }
 
 #[pyclass(unsendable)]
+#[derive(Clone)]
 pub struct Tensor {
     #[pyo3(get)]
     pub shape: Vec<usize>,
@@ -156,6 +157,107 @@ impl Tensor {
     }
 
     fn __repr__(&self) -> String { format!("Tensor(shape={:?}, dtype={:?}, device='{}', ssd={})", self.shape, self.dtype, self.device, self.mmap_data.is_some()) }
+
+    // --- SHAPE MANIPULATION ---
+    fn reshape(&self, new_shape: Vec<i64>) -> PyResult<Tensor> {
+        let total_elements = self.shape.iter().product::<usize>();
+        let mut target_shape = Vec::new();
+        let mut inferred_dim = None;
+        let mut cur_elements = 1;
+        
+        for (i, &dim) in new_shape.iter().enumerate() {
+            if dim == -1 {
+                if inferred_dim.is_some() {
+                    return Err(PyValueError::new_err("Only one dimension can be inferred (-1)"));
+                }
+                inferred_dim = Some(i);
+                target_shape.push(0); // placeholder
+            } else if dim <= 0 {
+                return Err(PyValueError::new_err(format!("Invalid shape dimension {}", dim)));
+            } else {
+                target_shape.push(dim as usize);
+                cur_elements *= dim as usize;
+            }
+        }
+        
+        if let Some(idx) = inferred_dim {
+            if total_elements % cur_elements != 0 {
+                return Err(PyValueError::new_err("Cannot infer shape securely: elements not divisible"));
+            }
+            target_shape[idx] = total_elements / cur_elements;
+        } else {
+            let target_total = target_shape.iter().product::<usize>();
+            if target_total != total_elements {
+                return Err(PyValueError::new_err(format!("Shape mismatch: tensor has {} elements, target shape requires {}", total_elements, target_total)));
+            }
+        }
+
+        let mut out = self.clone();
+        out.shape = target_shape;
+        Ok(out)
+    }
+
+    fn view(&self, new_shape: Vec<i64>) -> PyResult<Tensor> {
+        self.reshape(new_shape)
+    }
+
+    fn squeeze(&self, dim: Option<i64>) -> PyResult<Tensor> {
+        let mut out = self.clone();
+        let mut new_shape = Vec::new();
+        if let Some(d) = dim {
+            let d_idx = if d < 0 { out.shape.len() as i64 + d } else { d };
+            if d_idx < 0 || d_idx >= out.shape.len() as i64 {
+                return Err(PyValueError::new_err("Dimension out of range"));
+            }
+            for (i, &s) in out.shape.iter().enumerate() {
+                if i == d_idx as usize {
+                    if s != 1 {
+                        new_shape.push(s); // PyTorch does not squeeze if dim != 1
+                    }
+                } else {
+                    new_shape.push(s);
+                }
+            }
+        } else {
+            // Squeeze all size 1 dimensions
+            for &s in out.shape.iter() {
+                if s != 1 {
+                    new_shape.push(s);
+                }
+            }
+        }
+        out.shape = new_shape;
+        Ok(out)
+    }
+
+    fn unsqueeze(&self, dim: i64) -> PyResult<Tensor> {
+        let mut out = self.clone();
+        let d = if dim < 0 { out.shape.len() as i64 + dim + 1 } else { dim }; // +1 for insertion
+        if d < 0 || d > out.shape.len() as i64 {
+            return Err(PyValueError::new_err("Dimension out of range"));
+        }
+        out.shape.insert(d as usize, 1);
+        Ok(out)
+    }
+
+    #[pyo3(signature = (start_dim=0, end_dim=-1))]
+    fn flatten(&self, start_dim: i64, end_dim: i64) -> PyResult<Tensor> {
+        let len = self.shape.len() as i64;
+        let s = if start_dim < 0 { len + start_dim } else { start_dim };
+        let e = if end_dim < 0 { len + end_dim } else { end_dim };
+        
+        if s < 0 || s >= len || e < 0 || e >= len || s > e {
+            return Err(PyValueError::new_err(format!("Invalid flatten dims: start={}, end={}, len={}", start_dim, end_dim, len)));
+        }
+        
+        let mut out = self.clone();
+        let mut new_shape = out.shape[0..(s as usize)].to_vec();
+        let flat_size = out.shape[(s as usize)..=(e as usize)].iter().product();
+        new_shape.push(flat_size);
+        new_shape.extend_from_slice(&out.shape[(e as usize + 1)..]);
+        out.shape = new_shape;
+        Ok(out)
+    }
 
     // --- ELEMENT-WISE ---
     fn __add__(&self, other: &Tensor) -> PyResult<Tensor> {
