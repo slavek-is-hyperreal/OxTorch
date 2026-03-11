@@ -81,7 +81,7 @@ pub static BACKEND: OnceLock<AshBackend> = OnceLock::new();
 
 pub fn init_backend() {
     BACKEND.get_or_init(|| {
-        println!("[vulkannn_rusted] Initializing Raw Ash Vulkan Engine...");
+        println!("[vulkannn_rusted v{}] Initializing Raw Ash Vulkan Engine...", env!("CARGO_PKG_VERSION"));
         let entry = unsafe { ash::Entry::load().expect("Failed to load Vulkan library") };
 
         let app_name = CString::new("VulkanNN Rusted").unwrap();

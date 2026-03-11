@@ -443,3 +443,113 @@ unsafe fn convert_bf16_to_f32_neon(src: &[bf16], dst: &mut [f32]) {
         *d = s.to_f32();
     }
 }
+
+// ============================================================
+// relu_f32 — AVX1 vmaxps (Ivy Bridge compatible, no AVX2 needed)
+// ============================================================
+//
+// Replaces scalar `if i > 0.0 { i } else { 0.0 }` with branchless
+// _mm256_max_ps(x, zero) — 8 floats per cycle on AVX1.
+// Falls back to SSE2 (4 floats) or scalar on older hardware.
+//
+pub fn relu_f32(src: &[f32], dst: &mut [f32]) {
+    assert_eq!(src.len(), dst.len());
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx") {
+            unsafe { relu_f32_avx(src, dst); }
+            return;
+        }
+        if is_x86_feature_detected!("sse2") {
+            unsafe { relu_f32_sse2(src, dst); }
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { relu_f32_neon(src, dst); }
+        return;
+    }
+
+    // Scalar fallback
+    #[allow(unreachable_code)]
+    for (o, &i) in dst.iter_mut().zip(src.iter()) {
+        *o = if i > 0.0 { i } else { 0.0 };
+    }
+}
+
+/// In-place variant: applies ReLU to a single slice.
+pub fn relu_f32_inplace(buf: &mut [f32]) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx") {
+            // SAFETY: AVX detected at runtime.
+            unsafe {
+                let zero = _mm256_setzero_ps();
+                let n8 = (buf.len() / 8) * 8;
+                let ptr = buf.as_mut_ptr();
+                for i in (0..n8).step_by(8) {
+                    let v = _mm256_loadu_ps(ptr.add(i));
+                    _mm256_storeu_ps(ptr.add(i), _mm256_max_ps(v, zero));
+                }
+                for x in buf[n8..].iter_mut() {
+                    if *x < 0.0 { *x = 0.0; }
+                }
+            }
+            return;
+        }
+    }
+    // Fallback
+    for x in buf.iter_mut() {
+        if *x < 0.0 { *x = 0.0; }
+    }
+}
+
+// --- x86_64: AVX1 (256-bit, 8 floats/iter) ---
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn relu_f32_avx(src: &[f32], dst: &mut [f32]) {
+    let zero = _mm256_setzero_ps();
+    let n8 = (src.len() / 8) * 8;
+    for i in (0..n8).step_by(8) {
+        let v = _mm256_loadu_ps(src.as_ptr().add(i));
+        _mm256_storeu_ps(dst.as_mut_ptr().add(i), _mm256_max_ps(v, zero));
+    }
+    // Scalar tail
+    for j in n8..src.len() {
+        dst[j] = if src[j] > 0.0 { src[j] } else { 0.0 };
+    }
+}
+
+// --- x86_64: SSE2 (128-bit, 4 floats/iter) ---
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+unsafe fn relu_f32_sse2(src: &[f32], dst: &mut [f32]) {
+    let zero = _mm_setzero_ps();
+    let n4 = (src.len() / 4) * 4;
+    for i in (0..n4).step_by(4) {
+        let v = _mm_loadu_ps(src.as_ptr().add(i));
+        _mm_storeu_ps(dst.as_mut_ptr().add(i), _mm_max_ps(v, zero));
+    }
+    for j in n4..src.len() {
+        dst[j] = if src[j] > 0.0 { src[j] } else { 0.0 };
+    }
+}
+
+// --- AArch64: NEON (128-bit, 4 floats/iter) ---
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn relu_f32_neon(src: &[f32], dst: &mut [f32]) {
+    let zero = vdupq_n_f32(0.0);
+    let n4 = (src.len() / 4) * 4;
+    for i in (0..n4).step_by(4) {
+        let v = vld1q_f32(src.as_ptr().add(i));
+        vst1q_f32(dst.as_mut_ptr().add(i), vmaxq_f32(v, zero));
+    }
+    for j in n4..src.len() {
+        dst[j] = if src[j] > 0.0 { src[j] } else { 0.0 };
+    }
+}
+

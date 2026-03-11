@@ -812,9 +812,9 @@ impl Tensor {
         // PyTorch uses a single-threaded kernel for small tensors — same principle here.
         // 8_000_000 floats = 32MB, well above L3 cache, good break-even for thread overhead.
         if total_elements < 8_000_000 {
-            // Serial path — no thread spawn overhead
+            // Serial path — AVX1 vmaxps (8 floats/cycle) for relu, scalar fallback for rest
             match op {
-                "relu"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = if i > 0.0 { i } else { 0.0 }; } },
+                "relu"    => crate::avx_swar::relu_f32(i_s, out),
                 "sigmoid" => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = 1.0 / (1.0 + (-i).exp()); } },
                 "silu"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = i * (1.0 / (1.0 + (-i).exp())); } },
                 _ =>{}
@@ -828,7 +828,7 @@ impl Tensor {
                         let isub = &i_s[s..end];
                         let process_len = std::cmp::min(chunk.len(), isub.len());
                         match op {
-                            "relu" => for k in 0..process_len { chunk[k] = if isub[k] > 0.0 { isub[k] } else { 0.0 }; },
+                            "relu" => crate::avx_swar::relu_f32(isub, &mut chunk[..process_len]),
                             "sigmoid" => for k in 0..process_len { chunk[k] = 1.0 / (1.0 + (-isub[k]).exp()); },
                             "silu" => for k in 0..process_len { chunk[k] = isub[k] * (1.0 / (1.0 + (-isub[k]).exp())); },
                             _ => {}
