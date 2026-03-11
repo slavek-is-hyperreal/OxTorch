@@ -167,6 +167,74 @@ Each development branch compiles to a distinctly named Python module for A/B ben
 
 ---
 
+## Plans — Becoming a Drop-In PyTorch Replacement
+
+> *"The MERA-400 ran a distributed operating system on components with varying timing  
+> characteristics in 1976. Constraints breed architecture."*
+
+### The Vision
+
+The end goal of VulkanNN Rusted is simple to state, and hard to build:
+
+**Change one line of code. Everything else works.**
+
+```python
+# Old code (requires modern GPU, CUDA, AVX2):
+import torch
+
+# New code (runs on your 10-year-old machine, faster):
+import vulkannn as torch
+```
+
+On **new hardware** — fast, using Vulkan compute on whatever GPU is available.  
+On **old hardware** — faster than PyTorch, which penalizes legacy CPUs with scalar fallbacks
+for F16/BF16. VulkanNN uses hand-crafted AVX1/F16C/SSE2 SWAR intrinsics and the Bonaire GPU
+to do what PyTorch cannot.
+
+This is not about replacing PyTorch for research. It's about making AI inference accessible
+on the billions of machines that modern frameworks have quietly abandoned.
+
+---
+
+### How We're Getting There — 7 Sprints
+
+We are building this bottom-up, from the operations that matter most for running models today,
+to the full training stack at the end. Each sprint is a usable milestone on its own.
+
+| Sprint | What it enables | Key ops |
+|--------|----------------|---------|
+| **1 — MLP Forward Pass** | Any feedforward network works | `mul`, `div`, `sub`, `reshape`, `GELU`, `softmax`, `sum`/`mean` |
+| **2 — Transformer Inference** | LLaMA/Mistral/Phi on your old machine | `bmm`, `F.linear`, `LayerNorm`, `RMSNorm`, `embedding`, attention, `cat`/`split` |
+| **3 — CNN & Vision** | ResNet/ViT/EfficientNet | `conv2d` (Winograd), `pool`, `batch_norm`, full math elementwise |
+| **4 — Performance** | Beat PyTorch on modern HW too | Fused kernels (MatMul+Bias+ReLU in 1 dispatch), AVX1 `vmaxps`, FlashAttention-style tiling |
+| **5 — Full API Ergonomics** | True drop-in, 1 import change | `Tensor.to(dtype/device)`, broadcasting, `torch.tensor()`, `torch.save/load` |
+| **6 — Quantization** | Q4/Q8 models that won't fit in RAM | GGUF, INT8/INT4, on-GPU dequantization in SPIR-V |
+| **7 — Training (Long Term)** | Full training loop on old hardware | Autograd, SGD/Adam, loss functions, gradient streaming via MSTS |
+
+---
+
+### The Engineering Philosophy
+
+Every sprint follows the same principles drawn from the MERA-400, CDC 6600, and Cray-1:
+
+- **Tile everything.** No single operation should require more VRAM or RAM than the tile size.
+  The MSTS ring buffer streams data through a fixed memory window regardless of model size.
+
+- **Fuse ruthlessly.** Every PCIe round-trip between CPU and GPU costs time.
+  Inspired by the Cray-1's vector chaining, intermediate results stay in GPU registers —
+  MatMul + Bias + ReLU becomes one shader dispatch, not three.
+
+- **Use what the hardware has.** Ivy Bridge has AVX1 + F16C.
+  That's `vmaxps` for ReLU, `vcvtph2ps` for F16 conversion, SSE2 SWAR for BF16.
+  No AVX2? No problem — we don't need it.
+
+- **Asynchronous by default.** CPU workers and the Vulkan queue race to claim tiles
+  via a single `AtomicUsize` counter — no locks, no static splits, the faster path eats more work.
+
+Full technical detail: [docs/roadmap.md](docs/roadmap.md) | [docs/experminental_plans/deep_research_on_optimization.md](docs/experminental_plans/deep_research_on_optimization.md)
+
+---
+
 ## License
 
 MIT License.
