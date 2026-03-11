@@ -8,12 +8,8 @@ use crate::avx_swar::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct AsyncOp {
-    pub staging_in1: Option<CachedBuffer>,
-    pub staging_in2: Option<CachedBuffer>,
-    pub staging_out: Option<CachedBuffer>,
-    pub device_in1: Option<CachedBuffer>,
-    pub device_in2: Option<CachedBuffer>,
-    pub device_out: Option<CachedBuffer>,
+    pub staging_buffers: Vec<CachedBuffer>,
+    pub device_buffers: Vec<CachedBuffer>,
     pub cmd_buffer: vk::CommandBuffer,
     pub desc_set: vk::DescriptorSet,
     pub wait_id: u64,
@@ -75,6 +71,19 @@ pub struct AshBackend {
     pub timeline_semaphore: vk::Semaphore,
     pub timeline_value: AtomicU64,
     pub pending_ops: Mutex<Vec<AsyncOp>>,
+
+    // Phase 1: VRAM Architecture (Memory Pooling)
+    pub pool_buffer: vk::Buffer,
+    pub pool_allocation: Mutex<Option<Allocation>>,
+    pub pool_size: vk::DeviceSize,
+    pub pool_free_list: Mutex<Vec<PoolBlock>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PoolBlock {
+    pub offset: vk::DeviceSize,
+    pub size: vk::DeviceSize,
+    pub used: bool,
 }
 
 /// A reusable Vulkan buffer paired with its native memory allocation.
@@ -86,10 +95,22 @@ pub struct CachedBuffer {
     pub allocation: Option<Allocation>,
     pub cpu_visible: bool,
     pub mapped_ptr: Option<*mut u8>,
+    pub pool_offset: Option<vk::DeviceSize>, // New: Tracks offset if sub-allocated
 }
 
-unsafe impl Send for CachedBuffer {}
-unsafe impl Sync for CachedBuffer {}
+impl CachedBuffer {
+    pub fn copy_for_async(&self) -> Self {
+        Self {
+            size: self.size,
+            usage: self.usage,
+            buffer: self.buffer,
+            allocation: None, // Do NOT copy allocation
+            cpu_visible: self.cpu_visible,
+            mapped_ptr: self.mapped_ptr,
+            pool_offset: self.pool_offset,
+        }
+    }
+}
 
 pub static BACKEND: OnceLock<AshBackend> = OnceLock::new();
 
@@ -368,6 +389,28 @@ pub fn init_backend() {
         let perm_desc_act    = perm_sets[2];
         let perm_desc_reduce = perm_sets[3];
 
+        // NEW: Phase 1 VRAM Pool Allocation
+        let pool_size = 1024 * 1024 * 1024; // 1GB
+        let pool_info = vk::BufferCreateInfo::default()
+            .size(pool_size)
+            .usage(vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::UNIFORM_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        
+        let pool_buffer = unsafe { device.create_buffer(&pool_info, None) }.unwrap();
+        let pool_reqs = unsafe { device.get_buffer_memory_requirements(pool_buffer) };
+        
+        let mut allocator_lock = allocator.lock().unwrap();
+        let pool_allocation = allocator_lock.allocate(&AllocationCreateDesc {
+            name: "VNN_VRAM_POOL",
+            requirements: pool_reqs,
+            location: MemoryLocation::GpuOnly,
+            linear: true,
+            allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+        }).expect("Failed to allocate 1GB VRAM pool");
+        drop(allocator_lock);
+
+        unsafe { device.bind_buffer_memory(pool_buffer, pool_allocation.memory(), pool_allocation.offset()) }.unwrap();
+
         AshBackend {
             _entry: entry, _instance: instance, _pdevice: pdevice, device,
             compute_queue, _compute_family: compute_family,
@@ -388,6 +431,10 @@ pub fn init_backend() {
             timeline_semaphore,
             timeline_value: AtomicU64::new(0),
             pending_ops: Mutex::new(Vec::new()),
+            pool_buffer,
+            pool_allocation: Mutex::new(Some(pool_allocation)),
+            pool_size,
+            pool_free_list: Mutex::new(vec![PoolBlock { offset: 0, size: pool_size, used: false }]),
         }
     });
 }
@@ -401,25 +448,18 @@ pub fn poll_async_ops() {
     let mut pending = backend.pending_ops.lock().unwrap();
     pending.retain_mut(|op| {
         if current_val >= op.wait_id {
-            // Operation finished, cleanup and recycle buffers
-            if let Some(buf) = op.staging_in1.take() { recycle_buffer(buf); }
-            if let Some(buf) = op.staging_in2.take() { recycle_buffer(buf); }
-            if let Some(buf) = op.staging_out.take() { recycle_buffer(buf); }
-            if let Some(buf) = op.device_in1.take() { recycle_buffer(buf); }
-            if let Some(buf) = op.device_in2.take() { recycle_buffer(buf); }
-            if let Some(buf) = op.device_out.take() { recycle_buffer(buf); }
+            for buf in op.staging_buffers.drain(..) { recycle_buffer(buf); }
+            for buf in op.device_buffers.drain(..) { recycle_buffer(buf); }
             
             unsafe {
                 backend.device.free_command_buffers(backend.compute_cmd_pool, &[op.cmd_buffer]);
-                // Bug #3 fix: desc_set is now a permanent set — do NOT free it.
-                // We store vk::DescriptorSet::null() in AsyncOp to mark this.
                 if op.desc_set != vk::DescriptorSet::null() {
                     backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[op.desc_set]).unwrap();
                 }
             }
-            false // remove from pending
+            false 
         } else {
-            true // keep in pending
+            true
         }
     });
 }
@@ -443,8 +483,46 @@ pub fn poll_async_ops_until(target_val: u64) {
 /// a fresh buffer and `vk::DeviceMemory` allocation is created.
 pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Option<&str>, cpu_visible: bool) -> CachedBuffer {
     let backend = BACKEND.get().unwrap();
+    
+    // Alignment requirement for sub-allocation
+    let alignment: vk::DeviceSize = 256;
+    let aligned_size = (size + alignment - 1) & !(alignment - 1);
+
+    // Try pool first for non-CPU-visible buffers (Ph1 Opt)
+    if !cpu_visible {
+        let mut free_list = backend.pool_free_list.lock().unwrap();
+        if let Some(idx) = free_list.iter().position(|b| !b.used && b.size >= aligned_size) {
+            let block = free_list[idx];
+            let remaining = block.size - aligned_size;
+            
+            free_list[idx].used = true;
+            free_list[idx].size = aligned_size;
+            
+            let offset = block.offset;
+            
+            if remaining > 0 {
+                free_list.insert(idx + 1, PoolBlock {
+                    offset: offset + aligned_size,
+                    size: remaining,
+                    used: false,
+                });
+            }
+            
+            return CachedBuffer {
+                size: aligned_size,
+                usage,
+                buffer: backend.pool_buffer,
+                allocation: None, // No individual allocation
+                cpu_visible: false,
+                mapped_ptr: None,
+                pool_offset: Some(offset),
+            };
+        }
+    }
+
+    // Fallback to cache or new allocation
     if let Ok(mut cache) = backend.buffer_cache.lock() {
-        if let Some(idx) = cache.iter().position(|b| b.size >= size && b.usage.contains(usage) && b.cpu_visible == cpu_visible) {
+        if let Some(idx) = cache.iter().position(|b| b.size >= size && b.usage.contains(usage) && b.cpu_visible == cpu_visible && b.pool_offset.is_none()) {
             let cached = cache.swap_remove(idx);
             return cached;
         }
@@ -455,8 +533,6 @@ pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Opti
     
     let requirements = unsafe { backend.device.get_buffer_memory_requirements(buffer) };
     
-    // Safety: Only use CpuToGpu for explicitly requested host-visible buffers (staging).
-    // Internal buffers stay GpuOnly to avoid coherency/BAR issues on legacy AMD cards.
     let location = if cpu_visible { 
         MemoryLocation::CpuToGpu 
     } else { 
@@ -493,21 +569,42 @@ pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Opti
     
     unsafe { backend.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()) }.unwrap();
     
-    CachedBuffer { size, usage, buffer, allocation: Some(allocation), cpu_visible: cpu_visible_actual, mapped_ptr }
+    CachedBuffer { size, usage, buffer, allocation: Some(allocation), cpu_visible: cpu_visible_actual, mapped_ptr, pool_offset: None }
 }
 
-/// Returns a `CachedBuffer` back to the internal caching pool for immediate recycling.
-/// Protects against VRAM exhaustion by safely pruning the LRU tail if total caching expands beyond the 512MB limit.
 pub fn recycle_buffer(cached: CachedBuffer) {
     let backend = BACKEND.get().unwrap();
+    
+    // Phase 1: If from pool, return it to the pool's free list
+    if let Some(offset) = cached.pool_offset {
+        let mut free_list = backend.pool_free_list.lock().unwrap();
+        if let Some(idx) = free_list.iter().position(|b| b.offset == offset && b.used) {
+            free_list[idx].used = false;
+            // Merge adjacent free blocks (simple coalescing)
+            coalesce_pool(idx, &mut free_list);
+            return;
+        }
+    }
+
     if let Ok(mut cache) = backend.buffer_cache.lock() {
-        // Simple safety: if cache grows too large (> 512MB), start clearing it
         let current_total: u64 = cache.iter().map(|b| b.size).sum();
         if current_total > 512 * 1024 * 1024 {
-            // Prune OLD buffers when recycling new ones into a full cache
-            prune_buffer_cache(2); // Remove 2 oldest
+            prune_buffer_cache(2); 
         }
         cache.push(cached);
+    }
+}
+
+fn coalesce_pool(mut idx: usize, free_list: &mut Vec<PoolBlock>) {
+    // Merge with right
+    if idx + 1 < free_list.len() && !free_list[idx + 1].used {
+        let next = free_list.remove(idx + 1);
+        free_list[idx].size += next.size;
+    }
+    // Merge with left
+    if idx > 0 && !free_list[idx - 1].used {
+        let current = free_list.remove(idx);
+        free_list[idx - 1].size += current.size;
     }
 }
 
@@ -704,18 +801,41 @@ pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: D
         backend.device.cmd_copy_buffer(cmd, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
         
         backend.device.end_command_buffer(cmd).unwrap();
+        
+        let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
+        
+        let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default()
+            .signal_semaphore_values(std::slice::from_ref(&wait_val));
+        
         let cmds = [cmd];
-        let submit_info = vk::SubmitInfo::default().command_buffers(&cmds);
+        let submit_info = vk::SubmitInfo::default()
+            .push_next(&mut timeline_info)
+            .command_buffers(&cmds)
+            .signal_semaphores(std::slice::from_ref(&backend.timeline_semaphore));
+            
         backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
-        backend.device.queue_wait_idle(backend.compute_queue).unwrap();
-        backend.device.free_command_buffers(backend.compute_cmd_pool, &cmds);
-        // NOTE: No free_descriptor_sets — permanent set is reused.
+        
+        backend.pending_ops.lock().unwrap().push(AsyncOp {
+            staging_buffers: vec![stage_a, stage_b, stage_c.copy_for_async()],
+            device_buffers: vec![buf_a, buf_b, buf_c],
+            cmd_buffer: cmd,
+            desc_set: vk::DescriptorSet::null(),
+            wait_id: wait_val,
+        });
+
+        if !_is_hybrid { 
+            let backend_ref = BACKEND.get().unwrap();
+            let target = wait_val;
+            let wait_info = vk::SemaphoreWaitInfo::default()
+                .semaphores(std::slice::from_ref(&backend_ref.timeline_semaphore))
+                .values(std::slice::from_ref(&target));
+            unsafe { backend_ref.device.wait_semaphores(&wait_info, u64::MAX).unwrap(); }
+            
+            download_from_stage(res_raw, &stage_c, dtype); 
+        }
     }
-
-    download_from_stage(res_raw, &stage_c, dtype);
-
-    recycle_buffer(buf_a); recycle_buffer(buf_b); recycle_buffer(buf_c);
-    recycle_buffer(stage_a); recycle_buffer(stage_b); recycle_buffer(stage_c);
+    
+    poll_async_ops();
 }
 
 /// Executes full Matrix Multiplication on the GPU.
@@ -762,7 +882,6 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
         ];
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &barriers, &[]);
 
-        // Bug #3 fix: Use permanent pre-allocated descriptor set — no alloc/free per call.
         let set = *backend.perm_desc_matmul.lock().unwrap();
         
         let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(0).range(vk::WHOLE_SIZE)];
@@ -788,18 +907,34 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
         backend.device.cmd_copy_buffer(cmd, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: size_c_f32 }]);
         
         backend.device.end_command_buffer(cmd).unwrap();
+           let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default().signal_semaphore_values(std::slice::from_ref(&wait_val));
         let cmds = [cmd];
-        let submit_info = vk::SubmitInfo::default().command_buffers(&cmds);
+        let submit_info = vk::SubmitInfo::default().push_next(&mut timeline_info).command_buffers(&cmds).signal_semaphores(std::slice::from_ref(&backend.timeline_semaphore));
+            
         backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
-        backend.device.queue_wait_idle(backend.compute_queue).unwrap();
-        backend.device.free_command_buffers(backend.compute_cmd_pool, &cmds);
-        // NOTE: No free_descriptor_sets — permanent set is reused.
+        
+        let async_stage_c = stage_c.copy_for_async();
+
+        backend.pending_ops.lock().unwrap().push(AsyncOp {
+            staging_buffers: vec![stage_a, stage_b, stage_u, async_stage_c],
+            device_buffers: vec![buf_a, buf_b, buf_u, buf_c],
+            cmd_buffer: cmd,
+            desc_set: vk::DescriptorSet::null(),
+            wait_id: wait_val,
+        });
+
+        if !_is_hybrid {
+            let backend_ref = BACKEND.get().unwrap();
+            let target = wait_val;
+            let wait_info = vk::SemaphoreWaitInfo::default().semaphores(std::slice::from_ref(&backend_ref.timeline_semaphore)).values(std::slice::from_ref(&target));
+            unsafe { backend_ref.device.wait_semaphores(&wait_info, u64::MAX).unwrap(); }
+            
+            download_from_stage(&mut out_vec, &stage_c, dtype);
+        }
     }
-
-    download_from_stage(&mut out_vec, &stage_c, dtype);
-
-    recycle_buffer(buf_a); recycle_buffer(buf_b); recycle_buffer(buf_c); recycle_buffer(buf_u);
-    recycle_buffer(stage_a); recycle_buffer(stage_b); recycle_buffer(stage_c); recycle_buffer(stage_u);
+    
+    poll_async_ops();
     out_vec
 }
 
@@ -895,17 +1030,31 @@ pub fn execute_activation_chunked(
         backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
 
         backend.device.end_command_buffer(cmd).unwrap();
+
+        let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default().signal_semaphore_values(std::slice::from_ref(&wait_val));
         let cmds = [cmd];
-        let submit_info = vk::SubmitInfo::default().command_buffers(&cmds);
+        let submit_info = vk::SubmitInfo::default()
+            .push_next(&mut timeline_info)
+            .command_buffers(&cmds)
+            .signal_semaphores(std::slice::from_ref(&backend.timeline_semaphore));
+            
         backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
-        backend.device.queue_wait_idle(backend.compute_queue).unwrap();
-        backend.device.free_command_buffers(backend.compute_cmd_pool, &cmds);
-        // NOTE: No free_descriptor_sets — permanent set is reused.
+        
+        backend.pending_ops.lock().unwrap().push(AsyncOp {
+            staging_buffers: vec![stage_in, stage_out.copy_for_async()],
+            device_buffers: vec![buf_in, buf_out],
+            cmd_buffer: cmd,
+            desc_set: vk::DescriptorSet::null(),
+            wait_id: wait_val,
+        });
+
+        let wait_info = vk::SemaphoreWaitInfo::default().semaphores(std::slice::from_ref(&backend.timeline_semaphore)).values(std::slice::from_ref(&wait_val));
+        backend.device.wait_semaphores(&wait_info, u64::MAX).unwrap();
     }
 
     download_from_stage(tile_out, &stage_out, dtype);
-    recycle_buffer(buf_in); recycle_buffer(buf_out);
-    recycle_buffer(stage_in); recycle_buffer(stage_out);
+    poll_async_ops();
 }
 
 
@@ -994,17 +1143,31 @@ pub fn execute_reduce(input_raw: &[u8], op: &str) -> Vec<f32> {
         backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: out_num_bytes }]);
 
         backend.device.end_command_buffer(cmd).unwrap();
-        let cmds = [cmd];
-        let submit_info = vk::SubmitInfo::default().command_buffers(&cmds);
+
+        let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default().signal_semaphore_values(std::slice::from_ref(&wait_val));
+        let submit_info = vk::SubmitInfo::default()
+            .push_next(&mut timeline_info)
+            .command_buffers(&[cmd])
+            .signal_semaphores(std::slice::from_ref(&backend.timeline_semaphore));
+            
         backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
-        backend.device.queue_wait_idle(backend.compute_queue).unwrap();
-        backend.device.free_command_buffers(backend.compute_cmd_pool, &cmds);
+        
+        backend.pending_ops.lock().unwrap().push(AsyncOp {
+            staging_buffers: vec![stage_in, stage_out.copy_for_async()],
+            device_buffers: vec![buf_in, buf_out],
+            cmd_buffer: cmd,
+            desc_set: vk::DescriptorSet::null(),
+            wait_id: wait_val,
+        });
+
+        let wait_info = vk::SemaphoreWaitInfo::default().semaphores(std::slice::from_ref(&backend.timeline_semaphore)).values(std::slice::from_ref(&wait_val));
+        backend.device.wait_semaphores(&wait_info, u64::MAX).unwrap();
     }
 
     let mut out_bytes = vec![0u8; out_num_bytes as usize];
     download_from_stage(&mut out_bytes, &stage_out, DataType::F32);
-    recycle_buffer(buf_in); recycle_buffer(buf_out);
-    recycle_buffer(stage_in); recycle_buffer(stage_out);
+    poll_async_ops();
 
     bytemuck::cast_slice(&out_bytes).to_vec()
 }
@@ -1094,28 +1257,17 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
             
         backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
         
-        let stage_out_clone = CachedBuffer {
-            size: stage_out.size, usage: stage_out.usage, buffer: stage_out.buffer, allocation: None, cpu_visible: stage_out.cpu_visible, mapped_ptr: stage_out.mapped_ptr,
-        };
+        let async_stage_out = stage_out.copy_for_async();
 
         let op_info = AsyncOp {
-            staging_in1: Some(stage_in),
-            staging_in2: None,
-            staging_out: Some(stage_out),
-            device_in1: Some(buf_in),
-            device_in2: None,
-            device_out: Some(buf_out),
+            staging_buffers: vec![stage_in, async_stage_out],
+            device_buffers: vec![buf_in, buf_out],
             cmd_buffer: cmd,
-            // Bug #3 fix: Use null handle to signal poll_async_ops NOT to free this set.
-            // It's a permanent set that lives for the lifetime of the backend.
             desc_set: vk::DescriptorSet::null(),
             wait_id,
         };
         backend.pending_ops.lock().unwrap().push(op_info);
         
-        let _t_desc_submit = t_cmd_start.elapsed();
-        
-        // Asynchronous return, no wait idle
         return (wait_id, stage_out_clone);
     }
 }
