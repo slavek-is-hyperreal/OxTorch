@@ -17,9 +17,9 @@ pub enum IoEngineType {
 #[derive(Clone, Copy, PartialEq, Debug)]
 #[pyclass(eq, eq_int)]
 pub enum DataType {
-    F32,
     F16,
     BF16,
+    Int8,
 }
 
 /// Backbone data storage for the Tensor engine.
@@ -29,6 +29,7 @@ pub enum Storage {
     F32(Vec<f32>),
     F16(Vec<half::f16>),
     BF16(Vec<half::bf16>),
+    Int8(Vec<i8>),
     None,
 }
 
@@ -72,6 +73,11 @@ impl Tensor {
                     let mut bf16_vec = vec![half::bf16::ZERO; vec.len()];
                     crate::avx_swar::convert_f32_to_bf16(&vec, &mut bf16_vec);
                     (Storage::BF16(bf16_vec), nd_arr.shape().to_vec())
+                },
+                DataType::Int8 => {
+                    let mut int8_vec = vec![0i8; vec.len()];
+                    vec.par_iter().zip(int8_vec.par_iter_mut()).for_each(|(&s, d)| *d = s as i8);
+                    (Storage::Int8(int8_vec), nd_arr.shape().to_vec())
                 }
             };
             (storage, final_shape)
@@ -81,6 +87,7 @@ impl Tensor {
                 DataType::F32 => (Storage::F32(vec![0.0; size]), s),
                 DataType::F16 => (Storage::F16(vec![half::f16::ZERO; size]), s),
                 DataType::BF16 => (Storage::BF16(vec![half::bf16::ZERO; size]), s),
+                DataType::Int8 => (Storage::Int8(vec![0i8; size]), s),
             }
         } else {
             return Err(PyValueError::new_err("Must provide either data or shape"));
@@ -93,7 +100,11 @@ impl Tensor {
     fn from_ssd(path: &str, shape: Vec<usize>, dtype: DataType) -> PyResult<Self> {
         let file = std::fs::File::open(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let metadata = file.metadata().map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
+        let bytes_per_elem = match dtype {
+            DataType::F32 => 4,
+            DataType::F16 | DataType::BF16 => 2,
+            DataType::Int8 => 1,
+        };
         let expected_size = shape.iter().product::<usize>() * bytes_per_elem;
         if metadata.len() < expected_size as u64 {
             return Err(PyValueError::new_err(format!("File size mismatch: expected at least {} bytes, found {}", expected_size, metadata.len())));
@@ -196,6 +207,10 @@ impl Tensor {
                     crate::avx_swar::convert_bf16_to_f32(slice, &mut vec);
                     vec
                 }
+            },
+            DataType::Int8 => {
+                let (slice, _) = self.get_slice_raw_i8();
+                slice.iter().map(|&x| x as f32).collect()
             }
         };
         Ok(Array::from_shape_vec(self.shape.clone(), vec).map_err(|e| PyValueError::new_err(e.to_string()))?.into_pyarray_bound(py))
@@ -212,8 +227,8 @@ impl Tensor {
                 let array = unsafe { numpy::ndarray::ArrayViewD::from_shape_ptr(shape, slice.as_ptr()) };
                 Ok((array.to_pyarray_bound(py), is_ssd))
             },
-            DataType::F16 | DataType::BF16 => {
-                // Cannot do no-copy view of F16/BF16 as F32. Fallback to copy.
+            DataType::F16 | DataType::BF16 | DataType::Int8 => {
+                // Cannot do no-copy view of F16/BF16/Int8 as F32. Fallback to copy.
                 let arr = self.to_numpy(py)?;
                 Ok((arr, false))
             }
@@ -346,6 +361,12 @@ impl Tensor {
                 let mut res = vec![bf16::ZERO; a.len()];
                 res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = bf16::from_f32(a.to_f32() + b.to_f32()));
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "AddRes".to_string(), is_transposed: false, dtype: DataType::BF16, storage: Storage::BF16(res), mmap_data: None })
+            } else if self.dtype == DataType::Int8 {
+                let (a, _) = self.get_slice_raw_i8();
+                let (b, _) = other.get_slice_raw_i8();
+                let mut res = vec![0i8; a.len()];
+                crate::swar_int8::swar_add_int8(a, b, &mut res);
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "AddRes".to_string(), is_transposed: false, dtype: DataType::Int8, storage: Storage::Int8(res), mmap_data: None })
             } else {
                 return Err(PyValueError::new_err("Unsupported DataType for CPU Add"));
             }
@@ -377,6 +398,13 @@ impl Tensor {
                     let (a, _) = self.get_slice_raw_f16();
                     let (b, _) = other.get_slice_raw_f16();
                     out_slice.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &av), &bv)| *c = half::f16::from_f32(av.to_f32() + bv.to_f32()));
+                    Ok(())
+                }
+                DataType::Int8 => {
+                    let (out_slice, _) = out.get_slice_raw_mut_i8();
+                    let (a, _) = self.get_slice_raw_i8();
+                    let (b, _) = other.get_slice_raw_i8();
+                    crate::swar_int8::swar_add_int8(a, b, out_slice);
                     Ok(())
                 }
                 DataType::BF16 => {
@@ -701,6 +729,19 @@ impl Tensor {
                     _ => {}
                 }
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: op_name.to_string(), is_transposed: false, dtype: self.dtype, storage: Storage::BF16(res), mmap_data: None })
+            } else if self.dtype == DataType::Int8 {
+                let (a, _) = self.get_slice_raw_i8();
+                let (b, _) = other.get_slice_raw_i8();
+                let mut res = vec![0i8; a.len()];
+                match op {
+                    "mul" => { for i in 0..a.len() { res[i] = a[i].wrapping_mul(b[i]); } },
+                    "sub" => { for i in 0..a.len() { res[i] = a[i].wrapping_sub(b[i]); } },
+                    "div" => { for i in 0..a.len() { res[i] = if b[i] != 0 { a[i] / b[i] } else { 0 }; } },
+                    _ => {}
+                }
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: op_name.to_string(), is_transposed: false, dtype: DataType::Int8, storage: Storage::Int8(res), mmap_data: None })
+            } else {
+                return Err(PyValueError::new_err("Unsupported DataType for CPU Add"));
             }
         } else {
             let (a_raw, _) = self.get_slice_raw_bytes();
@@ -753,6 +794,17 @@ impl Tensor {
                     _ => {}
                 }
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "ScalarRes".to_string(), is_transposed: false, dtype: self.dtype, storage: Storage::BF16(res), mmap_data: None })
+            } else if self.dtype == DataType::Int8 {
+                let (input, _) = self.get_slice_raw_i8();
+                let mut res = vec![0i8; input.len()];
+                match op {
+                    "mul_scalar" => crate::swar_int8::swar_scale_int8(input, val as i8, &mut res),
+                    "add_scalar" => { for i in 0..input.len() { res[i] = input[i].wrapping_add(val as i8); } },
+                    _ => {}
+                }
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: "ScalarRes".to_string(), is_transposed: false, dtype: DataType::Int8, storage: Storage::Int8(res), mmap_data: None })
+            } else {
+                return Err(PyValueError::new_err("Unsupported DataType for CPU Add"));
             }
         } else {
             // Vulkan path: treat scalar as a second buffer of same size for now (fallback to CPU)
@@ -1306,6 +1358,7 @@ impl Tensor {
             Storage::F32(v) => (bytemuck::cast_slice(v), false),
             Storage::F16(v) => (bytemuck::cast_slice(v), false),
             Storage::BF16(v) => (bytemuck::cast_slice(v), false),
+            Storage::Int8(v) => (bytemuck::cast_slice(v), false),
             Storage::None => {
                 if let Some(_) = &self.mmap_data {
                     panic!("MSTS Architecture: Cannot get flat slice of O_DIRECT SSD tensors. Use chunk streaming.");
@@ -1357,6 +1410,7 @@ impl Tensor {
             Storage::F32(v) => (bytemuck::cast_slice_mut(v), false),
             Storage::F16(v) => (bytemuck::cast_slice_mut(v), false),
             Storage::BF16(v) => (bytemuck::cast_slice_mut(v), false),
+            Storage::Int8(v) => (bytemuck::cast_slice_mut(v), false),
             Storage::None => {
                 if let Some(_) = &mut self.mmap_data {
                     panic!("MSTS Architecture: Cannot get flat slice of O_DIRECT SSD tensors. Use chunk streaming.");

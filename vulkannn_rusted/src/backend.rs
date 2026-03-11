@@ -5,6 +5,7 @@ use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc, Allocation, Allocati
 use gpu_allocator::MemoryLocation;
 use crate::tensor::DataType;
 use crate::avx_swar::*;
+pub use crate::swar_int8::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct AsyncOp {
@@ -697,6 +698,28 @@ pub fn execute_elementwise(a_raw: &[u8], b_raw: &[u8], op: &str, dtype: DataType
             "sub" => { for i in 0..n { c[i] = half::bf16::from_f32(a[i].to_f32() - b[i].to_f32()); } },
             "div" => { for i in 0..n { c[i] = half::bf16::from_f32(a[i].to_f32() / b[i].to_f32()); } },
             _ => {}
+        }
+    } else {
+        match op {
+            "add" => {
+                let a: &[i8] = bytemuck::cast_slice(a_raw);
+                let b: &[i8] = bytemuck::cast_slice(b_raw);
+                let c: &mut [i8] = bytemuck::cast_slice_mut(&mut out);
+                swar_add_int8(a, b, c);
+            },
+            _ => {
+                // Scalar fallback for other Int8 ops
+                let a: &[i8] = bytemuck::cast_slice(a_raw);
+                let b: &[i8] = bytemuck::cast_slice(b_raw);
+                let c: &mut [i8] = bytemuck::cast_slice_mut(&mut out);
+                for i in 0..a.len() {
+                    match op {
+                        "mul" => c[i] = a[i].wrapping_mul(b[i]),
+                        "sub" => c[i] = a[i].wrapping_sub(b[i]),
+                        _ => {}
+                    }
+                }
+            }
         }
     }
     let _ = is_hybrid; // hybrid routing for Sprint 5
