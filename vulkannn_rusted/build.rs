@@ -1,19 +1,35 @@
 use std::fs;
 
 fn main() {
-    let wgsl_files = [
+    let shader_files = [
         "src/shaders/add.wgsl",
         "src/shaders/matmul.wgsl",
         "src/shaders/activation.wgsl",
         "src/shaders/reduce.wgsl",
+        "src/shaders/elementwise.comp",
     ];
 
-    for path in wgsl_files {
+    for path in shader_files {
         println!("cargo:rerun-if-changed={}", path);
         let source = fs::read_to_string(path).unwrap();
-        let module = match naga::front::wgsl::parse_str(&source) {
-            Ok(m) => m,
-            Err(e) => panic!("Failed to parse {}: {:?}", path, e),
+        
+        let module = if path.ends_with(".wgsl") {
+            match naga::front::wgsl::parse_str(&source) {
+                Ok(m) => m,
+                Err(e) => panic!("Failed to parse WGSL {}: {:?}", path, e),
+            }
+        } else if path.ends_with(".comp") {
+            let mut parser = naga::front::glsl::Frontend::default();
+            let options = naga::front::glsl::Options {
+                stage: naga::ShaderStage::Compute,
+                defines: Default::default(),
+            };
+            match parser.parse(&options, &source) {
+                Ok(m) => m,
+                Err(e) => panic!("Failed to parse GLSL {}: {:?}", path, e),
+            }
+        } else {
+            panic!("Unsupported shader extension: {}", path);
         };
         
         // Disable strict validation just to ensure we can parse what wgpu was parsing

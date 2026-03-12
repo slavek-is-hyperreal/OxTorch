@@ -23,4 +23,4 @@ num-traits = "0.2"
 io-uring = "0.6"
 
 [build-dependencies]
-naga = { version = "22.1", features = ["wgsl-in", "spv-out"] }
+naga = { version = "22.1", features = ["wgsl-in", "glsl-in", "spv-out"] }

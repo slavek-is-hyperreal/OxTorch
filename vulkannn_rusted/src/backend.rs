@@ -30,19 +30,15 @@ pub struct AshBackend {
     pub allocator: Mutex<Allocator>,
     
     pub desc_pool: Mutex<vk::DescriptorPool>,
-    pub dsl_add: vk::DescriptorSetLayout,
-    pub dsl_matmul: vk::DescriptorSetLayout,
-    pub dsl_act: vk::DescriptorSetLayout,
-    pub dsl_reduce: vk::DescriptorSetLayout,
-    
     pub pipe_layout_add: vk::PipelineLayout,
     pub pipe_layout_matmul: vk::PipelineLayout,
     pub pipe_layout_act: vk::PipelineLayout,
     pub pipe_layout_reduce: vk::PipelineLayout,
-    pub has_coop: bool,
+    pub pipe_layout_elementwise: vk::PipelineLayout,
     
     pub pipe_add: vk::Pipeline,
     pub pipe_matmul: vk::Pipeline,
+    pub pipe_elementwise: vk::Pipeline,
     pub pipe_relu: vk::Pipeline,
     pub pipe_sigmoid: vk::Pipeline,
     pub pipe_silu: vk::Pipeline,
@@ -69,6 +65,7 @@ pub struct AshBackend {
     pub perm_desc_add: Mutex<vk::DescriptorSet>,
     pub perm_desc_act: Mutex<vk::DescriptorSet>,
     pub perm_desc_reduce: Mutex<vk::DescriptorSet>,
+    pub perm_desc_elementwise: Mutex<vk::DescriptorSet>,
     
     pub timeline_semaphore: vk::Semaphore,
     pub timeline_value: AtomicU64,
@@ -76,8 +73,6 @@ pub struct AshBackend {
 
     // Phase 1: VRAM Architecture (Memory Pooling)
     pub pool_buffer: vk::Buffer,
-    pub pool_allocation: Mutex<Option<Allocation>>,
-    pub pool_size: vk::DeviceSize,
     pub pool_free_list: Mutex<Vec<PoolBlock>>,
 }
 
@@ -151,7 +146,7 @@ pub fn init_backend() {
         }).expect("No suitable GPU found");
 
         let queue_family_properties = unsafe { instance.get_physical_device_queue_family_properties(pdevice) };
-        
+
         let mut compute_family = None;
         let mut transfer_family = None;
 
@@ -329,6 +324,10 @@ pub fn init_backend() {
         let pc_reduce_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(12)];
         let pipe_layout_reduce = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_reduce]).push_constant_ranges(&pc_reduce_range), None) }.unwrap();
 
+        let dsl_elementwise = dsl_add;
+        let pc_elementwise_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(8)];
+        let pipe_layout_elementwise = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_elementwise]).push_constant_ranges(&pc_elementwise_range), None) }.unwrap();
+
         let load_shader = |bytes: &[u8]| -> vk::ShaderModule {
             let mut cursor = std::io::Cursor::new(bytes);
             let code = ash::util::read_spv(&mut cursor).expect("Failed to read struct spv");
@@ -340,6 +339,7 @@ pub fn init_backend() {
         let sm_matmul = load_shader(include_bytes!("shaders/matmul.wgsl.spv"));
         let sm_act = load_shader(include_bytes!("shaders/activation.wgsl.spv"));
         let sm_reduce = load_shader(include_bytes!("shaders/reduce.wgsl.spv"));
+        let sm_elementwise = load_shader(include_bytes!("shaders/elementwise.comp.spv"));
 
         let entry_main = CString::new("main").unwrap();
         let entry_relu = CString::new("relu_main").unwrap();
@@ -364,6 +364,7 @@ pub fn init_backend() {
 
         let pipe_add = create_pipe(sm_add, &entry_main, pipe_layout_add);
         let pipe_matmul = create_pipe(sm_matmul, &entry_main, pipe_layout_matmul);
+        let pipe_elementwise = create_pipe(sm_elementwise, &entry_main, pipe_layout_elementwise);
         let pipe_relu = create_pipe(sm_act, &entry_relu, pipe_layout_act);
         let pipe_sigmoid = create_pipe(sm_act, &entry_sigm, pipe_layout_act);
         let pipe_silu = create_pipe(sm_act, &entry_silu, pipe_layout_act);
@@ -385,6 +386,7 @@ pub fn init_backend() {
             device.destroy_shader_module(sm_matmul, None);
             device.destroy_shader_module(sm_act, None);
             device.destroy_shader_module(sm_reduce, None);
+            device.destroy_shader_module(sm_elementwise, None);
         }
 
         let compute_cmd_pool_info = vk::CommandPoolCreateInfo::default()
@@ -406,7 +408,7 @@ pub fn init_backend() {
         // Bug #3 fix: Allocate 3 permanent descriptor sets once at startup.
         // From this point on, ops call UpdateDescriptorSets to re-point them at new buffers.
         let perm_sets = unsafe {
-            let layouts = [dsl_matmul, dsl_add, dsl_act, dsl_reduce];
+            let layouts = [dsl_matmul, dsl_add, dsl_act, dsl_reduce, dsl_add]; // elementwise reuses dsl_add
             let alloc_info = vk::DescriptorSetAllocateInfo::default()
                 .descriptor_pool(desc_pool)
                 .set_layouts(&layouts);
@@ -416,6 +418,7 @@ pub fn init_backend() {
         let perm_desc_add    = perm_sets[1];
         let perm_desc_act    = perm_sets[2];
         let perm_desc_reduce = perm_sets[3];
+        let perm_desc_elementwise = perm_sets[4];
 
         // NEW: Phase 1 VRAM Pool Allocation
         let pool_size = 256 * 1024 * 1024; // 256MB (reduced for compatibility with R7 200 series)
@@ -444,10 +447,8 @@ pub fn init_backend() {
             transfer_queue, _transfer_family: transfer_family,
             allocator: Mutex::new(allocator),
             desc_pool: Mutex::new(desc_pool),
-            dsl_add, dsl_matmul, dsl_act, dsl_reduce,
-            pipe_layout_add, pipe_layout_matmul, pipe_layout_act, pipe_layout_reduce,
-            has_coop: has_coop_ext,
-            pipe_add, pipe_matmul, pipe_relu, pipe_sigmoid, pipe_silu,
+            pipe_layout_add, pipe_layout_matmul, pipe_layout_act, pipe_layout_reduce, pipe_layout_elementwise,
+            pipe_add, pipe_matmul, pipe_elementwise, pipe_relu, pipe_sigmoid, pipe_silu,
             pipe_gelu, pipe_leaky_relu, pipe_elu, pipe_tanh, pipe_clamp,
             pipe_reduce_sum, pipe_reduce_max, pipe_reduce_min,
             compute_cmd_pool, transfer_cmd_pool,
@@ -456,12 +457,11 @@ pub fn init_backend() {
             perm_desc_add:    Mutex::new(perm_desc_add),
             perm_desc_act:    Mutex::new(perm_desc_act),
             perm_desc_reduce: Mutex::new(perm_desc_reduce),
+            perm_desc_elementwise: Mutex::new(perm_desc_elementwise),
             timeline_semaphore,
             timeline_value: AtomicU64::new(0),
             pending_ops: Mutex::new(Vec::new()),
             pool_buffer,
-            pool_allocation: Mutex::new(Some(pool_allocation)),
-            pool_size,
             pool_free_list: Mutex::new(vec![PoolBlock { offset: 0, size: pool_size, used: false }]),
         }
     });
@@ -686,75 +686,16 @@ pub fn execute_add(a_raw: &[u8], b_raw: &[u8], dtype: DataType, is_hybrid: bool)
 /// For "add", falls through to execute_add_into.
 /// For mul/sub/div, uses the same pipeline pattern as add but with
 /// a simple CPU-side fallback when those shaders are not yet compiled in.
-pub fn execute_elementwise(a_raw: &[u8], b_raw: &[u8], op: &str, dtype: DataType, is_hybrid: bool) -> Vec<u8> {
-    // For ops without dedicated Vulkan shaders yet, compute on CPU and return.
-    // Sprint 4 will add dedicated shaders and remove this fallback.
-    let bytes_per_elem = match dtype {
-        DataType::F32 => 4,
-        DataType::Int8 => 1,
-        _ => 2,
-    };
-    let n = a_raw.len() / bytes_per_elem;
+pub fn execute_elementwise(a_raw: &[u8], b_raw: &[u8], op: &str, dtype: DataType, _is_hybrid: bool) -> Vec<u8> {
     let mut out = vec![0u8; a_raw.len()];
-
-    if dtype == DataType::F32 {
-        let a: &[f32] = bytemuck::cast_slice(a_raw);
-        let b: &[f32] = bytemuck::cast_slice(b_raw);
-        let c: &mut [f32] = bytemuck::cast_slice_mut(&mut out);
-        match op {
-            "add" => { for i in 0..n { c[i] = a[i] + b[i]; } },
-            "mul" => { for i in 0..n { c[i] = a[i] * b[i]; } },
-            "sub" => { for i in 0..n { c[i] = a[i] - b[i]; } },
-            "div" => { for i in 0..n { c[i] = a[i] / b[i]; } },
-            _ => {}
-        }
-    } else if dtype == DataType::F16 {
-        let a: &[half::f16] = bytemuck::cast_slice(a_raw);
-        let b: &[half::f16] = bytemuck::cast_slice(b_raw);
-        let c: &mut [half::f16] = bytemuck::cast_slice_mut(&mut out);
-        match op {
-            "add" => { for i in 0..n { c[i] = half::f16::from_f32(a[i].to_f32() + b[i].to_f32()); } },
-            "mul" => { for i in 0..n { c[i] = half::f16::from_f32(a[i].to_f32() * b[i].to_f32()); } },
-            "sub" => { for i in 0..n { c[i] = half::f16::from_f32(a[i].to_f32() - b[i].to_f32()); } },
-            "div" => { for i in 0..n { c[i] = half::f16::from_f32(a[i].to_f32() / b[i].to_f32()); } },
-            _ => {}
-        }
-    } else if dtype == DataType::BF16 {
-        let a: &[half::bf16] = bytemuck::cast_slice(a_raw);
-        let b: &[half::bf16] = bytemuck::cast_slice(b_raw);
-        let c: &mut [half::bf16] = bytemuck::cast_slice_mut(&mut out);
-        match op {
-            "add" => { for i in 0..n { c[i] = half::bf16::from_f32(a[i].to_f32() + b[i].to_f32()); } },
-            "mul" => { for i in 0..n { c[i] = half::bf16::from_f32(a[i].to_f32() * b[i].to_f32()); } },
-            "sub" => { for i in 0..n { c[i] = half::bf16::from_f32(a[i].to_f32() - b[i].to_f32()); } },
-            "div" => { for i in 0..n { c[i] = half::bf16::from_f32(a[i].to_f32() / b[i].to_f32()); } },
-            _ => {}
-        }
-    } else if dtype == DataType::Int8 {
-        match op {
-            "add" => {
-                let a: &[i8] = bytemuck::cast_slice(a_raw);
-                let b: &[i8] = bytemuck::cast_slice(b_raw);
-                let mut out_i8 = vec![0i8; a.len()];
-                swar_add_int8(a, b, &mut out_i8);
-                out = out_i8.into_iter().map(|x| x as u8).collect();
-            },
-            _ => {
-                // Scalar fallback for other Int8 ops
-                let a: &[i8] = bytemuck::cast_slice(a_raw);
-                let b: &[i8] = bytemuck::cast_slice(b_raw);
-                let c: &mut [i8] = bytemuck::cast_slice_mut(&mut out);
-                for i in 0..a.len() {
-                    match op {
-                        "mul" => c[i] = a[i].wrapping_mul(b[i]),
-                        "sub" => c[i] = a[i].wrapping_sub(b[i]),
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-    let _ = is_hybrid; // hybrid routing for Sprint 5
+    let op_id = match op {
+        "mul" => 0,
+        "sub" => 1,
+        "div" => 2,
+        "add" => 3,
+        _ => panic!("Unsupported elementwise op: {}", op),
+    };
+    execute_elementwise_into(a_raw, b_raw, &mut out, op_id, dtype);
     out
 }
 
@@ -770,7 +711,12 @@ fn begin_cmd(device: &ash::Device, pool: vk::CommandPool) -> vk::CommandBuffer {
 
 fn upload_to_stage(src_raw: &[u8], stage: &CachedBuffer, dtype: DataType) {
     let ptr = stage.mapped_ptr.unwrap() as *mut f32;
-    let num_elements = src_raw.len() / if dtype == DataType::F32 { 4 } else { 2 };
+    let bytes_per_elem = match dtype {
+        DataType::F32  => 4,
+        DataType::Int8 => 1,
+        _ => 2,
+    };
+    let num_elements = src_raw.len() / bytes_per_elem;
     let dst_slice = unsafe { std::slice::from_raw_parts_mut(ptr, num_elements) };
 
     if dtype == DataType::F16 {
@@ -779,6 +725,11 @@ fn upload_to_stage(src_raw: &[u8], stage: &CachedBuffer, dtype: DataType) {
     } else if dtype == DataType::BF16 {
         let src_slice = bytemuck::cast_slice::<u8, half::bf16>(src_raw);
         convert_bf16_to_f32(src_slice, dst_slice);
+    } else if dtype == DataType::Int8 {
+        let src_slice = bytemuck::cast_slice::<u8, i8>(src_raw);
+        for i in 0..num_elements {
+            dst_slice[i] = src_slice[i] as f32;
+        }
     } else {
         unsafe { std::ptr::copy_nonoverlapping(src_raw.as_ptr(), ptr as *mut u8, src_raw.len()); }
     }
@@ -786,7 +737,12 @@ fn upload_to_stage(src_raw: &[u8], stage: &CachedBuffer, dtype: DataType) {
 
 fn download_from_stage(dst_raw: &mut [u8], stage: &CachedBuffer, dtype: DataType) {
     let ptr = stage.mapped_ptr.unwrap() as *const f32;
-    let num_elements = dst_raw.len() / if dtype == DataType::F32 { 4 } else { 2 };
+    let bytes_per_elem = match dtype {
+        DataType::F32  => 4,
+        DataType::Int8 => 1,
+        _ => 2,
+    };
+    let num_elements = dst_raw.len() / bytes_per_elem;
     let src_slice = unsafe { std::slice::from_raw_parts(ptr, num_elements) };
 
     if dtype == DataType::F16 {
@@ -795,6 +751,11 @@ fn download_from_stage(dst_raw: &mut [u8], stage: &CachedBuffer, dtype: DataType
     } else if dtype == DataType::BF16 {
         let dst_slice = bytemuck::cast_slice_mut::<u8, half::bf16>(dst_raw);
         convert_f32_to_bf16(src_slice, dst_slice);
+    } else if dtype == DataType::Int8 {
+        let dst_slice = bytemuck::cast_slice_mut::<u8, i8>(dst_raw);
+        for i in 0..num_elements {
+            dst_slice[i] = src_slice[i] as i8;
+        }
     } else {
         unsafe { std::ptr::copy_nonoverlapping(ptr as *const u8, dst_raw.as_mut_ptr(), dst_raw.len()); }
     }
@@ -803,27 +764,37 @@ fn download_from_stage(dst_raw: &mut [u8], stage: &CachedBuffer, dtype: DataType
 /// Executes element-wise addition on the GPU using a fused Vulkan compute shader.
 /// Handles F32, F16, and BF16 with automatic staging buffer management.
 pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: DataType, _is_hybrid: bool, _use_staging: bool) {
+    execute_elementwise_into(a_raw, b_raw, res_raw, 3, dtype);
+}
+
+/// Executes a fused elementwise operation (mul, sub, div, add) on the GPU.
+/// Uses a generic shader with operation ID passed via push constants.
+pub fn execute_elementwise_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], op_id: u32, dtype: DataType) {
     let backend = BACKEND.get().unwrap();
-    let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
+    let bytes_per_elem = match dtype {
+        DataType::F32  => 4,
+        DataType::Int8 => 1,
+        _ => 2,
+    };
     let num_elements = a_raw.len() / bytes_per_elem;
     let num_bytes_f32 = (num_elements * 4) as vk::DeviceSize;
 
     // Use mappable buffers (CpuToGpu) for small data, GpuOnly for large.
-    let buf_a = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Add_A"), false);
-    let buf_b = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Add_B"), false);
-    let buf_c = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("Add_C"), false);
+    let buf_a = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Elem_A"), false);
+    let buf_b = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Elem_B"), false);
+    let buf_c = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("Elem_C"), false);
 
-    let stage_a = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Add_Stage_A"), true);
-    let stage_b = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Add_Stage_B"), true);
-    let stage_c = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("Add_Stage_C"), true);
+    let stage_a = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Elem_Stage_A"), true);
+    let stage_b = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Elem_Stage_B"), true);
+    let stage_c = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("Elem_Stage_C"), true);
 
     upload_to_stage(a_raw, &stage_a, dtype);
     upload_to_stage(b_raw, &stage_b, dtype);
 
     let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
     unsafe {
-        backend.device.cmd_copy_buffer(cmd, stage_a.buffer, buf_a.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
-        backend.device.cmd_copy_buffer(cmd, stage_b.buffer, buf_b.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, stage_a.buffer, buf_a.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_a.pool_offset.unwrap_or(0), size: num_bytes_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, stage_b.buffer, buf_b.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_b.pool_offset.unwrap_or(0), size: num_bytes_f32 }]);
         
         let barriers = [
             vk::BufferMemoryBarrier::default().buffer(buf_a.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
@@ -831,12 +802,11 @@ pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: D
         ];
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &barriers, &[]);
 
-        // Bug #3 fix: Use permanent pre-allocated descriptor set — no alloc/free per call.
-        let set = *backend.perm_desc_add.lock().unwrap();
-        
-        let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(0).range(vk::WHOLE_SIZE)];
-        let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(0).range(vk::WHOLE_SIZE)];
-        let info_c = [vk::DescriptorBufferInfo::default().buffer(buf_c.buffer).offset(0).range(vk::WHOLE_SIZE)];
+        // Use permanent pre-allocated descriptor set.
+        let set = *backend.perm_desc_elementwise.lock().unwrap();
+        let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(buf_a.pool_offset.unwrap_or(0)).range(buf_a.size)];
+        let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(buf_b.pool_offset.unwrap_or(0)).range(buf_b.size)];
+        let info_c = [vk::DescriptorBufferInfo::default().buffer(buf_c.buffer).offset(buf_c.pool_offset.unwrap_or(0)).range(buf_c.size)];
         
         let writes = [
             vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_a),
@@ -845,15 +815,20 @@ pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: D
         ];
         backend.device.update_descriptor_sets(&writes, &[]);
 
-        backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_add);
-        backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_add, 0, &[set], &[]);
+        // Operation ID via push constants: 0=mul, 1=sub, 2=div, 3=add
+        let pc = [num_elements as u32, op_id];
+        let pc_bytes = bytemuck::cast_slice(&pc);
+        backend.device.cmd_push_constants(cmd, backend.pipe_layout_elementwise, vk::ShaderStageFlags::COMPUTE, 0, pc_bytes);
+
+        backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_elementwise);
+        backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_elementwise, 0, &[set], &[]);
         let workgroups = (num_elements as u32 + 255) / 256;
         backend.device.cmd_dispatch(cmd, workgroups, 1, 1);
         
         let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_c.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
         
-        backend.device.cmd_copy_buffer(cmd, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: buf_c.pool_offset.unwrap_or(0), dst_offset: 0, size: num_bytes_f32 }]);
         
         backend.device.end_command_buffer(cmd).unwrap();
         
@@ -878,26 +853,29 @@ pub fn execute_add_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], dtype: D
             wait_id: wait_val,
         });
 
-        if !_is_hybrid { 
-            let backend_ref = BACKEND.get().unwrap();
-            let target = wait_val;
-            let wait_info = vk::SemaphoreWaitInfo::default()
-                .semaphores(std::slice::from_ref(&backend_ref.timeline_semaphore))
-                .values(std::slice::from_ref(&target));
-            unsafe { backend_ref.device.wait_semaphores(&wait_info, u64::MAX).unwrap(); }
-            
-            download_from_stage(res_raw, &stage_c, dtype); 
-        }
+        let backend_ref = BACKEND.get().unwrap();
+        let target = wait_val;
+        let wait_info = vk::SemaphoreWaitInfo::default()
+            .semaphores(std::slice::from_ref(&backend_ref.timeline_semaphore))
+            .values(std::slice::from_ref(&target));
+        backend_ref.device.wait_semaphores(&wait_info, u64::MAX).unwrap();
+        
+        download_from_stage(res_raw, &stage_c, dtype); 
     }
     
     poll_async_ops();
 }
 
+
 /// Executes full Matrix Multiplication on the GPU.
 /// Uses a specialized MatMul SPIR-V kernel with uniform-buffered dimensions.
 pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype: DataType, _is_hybrid: bool) -> Vec<u8> {
     let backend = BACKEND.get().unwrap();
-    let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
+    let bytes_per_elem = match dtype {
+        DataType::F32  => 4,
+        DataType::Int8 => 1,
+        _ => 2,
+    };
     
     let size_a_f32 = (m * k * 4) as vk::DeviceSize;
     let size_b_f32 = (k * n * 4) as vk::DeviceSize;
@@ -926,9 +904,9 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
 
     let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
     unsafe {
-        backend.device.cmd_copy_buffer(cmd, stage_a.buffer, buf_a.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: size_a_f32 }]);
-        backend.device.cmd_copy_buffer(cmd, stage_b.buffer, buf_b.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: size_b_f32 }]);
-        backend.device.cmd_copy_buffer(cmd, stage_u.buffer, buf_u.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: 16 }]);
+        backend.device.cmd_copy_buffer(cmd, stage_a.buffer, buf_a.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_a.pool_offset.unwrap_or(0), size: size_a_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, stage_b.buffer, buf_b.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_b.pool_offset.unwrap_or(0), size: size_b_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, stage_u.buffer, buf_u.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_u.pool_offset.unwrap_or(0), size: 16 }]);
 
         let barriers = [
             vk::BufferMemoryBarrier::default().buffer(buf_a.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
@@ -939,10 +917,10 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
 
         let set = *backend.perm_desc_matmul.lock().unwrap();
         
-        let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(0).range(vk::WHOLE_SIZE)];
-        let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(0).range(vk::WHOLE_SIZE)];
-        let info_c = [vk::DescriptorBufferInfo::default().buffer(buf_c.buffer).offset(0).range(vk::WHOLE_SIZE)];
-        let info_u = [vk::DescriptorBufferInfo::default().buffer(buf_u.buffer).offset(0).range(vk::WHOLE_SIZE)];
+        let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(buf_a.pool_offset.unwrap_or(0)).range(buf_a.size)];
+        let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(buf_b.pool_offset.unwrap_or(0)).range(buf_b.size)];
+        let info_c = [vk::DescriptorBufferInfo::default().buffer(buf_c.buffer).offset(buf_c.pool_offset.unwrap_or(0)).range(buf_c.size)];
+        let info_u = [vk::DescriptorBufferInfo::default().buffer(buf_u.buffer).offset(buf_u.pool_offset.unwrap_or(0)).range(buf_u.size)];
         
         let writes = [
             vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_a),
@@ -959,7 +937,7 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
         let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_c.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
         
-        backend.device.cmd_copy_buffer(cmd, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: size_c_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: buf_c.pool_offset.unwrap_or(0), dst_offset: 0, size: size_c_f32 }]);
         
         backend.device.end_command_buffer(cmd).unwrap();
            let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
@@ -979,14 +957,12 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
             wait_id: wait_val,
         });
 
-        if !_is_hybrid {
-            let backend_ref = BACKEND.get().unwrap();
-            let target = wait_val;
-            let wait_info = vk::SemaphoreWaitInfo::default().semaphores(std::slice::from_ref(&backend_ref.timeline_semaphore)).values(std::slice::from_ref(&target));
-            unsafe { backend_ref.device.wait_semaphores(&wait_info, u64::MAX).unwrap(); }
-            
-            download_from_stage(&mut out_vec, &stage_c, dtype);
-        }
+        let backend_ref = BACKEND.get().unwrap();
+        let target = wait_val;
+        let wait_info = vk::SemaphoreWaitInfo::default().semaphores(std::slice::from_ref(&backend_ref.timeline_semaphore)).values(std::slice::from_ref(&target));
+        unsafe { backend_ref.device.wait_semaphores(&wait_info, u64::MAX).unwrap(); }
+        
+        download_from_stage(&mut out_vec, &stage_c, dtype);
     }
     
     poll_async_ops();
@@ -1016,7 +992,11 @@ pub fn execute_activation_chunked(
     param2: f32,
     dtype: DataType,
 ) {
-    let bytes_per_elem = if dtype == DataType::F32 { 4usize } else { 2usize };
+    let bytes_per_elem = match dtype {
+        DataType::F32  => 4,
+        DataType::Int8 => 1,
+        _ => 2,
+    };
     let tile_in  = &input_raw [elem_offset * bytes_per_elem .. (elem_offset + elem_count) * bytes_per_elem];
     let tile_out = &mut output_raw[elem_offset * bytes_per_elem .. (elem_offset + elem_count) * bytes_per_elem];
 
@@ -1032,7 +1012,7 @@ pub fn execute_activation_chunked(
 
     let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
     unsafe {
-        backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_in.pool_offset.unwrap_or(0), size: num_bytes_f32 }]);
 
         let barrier = vk::BufferMemoryBarrier::default()
             .buffer(buf_in.buffer).size(vk::WHOLE_SIZE)
@@ -1045,8 +1025,8 @@ pub fn execute_activation_chunked(
         // Bug #3 fix: Use permanent pre-allocated descriptor set — no alloc/free per call.
         let set = *backend.perm_desc_act.lock().unwrap();
 
-        let info_in  = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(0).range(vk::WHOLE_SIZE)];
-        let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(0).range(vk::WHOLE_SIZE)];
+        let info_in  = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(buf_in.pool_offset.unwrap_or(0)).range(buf_in.size)];
+        let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).range(buf_out.size)];
         let writes = [
             vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_in),
             vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_out),
@@ -1082,7 +1062,7 @@ pub fn execute_activation_chunked(
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
 
-        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: buf_out.pool_offset.unwrap_or(0), dst_offset: 0, size: num_bytes_f32 }]);
 
         backend.device.end_command_buffer(cmd).unwrap();
 
@@ -1133,9 +1113,14 @@ pub fn execute_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: 
 
 /// Executes a tree-reduction (Sum, Mean, Max, Min) on the GPU.
 /// Uses a two-pass reduction strategy with shared memory kernels for maximum throughput.
-pub fn execute_reduce(input_raw: &[u8], op: &str) -> Vec<f32> {
-    let elem_count = input_raw.len() / 4;
-    let num_bytes_f32 = input_raw.len() as vk::DeviceSize;
+pub fn execute_reduce(input_raw: &[u8], op: &str, dtype: DataType) -> Vec<f32> {
+    let bytes_per_elem = match dtype {
+        DataType::F32 => 4,
+        DataType::Int8 => 1,
+        _ => 2,
+    };
+    let elem_count = input_raw.len() / bytes_per_elem;
+    let num_bytes_f32 = (elem_count * 4) as vk::DeviceSize;
     let num_blocks = (elem_count + 255) / 256;
     let out_num_bytes = (num_blocks * 4) as vk::DeviceSize;
 
@@ -1146,11 +1131,11 @@ pub fn execute_reduce(input_raw: &[u8], op: &str) -> Vec<f32> {
     let stage_in  = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Reduce_Stage_In"),  true);
     let stage_out = get_buffer(out_num_bytes, vk::BufferUsageFlags::TRANSFER_DST, Some("Reduce_Stage_Out"), true);
 
-    upload_to_stage(input_raw, &stage_in, DataType::F32);
+    upload_to_stage(input_raw, &stage_in, dtype);
 
     let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
     unsafe {
-        backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_in.pool_offset.unwrap_or(0), size: num_bytes_f32 }]);
 
         let barrier = vk::BufferMemoryBarrier::default()
             .buffer(buf_in.buffer).size(vk::WHOLE_SIZE)
@@ -1162,8 +1147,8 @@ pub fn execute_reduce(input_raw: &[u8], op: &str) -> Vec<f32> {
 
         let set = *backend.perm_desc_reduce.lock().unwrap();
 
-        let info_in  = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(0).range(vk::WHOLE_SIZE)];
-        let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(0).range(vk::WHOLE_SIZE)];
+        let info_in  = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(buf_in.pool_offset.unwrap_or(0)).range(buf_in.size)];
+        let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).range(buf_out.size)];
         let writes = [
             vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_in),
             vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_out),
@@ -1195,7 +1180,7 @@ pub fn execute_reduce(input_raw: &[u8], op: &str) -> Vec<f32> {
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
 
-        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: out_num_bytes }]);
+        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: buf_out.pool_offset.unwrap_or(0), dst_offset: 0, size: out_num_bytes }]);
 
         backend.device.end_command_buffer(cmd).unwrap();
 
@@ -1242,13 +1227,13 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
         _ => 2,
     };
     let num_elements = num_bytes as u32 / bytes_per_elem;
-    let num_bytes_f32 = (num_elements * 4) as vk::DeviceSize;
+    let num_bytes_staging = (num_elements * 4) as vk::DeviceSize;
     
-    let buf_in = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Act_In"), false);
-    let buf_out = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Out"), false);
+    let buf_in = get_buffer(num_bytes_staging, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Act_In"), false);
+    let buf_out = get_buffer(num_bytes_staging, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Out"), false);
 
-    let stage_in = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Act_Stage_In"), true);
-    let stage_out = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Stage_Out"), true);
+    let stage_in = get_buffer(num_bytes_staging, vk::BufferUsageFlags::TRANSFER_SRC, Some("Act_Stage_In"), true);
+    let stage_out = get_buffer(num_bytes_staging, vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Stage_Out"), true);
     let t_buf = t_start.elapsed();
 
     upload_to_stage(input_raw, &stage_in, dtype);
@@ -1261,7 +1246,7 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
 
     let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
     unsafe {
-        backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_in.pool_offset.unwrap_or(0), size: num_bytes_staging }]);
         
         let barrier = vk::BufferMemoryBarrier::default().buffer(buf_in.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[barrier], &[]);
@@ -1269,8 +1254,8 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
         // Bug #3 fix: Use permanent pre-allocated descriptor set — no alloc/free in async op.
         let set = *backend.perm_desc_act.lock().unwrap();
         
-        let info_in = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(0).range(vk::WHOLE_SIZE)];
-        let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(0).range(vk::WHOLE_SIZE)];
+        let info_in = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(buf_in.pool_offset.unwrap_or(0)).range(buf_in.size)];
+        let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).range(buf_out.size)];
         
         let writes = [
             vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_in),
@@ -1303,7 +1288,7 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
         let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_out.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
         
-        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: num_bytes_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: buf_out.pool_offset.unwrap_or(0), dst_offset: 0, size: num_bytes_staging }]);
         
         backend.device.end_command_buffer(cmd).unwrap();
         

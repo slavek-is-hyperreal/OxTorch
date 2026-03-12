@@ -1075,14 +1075,39 @@ impl Tensor {
     }
 
     fn reduce(&self, op: &str, dim: Option<i64>) -> PyResult<Tensor> {
+        // --- 1. Fast Path: GPU-accelerated Full Reduction ---
+        if self.device != "cpu" && dim.is_none() {
+            let (a_raw, _) = self.get_slice_raw_bytes();
+            let blocks = crate::backend::execute_reduce(a_raw, op, self.dtype);
+            let sum: f32 = blocks.iter().sum();
+            let num_total = self.shape.iter().product::<usize>();
+            let val = match op {
+                "mean" => sum / (num_total as f32).max(1.0),
+                "max" => blocks.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
+                "min" => blocks.iter().cloned().fold(f32::INFINITY, f32::min),
+                _ => sum,
+            };
+            
+            // Result metadata (Int8 sum/mean upcasts to F32)
+            let is_int8_sum_mean = self.dtype == DataType::Int8 && (op == "sum" || op == "mean");
+            let res_dtype = if is_int8_sum_mean { DataType::F32 } else { self.dtype };
+
+            let storage = match res_dtype {
+                DataType::F32 => Storage::F32(vec![val]),
+                DataType::F16 => Storage::F16(vec![half::f16::from_f32(val)]),
+                DataType::BF16 => Storage::BF16(vec![half::bf16::from_f32(val)]),
+                DataType::Int8 => Storage::Int8(vec![val as i8]),
+                _ => Storage::None,
+            };
+            return Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: res_dtype, storage, mmap_data: None });
+        }
+
+        // --- 2. CPU / Fallback Path (Supports Axis Reduction) ---
         if self.dtype == DataType::F32 {
             let (input, _) = self.get_slice_raw_f32();
             if let Some(d) = dim {
-                // Axis reduction
                 let d_usize = if d < 0 { (self.shape.len() as i64 + d) as usize } else { d as usize };
-                if d_usize >= self.shape.len() {
-                    return Err(pyo3::exceptions::PyValueError::new_err("Invalid dimension"));
-                }
+                if d_usize >= self.shape.len() { return Err(PyValueError::new_err("Invalid dimension")); }
                 
                 let mut out_shape = self.shape.clone();
                 out_shape.remove(d_usize);
@@ -1115,26 +1140,12 @@ impl Tensor {
 
                 Ok(Tensor { shape: out_shape, device: self.device.clone(), name: format!("{}_dim_res", op), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(out), mmap_data: None })
             } else {
-                // Full reduction
-                let val = if self.device == "cpu" {
-                    match op {
-                        "sum" => input.par_iter().sum::<f32>(),
-                        "mean" => input.par_iter().sum::<f32>() / input.len() as f32,
-                        "max" => input.par_iter().cloned().reduce(|| f32::NEG_INFINITY, f32::max),
-                        "min" => input.par_iter().cloned().reduce(|| f32::INFINITY, f32::min),
-                        _ => panic!("Unsupported reduction op: {}", op),
-                    }
-                } else {
-                    let (a_raw, _) = self.get_slice_raw_bytes();
-                    let blocks = crate::backend::execute_reduce(a_raw, op);
-                    let sum: f32 = blocks.iter().sum();
-                    match op {
-                        "sum" => sum,
-                        "mean" => sum / input.len() as f32,
-                        "max" => blocks.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
-                        "min" => blocks.iter().cloned().fold(f32::INFINITY, f32::min),
-                        _ => panic!("Unsupported reduction op: {}", op),
-                    }
+                let val = match op {
+                    "sum" => input.par_iter().sum::<f32>(),
+                    "mean" => input.par_iter().sum::<f32>() / input.len() as f32,
+                    "max" => input.par_iter().cloned().reduce(|| f32::NEG_INFINITY, f32::max),
+                    "min" => input.par_iter().cloned().reduce(|| f32::INFINITY, f32::min),
+                    _ => panic!("Unsupported reduction op: {}", op),
                 };
                 Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(vec![val]), mmap_data: None })
             }
@@ -1163,11 +1174,15 @@ impl Tensor {
             let val = match op {
                 "sum" => input.par_iter().map(|&x| x as i32).sum::<i32>() as f32,
                 "mean" => (input.par_iter().map(|&x| x as i32).sum::<i32>() as f32) / input.len() as f32,
-                "max" => input.par_iter().map(|&x| x as f32).reduce(|| f32::NEG_INFINITY, f32::max),
-                "min" => input.par_iter().map(|&x| x as f32).reduce(|| f32::INFINITY, f32::min),
+                "max" => input.par_iter().map(|&x| x as i32).reduce(|| i8::MIN as i32, |a, b| a.max(b)) as f32,
+                "min" => input.par_iter().map(|&x| x as i32).reduce(|| i8::MAX as i32, |a, b| a.min(b)) as f32,
                 _ => panic!("Unsupported reduction op: {}", op),
             };
-            Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::Int8, storage: Storage::Int8(vec![val as i8]), mmap_data: None })
+            if op == "sum" || op == "mean" {
+                Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(vec![val]), mmap_data: None })
+            } else {
+                Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::Int8, storage: Storage::Int8(vec![val as i8]), mmap_data: None })
+            }
         } else {
             Err(pyo3::exceptions::PyNotImplementedError::new_err("Reduce not supported for this dtype"))
         }
@@ -1215,6 +1230,20 @@ impl Tensor {
                     _ => panic!("Unsupported BF16 CPU op: {}", op),
                 }
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::BF16, storage: Storage::BF16(res), mmap_data: None })
+            } else if self.dtype == DataType::Int8 {
+                let (input, _) = self.get_slice_raw_i8();
+                let mut res = vec![0i8; input.len()];
+                match op {
+                    "relu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = if i > 0 { i } else { 0 }),
+                    "clamp" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = i.clamp(param1 as i8, param2 as i8)),
+                    "sigmoid" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { *o = (1.0 / (1.0 + (-(i as f32)).exp()) * 127.0) as i8 }),
+                    "gelu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { 
+                        let f = i as f32;
+                        *o = (0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) as i8;
+                    }),
+                    _ => return Err(PyValueError::new_err(format!("Unsupported Int8 CPU op: {}", op))),
+                }
+                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::Int8, storage: Storage::Int8(res), mmap_data: None })
             } else {
                 return Err(PyValueError::new_err("Unsupported DataType for CPU Unary Op"));
             }
@@ -1225,7 +1254,12 @@ impl Tensor {
             // One GPU dispatcher thread and multiple CPU worker threads race to claim
             // tiles via fetch_add. The fastest resource "eats" the most work.
             let (input_raw, _) = self.get_slice_raw_bytes();
-            let num_total = input_raw.len() / (if self.dtype == DataType::F32 { 4 } else { 2 });
+            let bpe_fetch = match self.dtype {
+                DataType::F32  => 4,
+                DataType::Int8 => 1,
+                _ => 2,
+            };
+            let num_total = input_raw.len() / bpe_fetch;
 
             // Tile size: ~256K elements (~1MB for F32) aligns with our ZFS block target
             const TILE_ELEMS: usize = 256 * 1024;
@@ -1263,7 +1297,11 @@ impl Tensor {
                         if tile_id >= num_tiles { break; }
                         let elem_start = tile_id * TILE_ELEMS;
                         let elem_count = (TILE_ELEMS).min(num_total - elem_start);
-                        let bpe = if dtype == DataType::F32 { 4usize } else { 2usize };
+                        let bpe = match dtype {
+                            DataType::F32 => 4usize,
+                            DataType::Int8 => 1usize,
+                            _ => 2usize,
+                        };
                         // Safety: raw ptrs are valid for `total_len` bytes
                         let in_sl  = unsafe { std::slice::from_raw_parts    (input_ptr  as *const u8, total_len) };
                         let out_sl = unsafe { std::slice::from_raw_parts_mut(output_ptr as *mut   u8, total_len) };
@@ -1287,7 +1325,11 @@ impl Tensor {
                         if tile_id >= cpu_tiles { break; }
                         let elem_start = tile_id * TILE_ELEMS;
                         let elem_count = (TILE_ELEMS).min(num_total - elem_start);
-                        let bpe = if dtype == DataType::F32 { 4usize } else { 2usize };
+                        let bpe = match dtype {
+                            DataType::F32 => 4usize,
+                            DataType::Int8 => 1usize,
+                            _ => 2usize,
+                        };
                         let in_sl  = unsafe { std::slice::from_raw_parts    (input_ptr  as *const u8, total_len) };
                         let out_sl = unsafe { std::slice::from_raw_parts_mut(output_ptr as *mut   u8, total_len) };
                         match dtype {
@@ -1339,16 +1381,22 @@ impl Tensor {
                             DataType::Int8 => {
                                 let in_i  = unsafe { std::slice::from_raw_parts    (in_sl.as_ptr()  .add(elem_start * bpe) as *const i8, elem_count) };
                                 let out_i = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut i8, elem_count) };
-                                match op_cpu.as_str() {
-                                    "relu" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| *o = if i > 0 { i } else { 0 }),
-                                    "mul_scalar" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| *o = i.wrapping_mul(param1 as i8)),
-                                    "add_scalar" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| *o = i.wrapping_add(param1 as i8)),
-                                    _ => { // default scalar loop
-                                        for k in 0..elem_count {
-                                            out_i[k] = in_i[k]; // placeholder
+                                    match op_cpu.as_str() {
+                                        "relu" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| *o = if i > 0 { i } else { 0 }),
+                                        "clamp" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| *o = i.clamp(param1 as i8, param2 as i8)),
+                                        "mul_scalar" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| *o = i.wrapping_mul(param1 as i8)),
+                                        "add_scalar" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| *o = i.wrapping_add(param1 as i8)),
+                                        "sigmoid" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| { *o = (1.0 / (1.0 + (-(i as f32)).exp()) * 127.0) as i8 }),
+                                        "gelu" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| { 
+                                            let f = i as f32;
+                                            *o = (0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) as i8;
+                                        }),
+                                        _ => {
+                                            for k in 0..elem_count {
+                                                out_i[k] = in_i[k];
+                                            }
                                         }
                                     }
-                                }
                             }
                         }
                     }
@@ -1356,12 +1404,11 @@ impl Tensor {
                 } // end for cpu workers
             });
 
-            let storage = if dtype == DataType::F16 {
-                Storage::F16(bytemuck::cast_slice(&out_raw).to_vec())
-            } else if dtype == DataType::BF16 {
-                Storage::BF16(bytemuck::cast_slice(&out_raw).to_vec())
-            } else {
-                Storage::F32(bytemuck::cast_slice(&out_raw).to_vec())
+            let storage = match dtype {
+                DataType::F16 => Storage::F16(bytemuck::cast_slice(&out_raw).to_vec()),
+                DataType::BF16 => Storage::BF16(bytemuck::cast_slice(&out_raw).to_vec()),
+                DataType::Int8 => Storage::Int8(bytemuck::cast_slice(&out_raw).to_vec()),
+                _ => Storage::F32(bytemuck::cast_slice(&out_raw).to_vec()),
             };
             Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: self.dtype, storage, mmap_data: None })
 
@@ -1369,12 +1416,11 @@ impl Tensor {
             // Pure Vulkan path (device == "vulkan")
             let (input_raw, _) = self.get_slice_raw_bytes();
             let res_raw = crate::backend::execute_activation(input_raw, op, param1, param2, self.dtype, false);
-            let storage = if self.dtype == DataType::F16 {
-                Storage::F16(bytemuck::cast_slice(&res_raw).to_vec())
-            } else if self.dtype == DataType::BF16 {
-                Storage::BF16(bytemuck::cast_slice(&res_raw).to_vec())
-            } else {
-                Storage::F32(bytemuck::cast_slice(&res_raw).to_vec())
+            let storage = match self.dtype {
+                DataType::F16 => Storage::F16(bytemuck::cast_slice(&res_raw).to_vec()),
+                DataType::BF16 => Storage::BF16(bytemuck::cast_slice(&res_raw).to_vec()),
+                DataType::Int8 => Storage::Int8(bytemuck::cast_slice(&res_raw).to_vec()),
+                _ => Storage::F32(bytemuck::cast_slice(&res_raw).to_vec()),
             };
             Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: self.dtype, storage, mmap_data: None })
         }
@@ -1393,8 +1439,12 @@ impl Tensor {
             _ => unreachable!(),
         };
         
+        let bytes_per_elem = match self.dtype {
+            DataType::F32  => 4,
+            DataType::Int8 => 1,
+            _ => 2,
+        };
         let total_elements = self.shape.iter().product::<usize>();
-        let bytes_per_elem = if self.dtype == DataType::F32 { 4 } else { 2 };
         let total_bytes = (total_elements * bytes_per_elem) as u64;
         
         // MSTS Ring Buffer (8 tiles of 1MB each)
@@ -1688,7 +1738,11 @@ impl Tensor {
         // 1MB = 262144 f32s OR 524288 f16s
         let total_elems = self.shape.iter().product::<usize>();
         let mut out = vec![0.0; total_elems];
-        let bytes_per_elem = if self.dtype == DataType::F32 { 4 } else { 2 };
+        let bytes_per_elem = match self.dtype {
+            DataType::F32 => 4,
+            DataType::Int8 => 1,
+            _ => 2,
+        };
         let total_bytes = (total_elems * bytes_per_elem) as u64;
         
         let scheduler = crate::crook_scheduler::CrookScheduler::new(8); // 8MB ring

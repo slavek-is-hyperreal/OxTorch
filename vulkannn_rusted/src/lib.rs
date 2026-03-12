@@ -18,7 +18,7 @@ fn rust_greeting(name: &str) -> PyResult<String> {
 
 /// The main entry point mapped directly to the `vulkannn_rusted_main` Python module.
 #[pymodule]
-fn vulkannn_rusted_main(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn vulkannn_rusted_dev(m: &Bound<'_, PyModule>) -> PyResult<()> {
     backend::init_backend();
     streaming::init_budgets();
     streaming::init_prefetcher();
