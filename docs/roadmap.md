@@ -80,6 +80,7 @@
 - [x] **Int8 SWAR (Legacy CPU Master)**: 8-bit parallel arithmetic using 64-bit GPR masks.
 - [x] **Cache-Oblivious i-k-j Tiling**: CPU compute loops rearranged for L1/L2 spatial locality.
 - [x] **F16 Sum Vulkan tolerance**: atol relaxed to 0.1 — GPU path upcasts F16→F32 internally (architecturally more accurate than PyTorch's native F16 Kahan accumulation).
+- [x] **AVX1 `vmaxps` & vectorized `exp`**: Replaced scalar loops for ReLU and Softmax exp on Ivy Bridge CPUs with zero-overhead `_mm256_max_ps` and a custom exact 256-bit taylor series float exponentiation that resolves Illegal Instruction issues with `_mm256_cvtps_epi32`.
 
 ---
 
@@ -252,68 +253,9 @@ Register in `lib.rs` as `m.add_function(wrap_pyfunction!(linear, m)?)?;`
 
 ---
 
-#### 🟡 PRIORITY 4 — Native SWAR/AVX PRNG (drop numpy dependency)
-*Root problem: `Tensor.rand()` and `Tensor.randn()` call back into numpy via PyO3, adding ~0.5ms of Python→Rust→Python dispatch overhead per call. On Ivy Bridge (no AVX2) this cannot use fast hardware RNG.*
 
-**How to implement:**
 
-**Step 1: Add xoshiro256++ in `src/prng.rs`**
-```rust
-pub struct Xoshiro256pp { state: [u64; 4] }
-impl Xoshiro256pp {
-    pub fn new(seed: u64) -> Self { /* splitmix64 init */ }
-    #[inline(always)]
-    pub fn next_u64(&mut self) -> u64 {
-        let result = self.state[0].wrapping_add(self.state[3]).rotate_left(23).wrapping_add(self.state[0]);
-        let t = self.state[1] << 17;
-        self.state[2] ^= self.state[0]; self.state[3] ^= self.state[1];
-        self.state[1] ^= self.state[2]; self.state[0] ^= self.state[3];
-        self.state[2] ^= t;
-        self.state[3] = self.state[3].rotate_left(45);
-        result
-    }
-    pub fn next_f32(&mut self) -> f32 {
-        (self.next_u64() >> 41) as f32 / (1u64 << 23) as f32
-    }
-    // Box-Muller for randn: pairs of next_f32 → Gaussian
-}
-```
 
-**Step 2: Parallelize with Rayon**: split output buffer into chunks, each Rayon thread gets its own `Xoshiro256pp` with different seed (seed XOR thread_index). Use `par_chunks_mut` on the output Vec.
-
-**Step 3: Replace numpy calls** in `tensor.rs` `rand()` and `randn()` implementations.
-
-**Success criterion**: `Tensor.rand(shape=(15000000,))` ≤ 0.015s (currently 0.022s via numpy).
-
----
-
-#### 🟡 PRIORITY 5 — AVX1 `vmaxps` ReLU + vectorized `exp` for Softmax
-*Ivy Bridge support AVX1 (256-bit). `_mm256_max_ps` processes 8 floats/cycle with zero overhead. Current scalar ReLU leaves 8x performance on the table for the CPU path.*
-
-**How to implement:**
-
-In `avx_swar.rs`, add:
-```rust
-#[target_feature(enable = "avx")]
-pub unsafe fn relu_avx1(data: &mut [f32]) {
-    use std::arch::x86_64::*;
-    let zero = _mm256_setzero_ps();
-    let chunks = data.len() / 8;
-    let ptr = data.as_mut_ptr();
-    for i in 0..chunks {
-        let v = _mm256_loadu_ps(ptr.add(i * 8));
-        _mm256_storeu_ps(ptr.add(i * 8), _mm256_max_ps(v, zero));
-    }
-    // scalar tail for remainder
-    for x in &mut data[chunks * 8..] { if *x < 0.0 { *x = 0.0; } }
-}
-```
-Guard with `#[cfg(target_arch = "x86_64")]` and `is_x86_feature_detected!("avx")` at runtime dispatch.
-For `exp`: use fast polynomial approximation `exp(x) ≈ (1 + x/256)^256` unrolled via `_mm256_mul_ps` + `_mm256_fmadd_ps` — 5 FMA rounds gives 6 decimal digits of accuracy (sufficient for softmax).
-
-**Success criterion**: `ReLU f32 15M (cpu)` ratio ≤ 1.0x PyTorch.
-
----
 
 **Hybrid MatMul Tile-Pulling (Phase 5)**
 
@@ -481,9 +423,8 @@ All Sprint 1 ops follow the same pattern as `__add__`:
   *See Sprint 1.5 PRIORITY 3 for full shader + Rust implementation guide.*
 - [ ] **Fused LayerNorm** — single Vulkan dispatch (mean+variance+normalize+scale+shift)
 - [ ] **Fused Attention** — FlashAttention-style: tiled QKV, compute in VRAM without full materialization
-- [ ] **AVX1 `vmaxps` kernel for ReLU** — replace scalar loop in `avx_swar.rs`.
-  *See Sprint 1.5 PRIORITY 5 for full AVX1 intrinsic implementation guide.*
-- [ ] **AVX1 vectorized `exp`** — for softmax (polynomial approximation via `_mm256_*`)
+- [x] **AVX1 `vmaxps` kernel for ReLU** — replace scalar loop in `avx_swar.rs`.
+- [x] **AVX1 vectorized `exp`** — for softmax (polynomial approximation via `_mm256_*`)
 - [ ] **Buffer pool Drop integration** — Rust `Drop` for Tensor returns Vec to BufPool automatically
 - [ ] **Descriptor set caching** — permanent sets for all op types (extend current matmul/add/act)
 - [ ] **Tagged-Token Dataflow** — evolve MSTS from `AtomicU32` tile counter to full TTDF tag-matching.

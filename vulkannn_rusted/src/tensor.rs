@@ -54,8 +54,43 @@ pub struct Tensor {
 }
 
 
+impl Tensor {
+    // Internal helper to bypass numpy integration for native initializations
+    pub fn new_from_vec(data: Vec<f32>, shape: Vec<usize>, dtype: DataType, device: &str, name: &str) -> PyResult<Self> {
+        let storage = match dtype {
+            DataType::F32 => Storage::F32(data),
+            DataType::F16 => {
+                let mut data_f16 = vec![half::f16::ZERO; data.len()];
+                for i in 0..data.len() { data_f16[i] = half::f16::from_f32(data[i]); }
+                Storage::F16(data_f16)
+            },
+            DataType::BF16 => {
+                let mut data_bf16 = vec![half::bf16::ZERO; data.len()];
+                for i in 0..data.len() { data_bf16[i] = half::bf16::from_f32(data[i]); }
+                Storage::BF16(data_bf16)
+            },
+            DataType::Int8 => {
+                let mut data_i8 = vec![0i8; data.len()];
+                for i in 0..data.len() { data_i8[i] = data[i] as i8; } // extremely basic float->int cast for init
+                Storage::Int8(data_i8)
+            }
+        };
+
+        Ok(Tensor {
+            shape,
+            device: device.to_owned(),
+            name: name.to_owned(),
+            is_transposed: false,
+            dtype,
+            storage,
+            mmap_data: None,
+        })
+    }
+}
+
 #[pymethods]
 impl Tensor {
+
     #[new]
     #[pyo3(signature = (data=None, shape=None, dtype=DataType::F32, device="auto", name="Tensor"))]
     #[allow(unused_variables)]
@@ -115,6 +150,81 @@ impl Tensor {
     }
 
     #[staticmethod]
+    #[pyo3(signature = (input, weight, bias=None, activation="none"))]
+    fn linear(input: &Tensor, weight: &Tensor, bias: Option<&Tensor>, activation: &str) -> PyResult<Tensor> {
+        let m = input.shape[0];
+        let k = input.shape[1];
+        let n = weight.shape[0]; // Assuming weight is (N, K) like PyTorch Linear
+        
+        if weight.shape[1] != k {
+            return Err(PyValueError::new_err(format!("Linear shape mismatch: input (M, K)={} weight (N, K)={}", k, weight.shape[1])));
+        }
+
+        let act_type = match activation.to_lowercase().as_str() {
+            "none" => 0,
+            "relu" => 1,
+            "sigmoid" => 2,
+            "gelu" => 3,
+            "silu" => 4,
+            "tanh" => 5,
+            _ => 0,
+        };
+
+        if input.device == "vulkan" || input.device == "hybrid" {
+            let (input_raw, _) = input.get_slice_raw_bytes();
+            let (weight_raw, _) = weight.get_slice_raw_bytes();
+            
+            let bias_data;
+            let bias_raw = if let Some(b) = bias {
+                 let (b_raw, _) = b.get_slice_raw_bytes();
+                 b_raw
+            } else {
+                bias_data = vec![0u8; n * 4];
+                &bias_data
+            };
+
+            let bytes_per_elem = match input.dtype {
+                DataType::F32 => 4,
+                DataType::Int8 => 1,
+                _ => 2,
+            };
+            let mut res_raw = vec![0u8; m * n * bytes_per_elem];
+            
+            crate::backend::execute_linear_into(
+                &input_raw, &weight_raw, &bias_raw, &mut res_raw,
+                m as u32, k as u32, n as u32, act_type, input.dtype
+            );
+
+            Ok(Tensor {
+                shape: vec![m, n],
+                device: input.device.clone(),
+                name: "linear_out".to_string(),
+                is_transposed: false,
+                dtype: input.dtype,
+                storage: input.raw_to_storage(&res_raw),
+                mmap_data: None,
+            })
+        } else {
+            // CPU Fallback
+            // PyTorch Linear(in_features, out_features) has weight (out_features, in_features)
+            // and does x @ W^T + b
+            // My __matmul__ handles (M, K) @ (K, N)
+            let w_t = weight.transpose()?;
+            let mut res = input.__matmul__(&w_t)?;
+            
+            if let Some(b) = bias {
+                res = res.__add__(b)?;
+            }
+            
+            match activation {
+                "relu" => res.unary_op("relu", 0.0, 0.0),
+                "sigmoid" => res.unary_op("sigmoid", 0.0, 0.0),
+                _ => Ok(res),
+            }
+        }
+    }
+
+    #[staticmethod]
     #[pyo3(signature = (path, shape, dtype=DataType::F32))]
     fn new_ssd(path: &str, shape: Vec<usize>, dtype: DataType) -> PyResult<Self> {
         let size = shape.iter().product::<usize>();
@@ -147,7 +257,7 @@ impl Tensor {
                 DataType::Int8 => t.get_slice_raw_mut_i8().0.fill(1i8),
             }
         } else {
-            let mut cpu_t = Self::ones(shape, dtype, "cpu")?;
+            let cpu_t = Self::ones(shape, dtype, "cpu")?;
             t.storage = cpu_t.storage;
         }
         Ok(t)
@@ -165,7 +275,7 @@ impl Tensor {
                 DataType::Int8 => t.get_slice_raw_mut_i8().0.fill(fill_value as i8),
             }
         } else {
-            let mut cpu_t = Self::full(shape, fill_value, dtype, "cpu")?;
+            let cpu_t = Self::full(shape, fill_value, dtype, "cpu")?;
             t.storage = cpu_t.storage;
         }
         Ok(t)
@@ -173,22 +283,60 @@ impl Tensor {
 
     #[staticmethod]
     #[pyo3(signature = (shape, dtype=DataType::F32, device="cpu"))]
-    fn rand<'py>(py: Python<'py>, shape: Vec<usize>, dtype: DataType, device: &str) -> PyResult<Self> {
-        let np = py.import_bound("numpy.random")?;
-        let arr = np.call_method1("rand", pyo3::types::PyTuple::new_bound(py, &shape))?;
-        let arr_f32 = arr.call_method1("astype", ("float32",))?;
-        let readonly: PyReadonlyArrayDyn<f32> = arr_f32.extract()?;
-        Self::new(Some(readonly), None, dtype, device, "Rand")
+    fn rand(shape: Vec<usize>, dtype: DataType, device: &str) -> PyResult<Self> {
+        let size: usize = shape.iter().product();
+        let mut data = vec![0.0f32; size];
+        
+        let chunk_size = 65536; // 256KB chunks
+        data.par_chunks_mut(chunk_size).enumerate().for_each(|(i, chunk)| {
+            let seed = 0x1234567890ABCDEF ^ (i as u64); // Simple deterministic seeding for chunks
+            let mut rng = crate::prng::Xoshiro256pp::new(seed);
+            for val in chunk.iter_mut() {
+                *val = rng.next_f32();
+            }
+        });
+
+        // Tensor::new_from_vec handles the upload to GPU if device != "cpu"
+        Self::new_from_vec(data, shape, dtype, device, "Rand")
     }
 
     #[staticmethod]
     #[pyo3(signature = (shape, dtype=DataType::F32, device="cpu"))]
-    fn randn<'py>(py: Python<'py>, shape: Vec<usize>, dtype: DataType, device: &str) -> PyResult<Self> {
-        let np = py.import_bound("numpy.random")?;
-        let arr = np.call_method1("randn", pyo3::types::PyTuple::new_bound(py, &shape))?;
-        let arr_f32 = arr.call_method1("astype", ("float32",))?;
-        let readonly: PyReadonlyArrayDyn<f32> = arr_f32.extract()?;
-        Self::new(Some(readonly), None, dtype, device, "RandN")
+    fn randn(shape: Vec<usize>, dtype: DataType, device: &str) -> PyResult<Self> {
+        let size: usize = shape.iter().product();
+        let mut data = vec![0.0f32; size];
+        
+        let chunk_size = 32768; // 128KB chunks (fits L2 better)
+        data.par_chunks_mut(chunk_size).enumerate().for_each(|(i, chunk)| {
+            let seed = 0xFEDCBA0987654321 ^ (i as u64);
+            let mut rng = crate::prng::Xoshiro256pp::new(seed);
+            
+            // Loop unrolling for 4 elements at a time
+            let mut it = chunk.chunks_exact_mut(4);
+            for mut dst in it.by_ref() {
+                let (n1, n2) = rng.next_randn_pair();
+                let (n3, n4) = rng.next_randn_pair();
+                dst[0] = n1;
+                dst[1] = n2;
+                dst[2] = n3;
+                dst[3] = n4;
+            }
+            
+            // Tail remainder
+            let mut iter = it.into_remainder().iter_mut();
+            while let Some(val1) = iter.next() {
+                if let Some(val2) = iter.next() {
+                    let (n1, n2) = rng.next_randn_pair();
+                    *val1 = n1;
+                    *val2 = n2;
+                } else {
+                    let (n1, _) = rng.next_randn_pair();
+                    *val1 = n1;
+                }
+            }
+        });
+
+        Self::new_from_vec(data, shape, dtype, device, "RandN")
     }
 
     fn to_numpy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, numpy::PyArrayDyn<f32>>> {
@@ -544,7 +692,12 @@ impl Tensor {
                     let (out_slice, _) = out.get_slice_raw_mut_f16();
                     let (i_s, _) = self.get_slice_raw_f16();
                     match op {
-                        "relu" => out_slice.par_iter_mut().zip(i_s.par_iter()).for_each(|(o, &i)| *o = if i > half::f16::ZERO { i } else { half::f16::ZERO }),
+                        "relu" => {
+                            let mut tmp_f32 = vec![0.0f32; i_s.len()];
+                            crate::avx_swar::convert_f16_to_f32(i_s, &mut tmp_f32);
+                            crate::avx_swar::relu_f32_inplace(&mut tmp_f32);
+                            crate::avx_swar::convert_f32_to_f16(&tmp_f32, out_slice);
+                        },
                         _ => panic!("Unsupported F16 CPU op into: {}", op),
                     }
                     Ok(())
@@ -552,7 +705,14 @@ impl Tensor {
                 DataType::BF16 => {
                     let (out_slice, _) = out.get_slice_raw_mut_bf16();
                     let (i_s, _) = self.get_slice_raw_bf16();
-                    Self::act_into_raw_bf16(i_s, op, param1, param2, out_slice);
+                    if op == "relu" {
+                        let mut tmp_f32 = vec![0.0f32; i_s.len()];
+                        crate::avx_swar::convert_bf16_to_f32(i_s, &mut tmp_f32);
+                        crate::avx_swar::relu_f32_inplace(&mut tmp_f32);
+                        crate::avx_swar::convert_f32_to_bf16(&tmp_f32, out_slice);
+                    } else {
+                        Self::act_into_raw_bf16(i_s, op, param1, param2, out_slice);
+                    }
                     Ok(())
                 },
                 DataType::Int8 => {
@@ -758,6 +918,17 @@ impl Tensor {
     }
 }
 
+impl Tensor {
+    fn raw_to_storage(&self, raw: &[u8]) -> Storage {
+        match self.dtype {
+            DataType::F32 => Storage::F32(bytemuck::cast_slice(raw).to_vec()),
+            DataType::F16 => Storage::F16(bytemuck::cast_slice(raw).to_vec()),
+            DataType::BF16 => Storage::BF16(bytemuck::cast_slice(raw).to_vec()),
+            DataType::Int8 => Storage::Int8(bytemuck::cast_slice(raw).to_vec()),
+        }
+    }
+}
+
 // Internal Logic
 impl Tensor {
     pub fn is_ssd(&self) -> bool {
@@ -932,145 +1103,291 @@ impl Tensor {
                     let (input, _) = self.get_slice_raw_f32();
                     let mut out = vec![0.0; out_len];
                     let out_ptr = out.as_mut_ptr() as usize;
-                    (0..num_outer).into_par_iter().for_each(|n| {
-                        let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, out_len) };
-                        for k in 0..stride_d {
+                    
+                    if stride_d == 1 {
+                        (0..num_outer).into_par_iter().for_each(|n| {
+                            let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, out_len) };
+                            let row_start = n * size_d;
+                            let row_end = row_start + size_d;
+                            
                             let mut max_val = f32::NEG_INFINITY;
-                            for m in 0..size_d {
-                                let idx = n * outer_stride + m * stride_d + k;
-                                max_val = f32::max(max_val, input[idx]);
+                            for m in row_start..row_end {
+                                max_val = f32::max(max_val, input[m]);
                             }
+                            
+                            for m in row_start..row_end {
+                                out_slice[m] = input[m] - max_val;
+                            }
+                            
+                            crate::avx_swar::exp_f32_inplace(&mut out_slice[row_start..row_end]);
+                            
                             let mut sum_exp = 0.0;
-                            for m in 0..size_d {
-                                let idx = n * outer_stride + m * stride_d + k;
-                                sum_exp += f32::exp(input[idx] - max_val);
+                            for m in row_start..row_end {
+                                sum_exp += out_slice[m];
                             }
+                            
                             if is_log {
                                 let log_sum = f32::ln(sum_exp);
-                                for m in 0..size_d {
-                                    let idx = n * outer_stride + m * stride_d + k;
-                                    out_slice[idx] = input[idx] - max_val - log_sum;
+                                for m in row_start..row_end {
+                                    out_slice[m] = input[m] - max_val - log_sum;
                                 }
                             } else {
                                 let inv_sum = 1.0 / sum_exp;
-                                for m in 0..size_d {
-                                    let idx = n * outer_stride + m * stride_d + k;
-                                    out_slice[idx] = f32::exp(input[idx] - max_val) * inv_sum;
+                                for m in row_start..row_end {
+                                    out_slice[m] *= inv_sum;
                                 }
                             }
-                        }
-                    });
+                        });
+                    } else {
+                        // Strided path (non-contiguous)
+                        (0..num_outer).into_par_iter().for_each(|n| {
+                            let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f32, out_len) };
+                            for k in 0..stride_d {
+                                let mut max_val = f32::NEG_INFINITY;
+                                for m in 0..size_d {
+                                    let idx = n * outer_stride + m * stride_d + k;
+                                    max_val = f32::max(max_val, input[idx]);
+                                }
+                                let mut sum_exp = 0.0;
+                                for m in 0..size_d {
+                                    let idx = n * outer_stride + m * stride_d + k;
+                                    sum_exp += f32::exp(input[idx] - max_val);
+                                }
+                                if is_log {
+                                    let log_sum = f32::ln(sum_exp);
+                                    for m in 0..size_d {
+                                        let idx = n * outer_stride + m * stride_d + k;
+                                        out_slice[idx] = input[idx] - max_val - log_sum;
+                                    }
+                                } else {
+                                    let inv_sum = 1.0 / sum_exp;
+                                    for m in 0..size_d {
+                                        let idx = n * outer_stride + m * stride_d + k;
+                                        out_slice[idx] = f32::exp(input[idx] - max_val) * inv_sum;
+                                    }
+                                }
+                            }
+                        });
+                    }
                     Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: if is_log { "LogSoftmax".to_string() } else { "Softmax".to_string() }, is_transposed: false, dtype: DataType::F32, storage: Storage::F32(out), mmap_data: None })
                 }
                 DataType::F16 => {
                     let (input, _) = self.get_slice_raw_f16();
                     let mut out = vec![f16::ZERO; out_len];
                     let out_ptr = out.as_mut_ptr() as usize;
-                    (0..num_outer).into_par_iter().for_each(|n| {
-                        let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f16, out_len) };
-                        for k in 0..stride_d {
+                    if stride_d == 1 {
+                        (0..num_outer).into_par_iter().for_each(|n| {
+                            let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f16, out_len) };
+                            let row_start = n * size_d;
+                            let row_end = row_start + size_d;
+                            let mut tmp_f32 = vec![0.0f32; size_d];
+                            crate::avx_swar::convert_f16_to_f32(&input[row_start..row_end], &mut tmp_f32);
+                            
                             let mut max_val = f32::NEG_INFINITY;
-                            for m in 0..size_d {
-                                max_val = f32::max(max_val, input[n * outer_stride + m * stride_d + k].to_f32());
-                            }
+                            for m in 0..size_d { max_val = f32::max(max_val, tmp_f32[m]); }
+                            for m in 0..size_d { tmp_f32[m] -= max_val; }
+                            
+                            crate::avx_swar::exp_f32_inplace(&mut tmp_f32);
                             let mut sum_exp = 0.0;
-                            for m in 0..size_d {
-                                sum_exp += f32::exp(input[n * outer_stride + m * stride_d + k].to_f32() - max_val);
-                            }
+                            for m in 0..size_d { sum_exp += tmp_f32[m]; }
+                            
                             if is_log {
                                 let log_sum = f32::ln(sum_exp);
-                                for m in 0..size_d {
-                                    let idx = n * outer_stride + m * stride_d + k;
-                                    out_slice[idx] = f16::from_f32(input[idx].to_f32() - max_val - log_sum);
-                                }
+                                crate::avx_swar::convert_f16_to_f32(&input[row_start..row_end], &mut tmp_f32);
+                                for m in 0..size_d { tmp_f32[m] = tmp_f32[m] - max_val - log_sum; }
                             } else {
                                 let inv_sum = 1.0 / sum_exp;
+                                for m in 0..size_d { tmp_f32[m] *= inv_sum; }
+                            }
+                            crate::avx_swar::convert_f32_to_f16(&tmp_f32, &mut out_slice[row_start..row_end]);
+                        });
+                    } else {
+                        (0..num_outer).into_par_iter().for_each(|n| {
+                            let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut f16, out_len) };
+                            for k in 0..stride_d {
+                                let mut max_val = f32::NEG_INFINITY;
                                 for m in 0..size_d {
-                                    let idx = n * outer_stride + m * stride_d + k;
-                                    out_slice[idx] = f16::from_f32(f32::exp(input[idx].to_f32() - max_val) * inv_sum);
+                                    max_val = f32::max(max_val, input[n * outer_stride + m * stride_d + k].to_f32());
+                                }
+                                let mut sum_exp = 0.0;
+                                for m in 0..size_d {
+                                    sum_exp += f32::exp(input[n * outer_stride + m * stride_d + k].to_f32() - max_val);
+                                }
+                                if is_log {
+                                    let log_sum = f32::ln(sum_exp);
+                                    for m in 0..size_d {
+                                        let idx = n * outer_stride + m * stride_d + k;
+                                        out_slice[idx] = f16::from_f32(input[idx].to_f32() - max_val - log_sum);
+                                    }
+                                } else {
+                                    let inv_sum = 1.0 / sum_exp;
+                                    for m in 0..size_d {
+                                        let idx = n * outer_stride + m * stride_d + k;
+                                        out_slice[idx] = f16::from_f32(f32::exp(input[idx].to_f32() - max_val) * inv_sum);
+                                    }
                                 }
                             }
-                        }
-                    });
+                        });
+                    }
                     Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: if is_log { "LogSoftmax".to_string() } else { "Softmax".to_string() }, is_transposed: false, dtype: DataType::F16, storage: Storage::F16(out), mmap_data: None })
                 }
                 DataType::BF16 => {
                     let (input, _) = self.get_slice_raw_bf16();
                     let mut out = vec![bf16::ZERO; out_len];
                     let out_ptr = out.as_mut_ptr() as usize;
-                    (0..num_outer).into_par_iter().for_each(|n| {
-                        let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut bf16, out_len) };
-                        for k in 0..stride_d {
+                    if stride_d == 1 {
+                        (0..num_outer).into_par_iter().for_each(|n| {
+                            let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut bf16, out_len) };
+                            let row_start = n * size_d;
+                            let row_end = row_start + size_d;
+                            let mut tmp_f32 = vec![0.0f32; size_d];
+                            crate::avx_swar::convert_bf16_to_f32(&input[row_start..row_end], &mut tmp_f32);
+                            
                             let mut max_val = f32::NEG_INFINITY;
-                            for m in 0..size_d {
-                                max_val = f32::max(max_val, input[n * outer_stride + m * stride_d + k].to_f32());
-                            }
+                            for m in 0..size_d { max_val = f32::max(max_val, tmp_f32[m]); }
+                            for m in 0..size_d { tmp_f32[m] -= max_val; }
+                            
+                            crate::avx_swar::exp_f32_inplace(&mut tmp_f32);
                             let mut sum_exp = 0.0;
-                            for m in 0..size_d {
-                                sum_exp += f32::exp(input[n * outer_stride + m * stride_d + k].to_f32() - max_val);
-                            }
+                            for m in 0..size_d { sum_exp += tmp_f32[m]; }
+                            
                             if is_log {
                                 let log_sum = f32::ln(sum_exp);
-                                for m in 0..size_d {
-                                    let idx = n * outer_stride + m * stride_d + k;
-                                    out_slice[idx] = bf16::from_f32(input[idx].to_f32() - max_val - log_sum);
-                                }
+                                crate::avx_swar::convert_bf16_to_f32(&input[row_start..row_end], &mut tmp_f32);
+                                for m in 0..size_d { tmp_f32[m] = tmp_f32[m] - max_val - log_sum; }
                             } else {
                                 let inv_sum = 1.0 / sum_exp;
+                                for m in 0..size_d { tmp_f32[m] *= inv_sum; }
+                            }
+                            crate::avx_swar::convert_f32_to_bf16(&tmp_f32, &mut out_slice[row_start..row_end]);
+                        });
+                    } else {
+                        (0..num_outer).into_par_iter().for_each(|n| {
+                            let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr as *mut bf16, out_len) };
+                            for k in 0..stride_d {
+                                let mut max_val = f32::NEG_INFINITY;
                                 for m in 0..size_d {
-                                    let idx = n * outer_stride + m * stride_d + k;
-                                    out_slice[idx] = bf16::from_f32(f32::exp(input[idx].to_f32() - max_val) * inv_sum);
+                                    max_val = f32::max(max_val, input[n * outer_stride + m * stride_d + k].to_f32());
+                                }
+                                let mut sum_exp = 0.0;
+                                for m in 0..size_d {
+                                    sum_exp += f32::exp(input[n * outer_stride + m * stride_d + k].to_f32() - max_val);
+                                }
+                                if is_log {
+                                    let log_sum = f32::ln(sum_exp);
+                                    for m in 0..size_d {
+                                        let idx = n * outer_stride + m * stride_d + k;
+                                        out_slice[idx] = bf16::from_f32(input[idx].to_f32() - max_val - log_sum);
+                                    }
+                                } else {
+                                    let inv_sum = 1.0 / sum_exp;
+                                    for m in 0..size_d {
+                                        let idx = n * outer_stride + m * stride_d + k;
+                                        out_slice[idx] = bf16::from_f32(f32::exp(input[idx].to_f32() - max_val) * inv_sum);
+                                    }
                                 }
                             }
-                        }
-                    });
+                        });
+                    }
                     Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: if is_log { "LogSoftmax".to_string() } else { "Softmax".to_string() }, is_transposed: false, dtype: DataType::BF16, storage: Storage::BF16(out), mmap_data: None })
                 },
                 DataType::Int8 => {
-                    // Fallback for Int8 softmax to F32 then cast back
                     let (input, _) = self.get_slice_raw_i8();
                     let input_f32: Vec<f32> = input.iter().map(|&x| x as f32).collect();
                     let mut out_f32 = vec![0.0; out_len];
                     let out_ptr_f32 = out_f32.as_mut_ptr() as usize;
-                    (0..num_outer).into_par_iter().for_each(|n| {
-                        let out_slice_f32 = unsafe { std::slice::from_raw_parts_mut(out_ptr_f32 as *mut f32, out_len) };
-                        for k in 0..stride_d {
+                    if stride_d == 1 {
+                        (0..num_outer).into_par_iter().for_each(|n| {
+                            let out_slice_f32 = unsafe { std::slice::from_raw_parts_mut(out_ptr_f32 as *mut f32, out_len) };
+                            let row_start = n * size_d;
+                            let row_end = row_start + size_d;
+                            
                             let mut max_val = f32::NEG_INFINITY;
-                            for m in 0..size_d {
-                                let idx = n * outer_stride + m * stride_d + k;
-                                max_val = f32::max(max_val, input_f32[idx]);
-                            }
+                            for m in row_start..row_end { max_val = f32::max(max_val, input_f32[m]); }
+                            for m in row_start..row_end { out_slice_f32[m] = input_f32[m] - max_val; }
+                            
+                            crate::avx_swar::exp_f32_inplace(&mut out_slice_f32[row_start..row_end]);
                             let mut sum_exp = 0.0;
-                            for m in 0..size_d {
-                                let idx = n * outer_stride + m * stride_d + k;
-                                sum_exp += f32::exp(input_f32[idx] - max_val);
-                            }
+                            for m in row_start..row_end { sum_exp += out_slice_f32[m]; }
+                            
                             if is_log {
                                 let log_sum = f32::ln(sum_exp);
-                                for m in 0..size_d {
-                                    let idx = n * outer_stride + m * stride_d + k;
-                                    out_slice_f32[idx] = input_f32[idx] - max_val - log_sum;
-                                }
+                                for m in row_start..row_end { out_slice_f32[m] = input_f32[m] - max_val - log_sum; }
                             } else {
                                 let inv_sum = 1.0 / sum_exp;
+                                for m in row_start..row_end { out_slice_f32[m] *= inv_sum; }
+                            }
+                        });
+                    } else {
+                        (0..num_outer).into_par_iter().for_each(|n| {
+                            let out_slice_f32 = unsafe { std::slice::from_raw_parts_mut(out_ptr_f32 as *mut f32, out_len) };
+                            for k in 0..stride_d {
+                                let mut max_val = f32::NEG_INFINITY;
                                 for m in 0..size_d {
                                     let idx = n * outer_stride + m * stride_d + k;
-                                    out_slice_f32[idx] = f32::exp(input_f32[idx] - max_val) * inv_sum;
+                                    max_val = f32::max(max_val, input_f32[idx]);
+                                }
+                                let mut sum_exp = 0.0;
+                                for m in 0..size_d {
+                                    let idx = n * outer_stride + m * stride_d + k;
+                                    sum_exp += f32::exp(input_f32[idx] - max_val);
+                                }
+                                if is_log {
+                                    let log_sum = f32::ln(sum_exp);
+                                    for m in 0..size_d {
+                                        let idx = n * outer_stride + m * stride_d + k;
+                                        out_slice_f32[idx] = input_f32[idx] - max_val - log_sum;
+                                    }
+                                } else {
+                                    let inv_sum = 1.0 / sum_exp;
+                                    for m in 0..size_d {
+                                        let idx = n * outer_stride + m * stride_d + k;
+                                        out_slice_f32[idx] = f32::exp(input_f32[idx] - max_val) * inv_sum;
+                                    }
                                 }
                             }
-                        }
-                    });
-                    let out_int8: Vec<i8> = out_f32.par_iter().map(|&x| x as i8).collect();
+                        });
+                    }
+                    let out_int8: Vec<i8> = out_f32.par_iter().map(|&x| (x * 127.0) as i8).collect();
                     Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: if is_log { "LogSoftmax".to_string() } else { "Softmax".to_string() }, is_transposed: false, dtype: DataType::Int8, storage: Storage::Int8(out_int8), mmap_data: None })
                 }
             }
         } else {
-            // Vulkan / Hybrid fallback to CPU initially
-            let mut cpu_tensor = self.clone();
-            cpu_tensor.device = "cpu".to_string();
-            let mut res = cpu_tensor.apply_softmax(dim, is_log)?;
-            res.device = self.device.clone();
-            Ok(res)
+            // Vulkan / Hybrid Path - Fused GPU Softmax
+            let last_dim = self.shape.len() - 1;
+            if d_usize == last_dim && !is_log {
+                let (input_raw, _) = self.get_slice_raw_bytes();
+                let width = self.shape[last_dim] as u32;
+                let bytes_per_elem = match self.dtype {
+                    DataType::F32 => 4,
+                    DataType::Int8 => 1,
+                    _ => 2,
+                };
+                let height = (input_raw.len() / (width as usize * bytes_per_elem)) as u32;
+                let mut output_raw = vec![0u8; input_raw.len()];
+                crate::backend::execute_softmax_into(&input_raw, &mut output_raw, width, height, self.dtype);
+                Ok(Tensor {
+                    shape: self.shape.clone(),
+                    device: self.device.clone(),
+                    name: "SoftmaxGPU".to_string(),
+                    is_transposed: false,
+                    dtype: self.dtype,
+                    storage: match self.dtype {
+                        DataType::F32  => Storage::F32(bytemuck::cast_slice(&output_raw).to_vec()),
+                        DataType::F16  => Storage::F16(bytemuck::cast_slice(&output_raw).to_vec()),
+                        DataType::BF16 => Storage::BF16(bytemuck::cast_slice(&output_raw).to_vec()),
+                        DataType::Int8 => Storage::Int8(bytemuck::cast_slice(&output_raw).to_vec()),
+                    },
+                    mmap_data: None,
+                })
+            } else {
+                // Fallback to CPU for non-last-dim or LogSoftmax
+                let mut cpu_tensor = self.clone();
+                cpu_tensor.device = "cpu".to_string();
+                let mut res = cpu_tensor.apply_softmax(dim, is_log)?;
+                res.device = self.device.clone();
+                Ok(res)
+            }
         }
     }
 
@@ -1097,7 +1414,6 @@ impl Tensor {
                 DataType::F16 => Storage::F16(vec![half::f16::from_f32(val)]),
                 DataType::BF16 => Storage::BF16(vec![half::bf16::from_f32(val)]),
                 DataType::Int8 => Storage::Int8(vec![val as i8]),
-                _ => Storage::None,
             };
             return Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: res_dtype, storage, mmap_data: None });
         }
@@ -1692,7 +2008,10 @@ impl Tensor {
         if total_elements < 32_000 {
             // Serial path — AVX1 vmaxps (8 floats/cycle) for relu, scalar fallback for rest
             match op {
-                "relu"    => crate::avx_swar::relu_f32(i_s, out),
+                "relu"    => {
+                    out.copy_from_slice(i_s);
+                    crate::avx_swar::relu_f32_inplace(out);
+                },
                 "sigmoid" => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = 1.0 / (1.0 + (-i).exp()); } },
                 "silu"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = i * (1.0 / (1.0 + (-i).exp())); } },
                 "gelu"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = 0.5 * i * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (i + 0.044715 * i.powi(3))).tanh()); } },
@@ -1702,28 +2021,31 @@ impl Tensor {
                 "clamp"   => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = i.clamp(param1, param2); } },
                 _ => {}
             }
-            } else {
-                let tile = 1024 * 1024 / 4;
-                out.par_chunks_mut(tile).enumerate().for_each(|(idx, chunk)| {
-                    let s = idx * tile;
-                    let end = std::cmp::min(s + chunk.len(), i_s.len());
-                    if s < end {
-                        let isub = &i_s[s..end];
-                        let process_len = std::cmp::min(chunk.len(), isub.len());
-                        match op {
-                            "relu" => crate::avx_swar::relu_f32(isub, &mut chunk[..process_len]),
-                            "sigmoid" => for k in 0..process_len { chunk[k] = 1.0 / (1.0 + (-isub[k]).exp()); },
-                            "silu" => for k in 0..process_len { chunk[k] = isub[k] * (1.0 / (1.0 + (-isub[k]).exp())); },
-                            "gelu" => for k in 0..process_len { chunk[k] = 0.5 * isub[k] * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (isub[k] + 0.044715 * isub[k].powi(3))).tanh()); },
-                            "leaky_relu" => for k in 0..process_len { chunk[k] = if isub[k] > 0.0 { isub[k] } else { isub[k] * param1 }; },
-                            "elu" => for k in 0..process_len { chunk[k] = if isub[k] > 0.0 { isub[k] } else { param1 * (isub[k].exp() - 1.0) }; },
-                            "tanh" => for k in 0..process_len { chunk[k] = isub[k].tanh(); },
-                            "clamp" => for k in 0..process_len { chunk[k] = isub[k].clamp(param1, param2); },
-                            _ => {}
-                        }
+        } else {
+            let tile = 1024 * 1024 / 4;
+            out.par_chunks_mut(tile).enumerate().for_each(|(idx, chunk)| {
+                let s = idx * tile;
+                let end = std::cmp::min(s + chunk.len(), i_s.len());
+                if s < end {
+                    let isub = &i_s[s..end];
+                    let process_len = std::cmp::min(chunk.len(), isub.len());
+                    match op {
+                        "relu" => {
+                            chunk[..process_len].copy_from_slice(isub);
+                            crate::avx_swar::relu_f32_inplace(&mut chunk[..process_len]);
+                        },
+                        "sigmoid" => for k in 0..process_len { chunk[k] = 1.0 / (1.0 + (-isub[k]).exp()); },
+                        "silu" => for k in 0..process_len { chunk[k] = isub[k] * (1.0 / (1.0 + (-isub[k]).exp())); },
+                        "gelu" => for k in 0..process_len { chunk[k] = 0.5 * isub[k] * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (isub[k] + 0.044715 * isub[k].powi(3))).tanh()); },
+                        "leaky_relu" => for k in 0..process_len { chunk[k] = if isub[k] > 0.0 { isub[k] } else { isub[k] * param1 }; },
+                        "elu" => for k in 0..process_len { chunk[k] = if isub[k] > 0.0 { isub[k] } else { param1 * (isub[k].exp() - 1.0) }; },
+                        "tanh" => for k in 0..process_len { chunk[k] = isub[k].tanh(); },
+                        "clamp" => for k in 0..process_len { chunk[k] = isub[k].clamp(param1, param2); },
+                        _ => {}
                     }
-                });
-            }
+                }
+            });
+        }
         Ok(())
     }
 

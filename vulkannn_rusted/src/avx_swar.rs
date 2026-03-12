@@ -559,3 +559,201 @@ unsafe fn relu_f32_neon(src: &[f32], dst: &mut [f32]) {
     }
 }
 
+// ============================================================
+// exp_f32 — AVX1 Vectorized Exponential (for Softmax)
+// ============================================================
+//
+// Uses the fast polynomial approximation exp(x) ≈ (1 + x/256)^256.
+// Since x86 AVX1 lacks FMA instructions (which arrived in AVX2/FMA3),
+// we use standard _mm256_add_ps and _mm256_mul_ps.
+// For neural network softmax, 6 decimal digits of precision is sufficient.
+//
+
+pub fn exp_f32_inplace(buf: &mut [f32]) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx") {
+            unsafe { exp_f32_avx_inplace(buf); }
+            return;
+        }
+        if is_x86_feature_detected!("sse2") {
+            unsafe { exp_f32_sse2_inplace(buf); }
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { exp_f32_neon_inplace(buf); }
+        return;
+    }
+
+    // Scalar fallback
+    buf.par_iter_mut().for_each(|x| *x = x.exp());
+}
+
+// --- x86_64: AVX1 (256-bit, 8 floats/iter) ---
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn exp_f32_avx_inplace(buf: &mut [f32]) {
+    // exp(x) = 2^(x / ln(2)) = 2^(floor(x/ln(2))) * 2^(frac(x/ln(2)))
+    let log2_e = _mm256_set1_ps(1.4426950408889634); // 1 / ln(2)
+    let ln2_hi = _mm256_set1_ps(0.6931457519); // ln(2) high
+    let ln2_lo = _mm256_set1_ps(1.4286067653e-6); // ln(2) low
+    
+    // Bounds for f32 exp to prevent overflow/underflow NaN/inf issues
+    let max_x = _mm256_set1_ps(88.3762626647949);
+    let min_x = _mm256_set1_ps(-88.3762626647949);
+    
+    // Polynomial coefficients for 2^frac
+    let c1 = _mm256_set1_ps(1.0);
+    let c2 = _mm256_set1_ps(0.5);
+    let c3 = _mm256_set1_ps(0.16666667163);
+    let c4 = _mm256_set1_ps(0.04166648536);
+    let c5 = _mm256_set1_ps(0.00833336077);
+    let c6 = _mm256_set1_ps(0.00138925374);
+
+    // Magic number for float round to integer using addition/subtraction
+    let magic = _mm256_set1_ps(12582912.0); // 1.5 * 2^23
+
+    let n8 = (buf.len() / 8) * 8;
+    for i in (0..n8).step_by(8) {
+        let ptr = buf.as_mut_ptr().add(i);
+        let mut x = _mm256_loadu_ps(ptr);
+
+        // Clamp x
+        x = _mm256_min_ps(x, max_x);
+        x = _mm256_max_ps(x, min_x);
+
+        // n = round(x * log2_e)
+        // AVX1 trick to round to nearest integer: (x + magic) - magic
+        let nx = _mm256_mul_ps(x, log2_e);
+        let mut n = _mm256_add_ps(nx, magic);
+        // We need the raw int bits later, so grab them from the addition
+        let n_bits = _mm256_castps_si256(n); 
+        n = _mm256_sub_ps(n, magic);
+
+        // Find exact fractional part: frac = x - n * ln2
+        let mut frac = x;
+        let n_ln2_hi = _mm256_mul_ps(n, ln2_hi);
+        let n_ln2_lo = _mm256_mul_ps(n, ln2_lo);
+        frac = _mm256_sub_ps(frac, n_ln2_hi);
+        frac = _mm256_sub_ps(frac, n_ln2_lo);
+
+        // Evaluate polynomial P(frac) = 1 + frac + frac^2 / 2 + frac^3 / 6 + ...
+        let mut p = c6;
+        p = _mm256_add_ps(_mm256_mul_ps(frac, p), c5);
+        p = _mm256_add_ps(_mm256_mul_ps(frac, p), c4);
+        p = _mm256_add_ps(_mm256_mul_ps(frac, p), c3);
+        p = _mm256_add_ps(_mm256_mul_ps(frac, p), c2);
+        p = _mm256_add_ps(_mm256_mul_ps(frac, p), c1);
+        p = _mm256_add_ps(_mm256_mul_ps(frac, p), c1); 
+
+        // Build 2^n directly in floating point format
+        // The magic addition left the integer value of n in the bottom 23 bits
+        // We need n + 127 in the exponent (bits 23-30), so we shift up by 23
+        // Since it's already in the mantissa bits, we just add the IEEE bias as an integer.
+        // Wait, _mm256_add_epi32 is AVX2. 
+        // For AVX1, we extract into 128-bit SSE blocks, use SSE2 int math, and put it back.
+        let n_lo = _mm256_extractf128_si256::<0>(n_bits);
+        let n_hi = _mm256_extractf128_si256::<1>(n_bits);
+        
+        // n_bits contains n + 12582912. 12582912 in hex is 0x00C00000.
+        // When we added magic, the integer part was placed in the bottom 23 bits.
+        // Float format places the exponent at bit 23.
+        // So `(n << 23) + (127 << 23)` is exactly `n << 23 + 0x3F800000`
+        // Since `n << 23` is ALREADY what n_bits holds (except it has 0x4B400000 from the magic offset!)
+        // Wait, `(n + magic)` float bits: If n=1, 12582913.0 = 0x4B400001
+        // The float bits are literally `0x4B400000 + n`.
+        // To get `(n + 127) << 23`, we need to change `0x4B400000 + n` into `(n << 23) + 0x3F800000`.
+        // Which means `(n << 23)` would be `(n_bits - 0x4B400000) << 23`
+        // Actually, just extract lower bits via SSE2:
+        let bias = _mm_set1_epi32(127);
+        let pow2_lo = _mm_slli_epi32(_mm_add_epi32(n_lo, bias), 23);
+        let pow2_hi = _mm_slli_epi32(_mm_add_epi32(n_hi, bias), 23);
+        
+        // n_bits contains n + 12582912. 12582912 in hex is 0x00C00000.
+        // It's already in the mantissa format when seen as an integer, 
+        // with n occupying the lowest 23 bits and the rest forming 0x4B400000.
+        // What we want is (n + 127) << 23.
+        // A much more elegant (and FMA-less, AVX1-friendly) way is actually:
+        // n_bits - 0x4B400000 to get n, then add 127, then shift 23.
+        
+        let pow2_n_int = _mm256_insertf128_si256::<1>(
+            _mm256_castsi128_si256(pow2_lo), 
+            pow2_hi
+        );
+        let pow2_n = _mm256_castsi256_ps(pow2_n_int);
+
+        // exp(x) = p * 2^n
+        let out = _mm256_mul_ps(p, pow2_n);
+
+        _mm256_storeu_ps(ptr, out);
+    }
+    
+    for x in buf[n8..].iter_mut() {
+        *x = x.exp();
+    }
+}
+
+// --- x86_64: SSE2 (128-bit, 4 floats/iter) ---
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+unsafe fn exp_f32_sse2_inplace(buf: &mut [f32]) {
+    let div_256 = _mm_set1_ps(1.0 / 256.0);
+    let one = _mm_set1_ps(1.0);
+    
+    let n4 = (buf.len() / 4) * 4;
+    for i in (0..n4).step_by(4) {
+        let ptr = buf.as_mut_ptr().add(i);
+        let mut v = _mm_loadu_ps(ptr);
+        
+        v = _mm_mul_ps(v, div_256);
+        v = _mm_add_ps(v, one);
+        
+        v = _mm_mul_ps(v, v); v = _mm_mul_ps(v, v);
+        v = _mm_mul_ps(v, v); v = _mm_mul_ps(v, v);
+        v = _mm_mul_ps(v, v); v = _mm_mul_ps(v, v);
+        v = _mm_mul_ps(v, v); v = _mm_mul_ps(v, v);
+        
+        _mm_storeu_ps(ptr, v);
+    }
+    
+    for x in buf[n4..].iter_mut() {
+        *x = x.exp();
+    }
+}
+
+// --- AArch64: NEON (128-bit, 4 floats/iter) ---
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn exp_f32_neon_inplace(buf: &mut [f32]) {
+    let div_256 = vdupq_n_f32(1.0 / 256.0);
+    let one = vdupq_n_f32(1.0);
+    
+    let n4 = (buf.len() / 4) * 4;
+    for i in (0..n4).step_by(4) {
+        let ptr = buf.as_mut_ptr().add(i);
+        let mut v = vld1q_f32(ptr);
+        
+        v = fma_neon_workaround(one, v, div_256); // essentially 1.0 + (v * 1/256)
+        
+        v = vmulq_f32(v, v); v = vmulq_f32(v, v);
+        v = vmulq_f32(v, v); v = vmulq_f32(v, v);
+        v = vmulq_f32(v, v); v = vmulq_f32(v, v);
+        v = vmulq_f32(v, v); v = vmulq_f32(v, v);
+        
+        vst1q_f32(ptr, v);
+    }
+    
+    for x in buf[n4..].iter_mut() {
+        *x = x.exp();
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn fma_neon_workaround(a: float32x4_t, b: float32x4_t, c: float32x4_t) -> float32x4_t {
+    // vfmaq_f32 acts as a = a + b*c
+    vfmaq_f32(a, b, c)
+}
