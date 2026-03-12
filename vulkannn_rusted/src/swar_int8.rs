@@ -17,8 +17,8 @@ pub fn swar_add_int8(a: &[i8], b: &[i8], out: &mut [i8]) {
 
     // Use GPR-based parallel add
     // Mask: 0x7F repeated 8 times = 0x7F7F7F7F7F7F7F7F
-    let mask_low7 = 0x7F7F7F7F7F7F7F7F u64;
-    let mask_msb  = 0x8080808080808080 u64;
+    let mask_low7 = 0x7F7F7F7F7F7F7F7F_u64;
+    let mask_msb  = 0x8080808080808080_u64;
 
     let a_ptr = a.as_ptr() as *const u64;
     let b_ptr = b.as_ptr() as *const u64;

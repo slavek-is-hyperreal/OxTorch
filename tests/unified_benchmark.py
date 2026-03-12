@@ -99,6 +99,9 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
     elif dtype == "bf16":
         vnn_dtype = vnn.DataType.BF16
         torch_dtype = torch.bfloat16
+    elif dtype == "int8":
+        vnn_dtype = vnn.DataType.Int8
+        torch_dtype = torch.int8
     else:
         raise ValueError(f"Unsupported dtype: {dtype}")
 
@@ -134,21 +137,32 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
             t_pt = pt_cache_time
             pt_backend_label += " (CACHED)"
             res_torch = None
+        elif dtype == "int8" and op in ["GELU", "Softmax"]:
+            # PyTorch doesn't support these on int8 CPU
+            t_pt = 0.0
+            skip_pt = True
+            res_torch = None
         else:
             t0 = time.perf_counter()
             for _ in range(iterations):
                 if op == "MatMul":
-                    res_torch = torch.matmul(a_torch, b_torch)
+                    if dtype == "int8":
+                        # PyTorch matmul on int8 is non-trivial/needs qint8
+                        res_torch = torch.matmul(a_torch.float(), b_torch.float()).to(torch.int8)
+                    else:
+                        res_torch = torch.matmul(a_torch, b_torch)
                 elif op == "Add":
-                    res_torch = a_torch + b_torch
+                    if dtype == "int8":
+                         res_torch = (a_torch.short() + b_torch.short()).to(torch.int8)
+                    else:
+                         res_torch = a_torch + b_torch
                 elif op == "Sub":
                     res_torch = a_torch - b_torch
                 elif op == "Mul":
                     res_torch = a_torch * b_torch
                 elif op == "ReLU":
                     if inplace:
-                        # In-place: reuse a_torch buffer — fair comparison to relu_into()
-                        a_torch_clone = a_torch.clone()  # clone once outside loop
+                        a_torch_clone = a_torch.clone()
                         torch.relu_(a_torch_clone)
                         res_torch = a_torch_clone
                     else:
@@ -156,13 +170,20 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
                 elif op == "GELU":
                     res_torch = torch.nn.functional.gelu(a_torch)
                 elif op == "Sum":
-                    res_torch = torch.sum(a_torch)
+                    if dtype == "int8":
+                        res_torch = torch.sum(a_torch.float())
+                    else:
+                        res_torch = torch.sum(a_torch)
                 elif op == "Softmax":
                     res_torch = torch.nn.functional.softmax(a_torch, dim=-1)
             t_pt = (time.perf_counter() - t0) / iterations
 
-        a_vnn = Tensor(data=a_np, dtype=vnn_dtype, device=mode)
-        b_vnn = Tensor(data=b_np, dtype=vnn_dtype, device=mode) if op not in ["ReLU", "GELU", "Sum", "Softmax"] else None
+        if dtype == "int8":
+             a_vnn = Tensor(data=a_np.astype(np.float32), dtype=vnn_dtype, device=mode)
+             b_vnn = Tensor(data=b_np.astype(np.float32), dtype=vnn_dtype, device=mode) if op not in ["ReLU", "GELU", "Sum", "Softmax"] else None
+        else:
+             a_vnn = Tensor(data=a_np, dtype=vnn_dtype, device=mode)
+             b_vnn = Tensor(data=b_np, dtype=vnn_dtype, device=mode) if op not in ["ReLU", "GELU", "Sum", "Softmax"] else None
 
         del a_np, b_np
         gc.collect()
@@ -232,6 +253,7 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
     max_diff = 0.0
     if not is_ssd and res_torch is not None:
         atol = 1e-3 if dtype == "f32" else 1e-2
+        if dtype == "int8": atol = 1.0
         parity_ok, max_diff = check_parity(res_vnn, res_torch.to(torch.float32), name, atol=atol)
         parity_str = "✅ OK" if parity_ok else f"❌ FAIL (diff: {max_diff:.6f})"
     elif skip_pt and not is_ssd:
@@ -280,7 +302,7 @@ if __name__ == "__main__":
             print(f"Failed to load fast cache: {e}")
 
     print("="*60)
-    print(f" VNN RUSTED SAFETY NET: TRI-PRECISION AUDIT v3.4")
+    print(f" VNN RUSTED SAFETY NET: TRI-PRECISION AUDIT v3.6")
     print(f" (Mode: Statistical Analysis - {args.runs} runs | Fast: {args.fast})")
     print(f" CPU Temp sensor: thermal_zone0 (Ivy Bridge package die)")
     print("="*60)
@@ -293,7 +315,7 @@ if __name__ == "__main__":
             print(f"\n>>>>>> STARTING BENCHMARK RUN {run_idx+1}/{args.runs}")
 
         run_results = []
-        for dtype in ["f32", "f16", "bf16"]:
+        for dtype in ["f32", "f16", "bf16", "int8"]:
             print(f"\n{'#'*20} PHASE: {dtype.upper()} {'#'*20}")
             for mode in ["cpu", "vulkan", "hybrid"]:
                 # --- MatMul ---

@@ -39,6 +39,7 @@ pub struct AshBackend {
     pub pipe_layout_matmul: vk::PipelineLayout,
     pub pipe_layout_act: vk::PipelineLayout,
     pub pipe_layout_reduce: vk::PipelineLayout,
+    pub has_coop: bool,
     
     pub pipe_add: vk::Pipeline,
     pub pipe_matmul: vk::Pipeline,
@@ -80,6 +81,9 @@ pub struct AshBackend {
     pub pool_free_list: Mutex<Vec<PoolBlock>>,
 }
 
+unsafe impl Send for AshBackend {}
+unsafe impl Sync for AshBackend {}
+
 #[derive(Clone, Copy, Debug)]
 pub struct PoolBlock {
     pub offset: vk::DeviceSize,
@@ -98,6 +102,9 @@ pub struct CachedBuffer {
     pub mapped_ptr: Option<*mut u8>,
     pub pool_offset: Option<vk::DeviceSize>, // New: Tracks offset if sub-allocated
 }
+
+unsafe impl Send for CachedBuffer {}
+unsafe impl Sync for CachedBuffer {}
 
 impl CachedBuffer {
     pub fn copy_for_async(&self) -> Self {
@@ -179,9 +186,11 @@ pub fn init_backend() {
         }
 
         let ext_timeline = CStr::from_bytes_with_nul(b"VK_KHR_timeline_semaphore\0").unwrap().as_ptr();
+        let ext_coop     = CStr::from_bytes_with_nul(b"VK_KHR_cooperative_matrix\0").unwrap().as_ptr();
 
         let mut device_extension_names_raw = vec![ext_timeline];
         let mut has_fp16_ext = false;
+        let mut has_coop_ext = false;
         
         if let Ok(device_exts) = unsafe { instance.enumerate_device_extension_properties(pdevice) } {
             for ext in device_exts {
@@ -189,10 +198,16 @@ pub fn init_backend() {
                 if let Ok(name_str) = name_bytes.to_str() {
                     if name_str == "VK_KHR_shader_float16_int8" {
                         has_fp16_ext = true;
-                        break;
+                    }
+                    if name_str == "VK_KHR_cooperative_matrix" {
+                        has_coop_ext = true;
                     }
                 }
             }
+        }
+
+        if has_coop_ext {
+            device_extension_names_raw.push(ext_coop);
         }
 
         let mut has_fp16 = false;
@@ -220,15 +235,27 @@ pub fn init_backend() {
         let mut features11 = vk::PhysicalDeviceVulkan11Features::default()
             .storage_buffer16_bit_access(true);
 
-        // Chain features: features2 -> features12 -> features11 -> [features16 (if available)]
+        #[cfg(target_os = "linux")] // Most linux drivers (Mesa/RADV/NVIDIA) support these
+        {
+            // Subgroups are standard in Vulkan 1.1, but some features might be optional.
+            // basic, vote, arithmetic, ballot are usually available on modern GPUs.
+        }
         features12.p_next = &mut features11 as *mut _ as *mut std::ffi::c_void;
 
         let mut features16 = vk::PhysicalDeviceShaderFloat16Int8FeaturesKHR::default()
             .shader_float16(true);
 
+        let mut features_coop = vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default()
+            .cooperative_matrix(true);
+
         #[allow(unused_assignments)]
         if has_fp16 {
             features11.p_next = &mut features16 as *mut _ as *mut std::ffi::c_void;
+            if has_coop_ext {
+                features16.p_next = &mut features_coop as *mut _ as *mut std::ffi::c_void;
+            }
+        } else if has_coop_ext {
+            features11.p_next = &mut features_coop as *mut _ as *mut std::ffi::c_void;
         }
 
         let mut features2 = vk::PhysicalDeviceFeatures2::default()
@@ -391,7 +418,7 @@ pub fn init_backend() {
         let perm_desc_reduce = perm_sets[3];
 
         // NEW: Phase 1 VRAM Pool Allocation
-        let pool_size = 1024 * 1024 * 1024; // 1GB
+        let pool_size = 256 * 1024 * 1024; // 256MB (reduced for compatibility with R7 200 series)
         let pool_info = vk::BufferCreateInfo::default()
             .size(pool_size)
             .usage(vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::UNIFORM_BUFFER)
@@ -400,15 +427,14 @@ pub fn init_backend() {
         let pool_buffer = unsafe { device.create_buffer(&pool_info, None) }.unwrap();
         let pool_reqs = unsafe { device.get_buffer_memory_requirements(pool_buffer) };
         
-        let mut allocator_lock = allocator.lock().unwrap();
-        let pool_allocation = allocator_lock.allocate(&AllocationCreateDesc {
+        let mut allocator = allocator; // Ensure it's mutable
+        let pool_allocation = allocator.allocate(&AllocationCreateDesc {
             name: "VNN_VRAM_POOL",
             requirements: pool_reqs,
             location: MemoryLocation::GpuOnly,
             linear: true,
             allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
         }).expect("Failed to allocate 1GB VRAM pool");
-        drop(allocator_lock);
 
         unsafe { device.bind_buffer_memory(pool_buffer, pool_allocation.memory(), pool_allocation.offset()) }.unwrap();
 
@@ -420,6 +446,7 @@ pub fn init_backend() {
             desc_pool: Mutex::new(desc_pool),
             dsl_add, dsl_matmul, dsl_act, dsl_reduce,
             pipe_layout_add, pipe_layout_matmul, pipe_layout_act, pipe_layout_reduce,
+            has_coop: has_coop_ext,
             pipe_add, pipe_matmul, pipe_relu, pipe_sigmoid, pipe_silu,
             pipe_gelu, pipe_leaky_relu, pipe_elu, pipe_tanh, pipe_clamp,
             pipe_reduce_sum, pipe_reduce_max, pipe_reduce_min,
@@ -662,7 +689,11 @@ pub fn execute_add(a_raw: &[u8], b_raw: &[u8], dtype: DataType, is_hybrid: bool)
 pub fn execute_elementwise(a_raw: &[u8], b_raw: &[u8], op: &str, dtype: DataType, is_hybrid: bool) -> Vec<u8> {
     // For ops without dedicated Vulkan shaders yet, compute on CPU and return.
     // Sprint 4 will add dedicated shaders and remove this fallback.
-    let bytes_per_elem = if dtype == DataType::F32 { 4 } else { 2 };
+    let bytes_per_elem = match dtype {
+        DataType::F32 => 4,
+        DataType::Int8 => 1,
+        _ => 2,
+    };
     let n = a_raw.len() / bytes_per_elem;
     let mut out = vec![0u8; a_raw.len()];
 
@@ -688,7 +719,7 @@ pub fn execute_elementwise(a_raw: &[u8], b_raw: &[u8], op: &str, dtype: DataType
             "div" => { for i in 0..n { c[i] = half::f16::from_f32(a[i].to_f32() / b[i].to_f32()); } },
             _ => {}
         }
-    } else {
+    } else if dtype == DataType::BF16 {
         let a: &[half::bf16] = bytemuck::cast_slice(a_raw);
         let b: &[half::bf16] = bytemuck::cast_slice(b_raw);
         let c: &mut [half::bf16] = bytemuck::cast_slice_mut(&mut out);
@@ -699,13 +730,14 @@ pub fn execute_elementwise(a_raw: &[u8], b_raw: &[u8], op: &str, dtype: DataType
             "div" => { for i in 0..n { c[i] = half::bf16::from_f32(a[i].to_f32() / b[i].to_f32()); } },
             _ => {}
         }
-    } else {
+    } else if dtype == DataType::Int8 {
         match op {
             "add" => {
                 let a: &[i8] = bytemuck::cast_slice(a_raw);
                 let b: &[i8] = bytemuck::cast_slice(b_raw);
-                let c: &mut [i8] = bytemuck::cast_slice_mut(&mut out);
-                swar_add_int8(a, b, c);
+                let mut out_i8 = vec![0i8; a.len()];
+                swar_add_int8(a, b, &mut out_i8);
+                out = out_i8.into_iter().map(|x| x as u8).collect();
             },
             _ => {
                 // Scalar fallback for other Int8 ops
@@ -1168,13 +1200,17 @@ pub fn execute_reduce(input_raw: &[u8], op: &str) -> Vec<f32> {
         backend.device.end_command_buffer(cmd).unwrap();
 
         let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
-        let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default().signal_semaphore_values(std::slice::from_ref(&wait_val));
+        let signal_values = [wait_val];
+        let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default().signal_semaphore_values(&signal_values);
+        let cmds = [cmd];
+        let signal_sems = [backend.timeline_semaphore];
         let submit_info = vk::SubmitInfo::default()
             .push_next(&mut timeline_info)
-            .command_buffers(&[cmd])
-            .signal_semaphores(std::slice::from_ref(&backend.timeline_semaphore));
+            .command_buffers(&cmds)
+            .signal_semaphores(&signal_sems);
             
-        backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
+        let submits = [submit_info];
+        backend.device.queue_submit(backend.compute_queue, &submits, vk::Fence::null()).unwrap();
         
         backend.pending_ops.lock().unwrap().push(AsyncOp {
             staging_buffers: vec![stage_in, stage_out.copy_for_async()],
@@ -1200,7 +1236,12 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
     let t_start = std::time::Instant::now();
     let backend = BACKEND.get().unwrap();
     let num_bytes = input_raw.len() as vk::DeviceSize;
-    let num_elements = num_bytes as u32 / if dtype == DataType::F32 { 4 } else { 2 };
+    let bytes_per_elem = match dtype {
+        DataType::F32 => 4,
+        DataType::Int8 => 1,
+        _ => 2,
+    };
+    let num_elements = num_bytes as u32 / bytes_per_elem;
     let num_bytes_f32 = (num_elements * 4) as vk::DeviceSize;
     
     let buf_in = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Act_In"), false);
@@ -1291,6 +1332,6 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
         };
         backend.pending_ops.lock().unwrap().push(op_info);
         
-        return (wait_id, stage_out_clone);
+        return (wait_id, stage_out.copy_for_async());
     }
 }

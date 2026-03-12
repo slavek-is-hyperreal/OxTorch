@@ -6,6 +6,7 @@ pub mod io_uring_engine;
 pub mod crook_scheduler;
 pub mod avx_swar;
 pub mod swar_int8;
+pub mod tiling_cpu;
 
 use pyo3::prelude::*;
 

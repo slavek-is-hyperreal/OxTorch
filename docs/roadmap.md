@@ -4,6 +4,14 @@
 
 ## Completed
 
+**v3.6.0 "Phase 3 — Hardware Acceleration & Int8 SWAR"** (dev)
+
+- **Int8 SWAR**: 8-way parallel arithmetic for legacy CPUs using 64-bit GPRs.
+- **Cache-Oblivious Tiling**: Recursive matrix multiplication strategy for CPU performance portability.
+- **Subgroup Reductions**: `VK_KHR_shader_subgroup` acceleration for warp-shuffle reductions.
+- **Cooperative Matrix**: Enabled `VK_KHR_cooperative_matrix` for Tensor/Matrix Core support.
+- **Backend Stability**: `UnsafeSendSync` implementation for asynchronous Vulkan execution.
+
 **v3.5.0 "Sprint 1 — MLP Forward Pass"** (main)
 
 - **Completed Sprint 1**: All foundation operations implemented with tri-precision (F32, F16, BF16) CPU/Vulkan/Hybrid paths.
@@ -71,8 +79,8 @@
 - [ ] **Fused Vulkan Softmax**: Implement a shared-memory coalesced Vulkan kernel for `softmax` and `log_softmax` to replace the iterative 3-pass CPU fallback.
 - [ ] **AVX2 Advanced Activations**: Implement fast-math vector approximations of `gelu`, `tanh`, and `exp` using AVX2.
 - [ ] **VRAM Migration (Pooling)**: Implement global `vulkano::memory::pools` to avoid the "Antipattern 1" of dynamic allocation. Pre-allocate safe VRAM blocks and manage sub-allocations for logical tensors.
-- [ ] **Int8 SWAR (Legacy CPU Master)**: Implement the "Boss Walk" – 8-bit parallel arithmetic using 64-bit GPR masks for CPUs lacking any SIMD (Atom/Celeron).
-- [ ] **Cache-Oblivious i-k-j Tiling**: Rearrange CPU compute loops to maximize L1/L2 hits via spatial locality.
+- [x] **Int8 SWAR (Legacy CPU Master)**: Implement the "Boss Walk" – 8-bit parallel arithmetic using 64-bit GPR masks for CPUs lacking any SIMD (Atom/Celeron).
+- [x] **Cache-Oblivious i-k-j Tiling**: Rearrange CPU compute loops to maximize L1/L2 hits via spatial locality.
 
 
 **Hybrid MatMul Tile-Pulling**
