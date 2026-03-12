@@ -461,6 +461,19 @@ All Sprint 1 ops follow the same pattern as `__add__`:
 
 ---
 
+### Sprint 3.5 — "Ultra-Legacy & 32-bit Retrofits"
+*Target: Execute inference on natively 32-bit constrained hardware without AVX/SSE2 guarantee (e.g. Asus 1000HD Celeron M i686, Raspberry Pi 1 B+ ARM1176JZF-S)*
+
+#### 32-bit Architecture Support
+- [ ] `cfg(target_pointer_width = "32")` cleanups across engine internals (Usize bounds, indices).
+- [ ] `Xoshiro128++` fallback for 32-bit PRNG (avoid 64-bit emulation slowdown on `Xoshiro256++`).
+- [ ] strict `#UD` protection (Illegal Instruction) for AVX/SSE auto-vectorization fallbacks on non-SIMD processors.
+
+#### extreme Memory Constraints
+- [ ] Sub-256MB VRAM/RAM pooling constraints for environments like early RPi and netbooks.
+
+---
+
 ### Sprint 4 — "Performance: Fused Kernels & AVX1"
 *Target: match or beat PyTorch on modern hardware, dominate on legacy*
 
