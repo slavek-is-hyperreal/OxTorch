@@ -8,8 +8,8 @@
 
 - **Int8 SWAR**: 8-way parallel arithmetic for legacy CPUs using 64-bit GPRs.
 - **Cache-Oblivious Tiling**: Recursive matrix multiplication strategy for CPU performance portability.
-- **Subgroup Reductions**: `VK_KHR_shader_subgroup` acceleration for warp-shuffle reductions.
-- **Cooperative Matrix**: Enabled `VK_KHR_cooperative_matrix` for Tensor/Matrix Core support.
+- **Subgroup Reductions**: `VK_KHR_shader_subgroup` extension enabled; reduction ops wired.
+- **Cooperative Matrix** ⚠️: `VK_KHR_cooperative_matrix` extension *detection* enabled in `init_backend`. **The actual GLSL compute shader (`coop_matrix.comp`) is NOT yet written.** Real Tensor/Matrix Core utilization is a Sprint 4 item.
 - **Backend Stability**: `UnsafeSendSync` implementation for asynchronous Vulkan execution.
 
 **v3.5.0 "Sprint 1 — MLP Forward Pass"** (main)
@@ -72,18 +72,250 @@
 ## In Progress
 
 ### Sprint 1.5 — "Extreme Engine Optimization" (Audit Debt)
-*Target: Align newly added Sprint 1 ops with `deep_research_on_optimization.md` axioms.*
+*Target: Align Sprint 1 ops with `deep_research_on_optimization.md` axioms. All items below have a measurable success criterion: the named benchmark ratio must drop below 1.5x vs. PyTorch.*
 
-- [ ] **Native SWAR/AVX PRNG**: Rewrite `rand` and `randn` tensor creators to drop the `numpy` PyO3 dependency. Implement a native PRNG (e.g. xoshiro256++) using AVX intrinsics directly blasting into O_DIRECT aligned memory.
-- [ ] **Fused Vulkan Elementwise**: Implement `elementwise.wgsl` to natively process `mul`/`sub`/`div` within VRAM. Remove the scalar CPU fallback bypass present in `backend.rs`. 
-- [ ] **Fused Vulkan Softmax**: Implement a shared-memory coalesced Vulkan kernel for `softmax` and `log_softmax` to replace the iterative 3-pass CPU fallback.
-- [ ] **AVX2 Advanced Activations**: Implement fast-math vector approximations of `gelu`, `tanh`, and `exp` using AVX2.
-- [ ] **VRAM Migration (Pooling)**: Implement global `vulkano::memory::pools` to avoid the "Antipattern 1" of dynamic allocation. Pre-allocate safe VRAM blocks and manage sub-allocations for logical tensors.
-- [x] **Int8 SWAR (Legacy CPU Master)**: Implement the "Boss Walk" – 8-bit parallel arithmetic using 64-bit GPR masks for CPUs lacking any SIMD (Atom/Celeron).
-- [x] **Cache-Oblivious i-k-j Tiling**: Rearrange CPU compute loops to maximize L1/L2 hits via spatial locality.
+---
 
+#### ✅ DONE
+- [x] **Int8 SWAR (Legacy CPU Master)**: 8-bit parallel arithmetic using 64-bit GPR masks.
+- [x] **Cache-Oblivious i-k-j Tiling**: CPU compute loops rearranged for L1/L2 spatial locality.
+- [x] **F16 Sum Vulkan tolerance**: atol relaxed to 0.1 — GPU path upcasts F16→F32 internally (architecturally more accurate than PyTorch's native F16 Kahan accumulation).
 
-**Hybrid MatMul Tile-Pulling**
+---
+
+#### 🔴 PRIORITY 1 — Fused Vulkan Elementwise (`mul`, `sub`, `div`)
+*Root problem: `mul`/`sub`/`div` call `execute_activation_chunked` which falls back to CPU scalar. There is NO Vulkan shader for them. Benchmark ratio: `Mul f32 (vulkan)` = 2.4x, `Sub f32 (vulkan)` = 2.3x — ALL overhead is PCIe roundtrip from CPU scalar fallback.*
+
+**How to implement — step by step:**
+
+**Step 1: Create shader `src/shaders/elementwise.comp`**
+```glsl
+#version 450
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer BufA { float a[]; };
+layout(set = 0, binding = 1) readonly buffer BufB { float b[]; };
+layout(set = 0, binding = 2) buffer BufC { float c[]; };
+layout(push_constant) uniform PC {
+    uint n;
+    uint op; // 0=mul, 1=sub, 2=div, 3=add
+} pc;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.n) return;
+    if      (pc.op == 0u) c[i] = a[i] * b[i];
+    else if (pc.op == 1u) c[i] = a[i] - b[i];
+    else if (pc.op == 2u) c[i] = a[i] / b[i];
+    else                  c[i] = a[i] + b[i];
+}
+```
+
+**Step 2: Compile SPIR-V in `build.rs`**
+Add a `compile_glsl("src/shaders/elementwise.comp", "elementwise.spv")` call alongside the existing shader compilations. Use the same `naga` / `glslc` pattern already used for `add.comp`, `matmul.comp` etc. The pattern in `build.rs` is:
+```rust
+compile_shader("src/shaders/elementwise.comp", "elementwise.spv");
+```
+
+**Step 3: Add pipeline in `backend.rs`**
+In `AshBackend` struct, add:
+```rust
+pub pipe_elementwise: vk::Pipeline,
+```
+In `init_backend`, load the SPIR-V and create the pipeline using the **same descriptor set layout as `pipe_add`** (3 bindings: A in, B in, C out). This layout (`dsl_elementwise`) has bindings [0]=A, [1]=B, [2]=C, all `STORAGE_BUFFER`. The push constant block is 8 bytes: `[n: u32, op: u32]`. Use the existing `create_compute_pipeline` helper function. Also add:
+```rust
+pub perm_desc_elementwise: Mutex<vk::DescriptorSet>,
+```
+
+**Step 4: Create `execute_elementwise` in `backend.rs`**
+Model it EXACTLY after `execute_add_into`. The only differences are:
+- 3 inputs (a_raw, b_raw, res_raw) → same as add
+- Push constant includes `op: u32` where mul=0, sub=1, div=2, add=3
+- Use `pipe_elementwise` instead of `pipe_add`
+- Use `perm_desc_elementwise` instead of `perm_desc_add`
+
+**Step 5: Wire in `tensor.rs`**
+In `Tensor::binary_op_into` (or wherever `mul`/`sub`/`div` dispatch), when `self.device != "cpu"`, call `backend::execute_elementwise(a_raw, b_raw, res_raw, op_id, dtype)` instead of the CPU scalar loop. The op_id mapping is: `"mul"→0, "sub"→1, "div"→2`.
+
+**Success criterion**: `Mul f32 (vulkan)` ratio ≤ 1.5x PyTorch.
+
+---
+
+#### 🔴 PRIORITY 2 — Fused Vulkan Softmax (shared memory)
+*Root problem: softmax runs 3 sequential CPU-side passes (max→exp→sum→div). Each pass copies data back through PCIe. On Bonaire with 1GB VRAM this is the single biggest PCIe bottleneck after MatMul. Benchmark: `Softmax f32 (vulkan)` = 3.31x.*
+
+**How to implement — step by step:**
+
+**Step 1: Create shader `src/shaders/softmax.comp`**
+This is a single-pass softmax using shared memory for row-local reduction.
+```glsl
+#version 450
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer In  { float x[]; };
+layout(set = 0, binding = 1) buffer       Out { float y[]; };
+layout(push_constant) uniform PC { uint n; uint row_stride; } pc;
+shared float sdata[256];
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    uint tid = gl_LocalInvocationID.x;
+    uint base = row * pc.row_stride;
+
+    // Pass 1: find row max (for numerical stability — prevents exp overflow)
+    float mx = -1e38;
+    for (uint i = tid; i < pc.row_stride; i += 256)
+        mx = max(mx, x[base + i]);
+    sdata[tid] = mx;
+    barrier();
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] = max(sdata[tid], sdata[tid+s]);
+        barrier();
+    }
+    float row_max = sdata[0];
+
+    // Pass 2: exp(x - max) and accumulate sum — all in shared memory, no PCIe
+    float s = 0.0;
+    for (uint i = tid; i < pc.row_stride; i += 256) {
+        float ex = exp(x[base + i] - row_max);
+        y[base + i] = ex;
+        s += ex;
+    }
+    sdata[tid] = s;
+    barrier();
+    for (uint ss = 128; ss > 0; ss >>= 1) {
+        if (tid < ss) sdata[tid] += sdata[tid+ss];
+        barrier();
+    }
+    float inv_sum = 1.0 / sdata[0];
+
+    // Pass 3: normalize
+    for (uint i = tid; i < pc.row_stride; i += 256)
+        y[base + i] *= inv_sum;
+}
+```
+Dispatch: one workgroup per row. If tensor is 2D `[rows, cols]`, dispatch `(rows, 1, 1)` workgroups with `local_size_x=256`.
+
+**Step 2: Add pipeline in `backend.rs`**
+Descriptor layout: 2 bindings (In, Out). Push constant: `[n: u32, row_stride: u32]`.
+Add `pub pipe_softmax: vk::Pipeline` and `pub perm_desc_softmax: Mutex<vk::DescriptorSet>`.
+
+**Step 3: Create `execute_softmax` in `backend.rs`**
+- Accepts `input_raw: &[u8]`, `rows: u32`, `cols: u32`, `res_raw: &mut [u8]`, `dtype: DataType`
+- Upload via `upload_to_stage` (converts F16/BF16→F32 automatically)
+- Push constant: `[rows*cols, cols]`
+- Dispatch: `(rows, 1, 1)` workgroups
+- Download via `download_from_stage`
+
+**Step 4: Wire in `tensor.rs`**
+Find the `softmax` method. When `self.device != "cpu"` and shape has 2 dims, call `execute_softmax`. Fall back to CPU multi-pass for 1D or when device is "cpu". The 2D case covers the entire benchmark workload (shape 2048×2048).
+
+**Success criterion**: `Softmax f32 (vulkan)` ratio ≤ 1.5x PyTorch.
+
+---
+
+#### 🟡 PRIORITY 3 — Fused MatMul+Bias+ReLU Mega-Kernel (Cray-1 chaining)
+*Root problem: the Sprint 2 `F.linear(x, W, b)` = `x @ W.T + b` currently requires 2 Vulkan dispatches (matmul + add) and one PCIe roundtrip for the intermediate result. For Bonaire's 1GB VRAM, materializing the full 2048×2048 F32 intermediate in VRAM costs 16MB × 2 PCIe transfers. Fusing eliminates one complete roundtrip.*
+
+**This is Sprint 2 work but architecturally belongs here because it defines the BufC accumulation pattern.**
+
+**How to implement — step by step:**
+
+**Step 1: Create shader `src/shaders/matmul_fused.comp`**
+Extend the existing `matmul.comp` with optional bias add and optional ReLU activation fused into the final accumulation step:
+```glsl
+layout(push_constant) uniform PC {
+    uint M; uint N; uint K;
+    uint fuse_bias;  // 1 = add bias after matmul
+    uint fuse_relu;  // 1 = apply ReLU after bias
+} pc;
+// binding 3 = bias vector (length N), only read if fuse_bias==1
+layout(set=0, binding=3) readonly buffer Bias { float bias[]; };
+
+// At the end of the existing accumulation loop, after C[row*N+col] = acc:
+if (pc.fuse_bias == 1u) acc += bias[col];
+if (pc.fuse_relu == 1u) acc = max(0.0, acc);
+C[row*N+col] = acc;
+```
+
+**Step 2: Add Python-facing fused op in `tensor.rs`**
+Add `fn matmul_bias_relu(x, weight, bias) -> Tensor` which:
+1. Calls `execute_matmul_fused(x_raw, w_raw, bias_raw, M, N, K, fuse_bias=true, fuse_relu=true, ...)`
+2. Returns result tensor without any intermediate Python object allocation
+
+**Step 3: Expose to Python as `vnn.functional.linear`**
+```rust
+#[pyfunction]
+fn linear(x: &Tensor, weight: &Tensor, bias: Option<&Tensor>) -> PyResult<Tensor> { ... }
+```
+Register in `lib.rs` as `m.add_function(wrap_pyfunction!(linear, m)?)?;`
+
+**Success criterion**: `F.linear` single Vulkan dispatch visible in profiler. Benchmark: `MatMul+Bias f32 (vulkan)` ratio ≤ 1.2x PyTorch.
+
+---
+
+#### 🟡 PRIORITY 4 — Native SWAR/AVX PRNG (drop numpy dependency)
+*Root problem: `Tensor.rand()` and `Tensor.randn()` call back into numpy via PyO3, adding ~0.5ms of Python→Rust→Python dispatch overhead per call. On Ivy Bridge (no AVX2) this cannot use fast hardware RNG.*
+
+**How to implement:**
+
+**Step 1: Add xoshiro256++ in `src/prng.rs`**
+```rust
+pub struct Xoshiro256pp { state: [u64; 4] }
+impl Xoshiro256pp {
+    pub fn new(seed: u64) -> Self { /* splitmix64 init */ }
+    #[inline(always)]
+    pub fn next_u64(&mut self) -> u64 {
+        let result = self.state[0].wrapping_add(self.state[3]).rotate_left(23).wrapping_add(self.state[0]);
+        let t = self.state[1] << 17;
+        self.state[2] ^= self.state[0]; self.state[3] ^= self.state[1];
+        self.state[1] ^= self.state[2]; self.state[0] ^= self.state[3];
+        self.state[2] ^= t;
+        self.state[3] = self.state[3].rotate_left(45);
+        result
+    }
+    pub fn next_f32(&mut self) -> f32 {
+        (self.next_u64() >> 41) as f32 / (1u64 << 23) as f32
+    }
+    // Box-Muller for randn: pairs of next_f32 → Gaussian
+}
+```
+
+**Step 2: Parallelize with Rayon**: split output buffer into chunks, each Rayon thread gets its own `Xoshiro256pp` with different seed (seed XOR thread_index). Use `par_chunks_mut` on the output Vec.
+
+**Step 3: Replace numpy calls** in `tensor.rs` `rand()` and `randn()` implementations.
+
+**Success criterion**: `Tensor.rand(shape=(15000000,))` ≤ 0.015s (currently 0.022s via numpy).
+
+---
+
+#### 🟡 PRIORITY 5 — AVX1 `vmaxps` ReLU + vectorized `exp` for Softmax
+*Ivy Bridge support AVX1 (256-bit). `_mm256_max_ps` processes 8 floats/cycle with zero overhead. Current scalar ReLU leaves 8x performance on the table for the CPU path.*
+
+**How to implement:**
+
+In `avx_swar.rs`, add:
+```rust
+#[target_feature(enable = "avx")]
+pub unsafe fn relu_avx1(data: &mut [f32]) {
+    use std::arch::x86_64::*;
+    let zero = _mm256_setzero_ps();
+    let chunks = data.len() / 8;
+    let ptr = data.as_mut_ptr();
+    for i in 0..chunks {
+        let v = _mm256_loadu_ps(ptr.add(i * 8));
+        _mm256_storeu_ps(ptr.add(i * 8), _mm256_max_ps(v, zero));
+    }
+    // scalar tail for remainder
+    for x in &mut data[chunks * 8..] { if *x < 0.0 { *x = 0.0; } }
+}
+```
+Guard with `#[cfg(target_arch = "x86_64")]` and `is_x86_feature_detected!("avx")` at runtime dispatch.
+For `exp`: use fast polynomial approximation `exp(x) ≈ (1 + x/256)^256` unrolled via `_mm256_mul_ps` + `_mm256_fmadd_ps` — 5 FMA rounds gives 6 decimal digits of accuracy (sufficient for softmax).
+
+**Success criterion**: `ReLU f32 15M (cpu)` ratio ≤ 1.0x PyTorch.
+
+---
+
+**Hybrid MatMul Tile-Pulling (Phase 5)**
 
 The tile-pulling Phase 4 dispatcher currently covers activation functions only.
 Phase 5 will extend the same AtomicUsize tile-pulling model to MatMul, allowing the CPU
@@ -219,21 +451,39 @@ All Sprint 1 ops follow the same pattern as `__add__`:
   Per deep_research_on_optimization.md §3.2: tile to fit in 6MB L3 cache, Morton-order layout
 - Vulkan shader for Winograd transform + elementwise multiply + inverse transform
 
+#### io_uring DataLoader (from deep_research_on_optimization.md §4)
+- [ ] **io_uring O_DIRECT SSD streaming** — replace blocking `mmap` in `unary_op_ssd` with
+  `io_uring` Submission/Completion Queue pairs. Use `O_DIRECT` to bypass VFS page cache.
+  Configuration: ZFS `recordsize=1M`, `TILE_SIZE` aligned to `1MB` boundaries.
+  Implementation: use the `tokio-uring` or `io-uring` crate as the Rust binding.
+  The rayon thread pool polls the CQ; on completion it sets tile status `EMPTY→READY_FOR_CPU`.
+  *This eliminates the main page-fault stall in the 16GB SSD benchmark (currently 61s).*
+
 ---
 
 ### Sprint 4 — "Performance: Fused Kernels & AVX1"
 *Target: match or beat PyTorch on modern hardware, dominate on legacy*
 
-- [ ] **Fused MatMul+Bias+ReLU** — Vulkan mega-kernel (Cray-1 vector chaining: no PCIe for bias/act)
+- [ ] **Fused MatMul+Bias+ReLU** — Vulkan mega-kernel (Cray-1 vector chaining: no PCIe for bias/act).
+  *See Sprint 1.5 PRIORITY 3 for full shader + Rust implementation guide.*
 - [ ] **Fused LayerNorm** — single Vulkan dispatch (mean+variance+normalize+scale+shift)
 - [ ] **Fused Attention** — FlashAttention-style: tiled QKV, compute in VRAM without full materialization
-- [ ] **AVX1 `vmaxps` kernel for ReLU** — replace scalar loop in `avx_swar.rs`
-  (`_mm256_max_ps(x, zero)` = 8 floats/cycle, purely AVX1, works on Ivy Bridge)
+- [ ] **AVX1 `vmaxps` kernel for ReLU** — replace scalar loop in `avx_swar.rs`.
+  *See Sprint 1.5 PRIORITY 5 for full AVX1 intrinsic implementation guide.*
 - [ ] **AVX1 vectorized `exp`** — for softmax (polynomial approximation via `_mm256_*`)
 - [ ] **Buffer pool Drop integration** — Rust `Drop` for Tensor returns Vec to BufPool automatically
 - [ ] **Descriptor set caching** — permanent sets for all op types (extend current matmul/add/act)
-- [ ] **Tagged-Token Dataflow** — evolve MSTS from AtomicU32 to full TTDF tag-matching
-  (per §2.3 of deep_research_on_optimization.md: MERA-400 P/Q flags as data-readiness tokens)
+- [ ] **Tagged-Token Dataflow** — evolve MSTS from `AtomicU32` tile counter to full TTDF tag-matching.
+  Per §2.3 of `deep_research_on_optimization.md`: each `StatefulTile` gets a 64-byte-aligned
+  `AtomicU32 status` field acting as MERA-400 P/Q flags. States: `EMPTY→READY_FOR_CPU→READY_FOR_GPU→GPU_COMPUTING→GPU_DONE→EMPTY`.
+  Workers subscribe by CAS-looping on specific state transitions instead of a shared counter.
+  This eliminates static CPU/GPU splits: the system naturally load-balances by data readiness.
+- [ ] **Cooperative Matrix GLSL Shader** (`src/shaders/coop_matrix.comp`) — use `KHR_cooperative_matrix`
+  extension types (`coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>`) to
+  route matmul through Tensor Cores / Matrix Cores on hardware that supports them.
+  The `VK_KHR_cooperative_matrix` extension is already detected in `init_backend` — only the
+  shader and pipeline dispatch are missing. Guard with runtime `has_coop` feature check.
+  See: NVIDIA Vulkan Cooperative Matrix blog (linked in Analiza report §KHR Cooperative Matrix).
 
 ---
 
