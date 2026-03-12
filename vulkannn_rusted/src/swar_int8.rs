@@ -4,7 +4,7 @@
 //! Targeted at legacy CPUs (Atom, Celeron, 486/Pentium style) that lack 
 //! modern SIMD (SSE/AVX/NEON) but have 64-bit registers.
 
-use rayon::prelude::*;
+// use rayon::prelude::*;
 
 /// 8-way parallel addition of two Int8 arrays using 64-bit registers.
 /// Uses bit-masking to prevent carry leakage between bytes.

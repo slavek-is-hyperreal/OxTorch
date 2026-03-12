@@ -1,15 +1,18 @@
 use std::fs;
 
 fn main() {
-    let shader_files = [
-        "src/shaders/add.wgsl",
-        "src/shaders/matmul.wgsl",
-        "src/shaders/activation.wgsl",
-        "src/shaders/reduce.wgsl",
-        "src/shaders/elementwise.comp",
-    ];
+    let shader_dir = "src/shaders";
+    let entries = fs::read_dir(shader_dir).expect("Failed to read shaders directory");
 
-    for path in shader_files {
+    for entry in entries {
+        let entry = entry.expect("Failed to read directory entry");
+        let path_buf = entry.path();
+        let path = path_buf.to_str().unwrap();
+
+        if !path.ends_with(".wgsl") && !path.ends_with(".comp") {
+            continue;
+        }
+
         println!("cargo:rerun-if-changed={}", path);
         let source = fs::read_to_string(path).unwrap();
         

@@ -5,7 +5,7 @@ use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc, Allocation, Allocati
 use gpu_allocator::MemoryLocation;
 use crate::tensor::DataType;
 use crate::avx_swar::*;
-pub use crate::swar_int8::*;
+// pub use crate::swar_int8::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct AsyncOp {
@@ -14,6 +14,19 @@ pub struct AsyncOp {
     pub cmd_buffer: vk::CommandBuffer,
     pub desc_set: vk::DescriptorSet,
     pub wait_id: u64,
+}
+
+pub struct DescriptorSetPool {
+    pub sets: Vec<vk::DescriptorSet>,
+    pub current: usize,
+}
+
+impl DescriptorSetPool {
+    pub fn next(&mut self) -> vk::DescriptorSet {
+        let set = self.sets[self.current];
+        self.current = (self.current + 1) % self.sets.len();
+        set
+    }
 }
 
 pub struct AshBackend {
@@ -30,16 +43,21 @@ pub struct AshBackend {
     pub allocator: Mutex<Allocator>,
     
     pub desc_pool: Mutex<vk::DescriptorPool>,
+    #[allow(dead_code)]
     pub pipe_layout_add: vk::PipelineLayout,
     pub pipe_layout_matmul: vk::PipelineLayout,
     pub pipe_layout_act: vk::PipelineLayout,
     pub pipe_layout_reduce: vk::PipelineLayout,
     pub pipe_layout_elementwise: vk::PipelineLayout,
+    pub pipe_layout_linear: vk::PipelineLayout,
     
+    #[allow(dead_code)]
     pub pipe_add: vk::Pipeline,
     pub pipe_matmul: vk::Pipeline,
     pub pipe_elementwise: vk::Pipeline,
     pub pipe_relu: vk::Pipeline,
+    pub pipe_softmax: vk::Pipeline,
+    pub pipe_linear: vk::Pipeline,
     pub pipe_sigmoid: vk::Pipeline,
     pub pipe_silu: vk::Pipeline,
     pub pipe_gelu: vk::Pipeline,
@@ -57,15 +75,14 @@ pub struct AshBackend {
     pub transfer_cmd_pool: vk::CommandPool,
     pub buffer_cache: Mutex<Vec<CachedBuffer>>,
 
-    // Bug #3 fix: Pre-allocated permanent descriptor sets.
-    // Instead of allocating+freeing a DescriptorSet on EVERY op call (which fragments the pool
-    // and causes bimodal latency), we keep 3 permanent sets and just call UpdateDescriptorSets.
-    // Protected by Mutex since GPU ops are serialized via queue_wait_idle anyway.
-    pub perm_desc_matmul: Mutex<vk::DescriptorSet>,
-    pub perm_desc_add: Mutex<vk::DescriptorSet>,
-    pub perm_desc_act: Mutex<vk::DescriptorSet>,
-    pub perm_desc_reduce: Mutex<vk::DescriptorSet>,
-    pub perm_desc_elementwise: Mutex<vk::DescriptorSet>,
+    // Rotating descriptor set pools to fix race conditions in async execution.
+    pub pool_desc_matmul: Mutex<DescriptorSetPool>,
+    #[allow(dead_code)]
+    pub pool_desc_add: Mutex<DescriptorSetPool>,
+    pub pool_desc_act: Mutex<DescriptorSetPool>,
+    pub pool_desc_reduce: Mutex<DescriptorSetPool>,
+    pub pool_desc_elementwise: Mutex<DescriptorSetPool>,
+    pub pool_desc_linear: Mutex<DescriptorSetPool>,
     
     pub timeline_semaphore: vk::Semaphore,
     pub timeline_value: AtomicU64,
@@ -280,12 +297,14 @@ pub fn init_backend() {
         // Per Vulkan spec and vkguide.dev best practices: omitting this flag lets the driver
         // use a simpler bump allocator internally, which is faster and doesn't fragment.
         // We only need a small fixed pool (3 permanent sets + headroom for async activation ops).
+        // Bug #3 fix: Do NOT use FREE_DESCRIPTOR_SET_BIT.
+        // We now use rotating pools of descriptor sets to support asynchronous pipelining.
         let pool_sizes = [
-            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(64),
-            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(16),
+            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1024),
+            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(256),
         ];
         let pool_info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(32)
+            .max_sets(512)
             .pool_sizes(&pool_sizes);
         let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None) }.unwrap();
 
@@ -313,20 +332,31 @@ pub fn init_backend() {
         ];
         let dsl_act = unsafe { device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_act), None) }.unwrap();
 
+        // DSL Linear: 4 Storage
+        let bindings_linear = [
+            vk::DescriptorSetLayoutBinding::default().binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default().binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default().binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default().binding(3).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+        ];
+        let dsl_linear = unsafe { device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_linear), None) }.unwrap();
+
         let pipe_layout_add = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_add]), None) }.unwrap();
         let pipe_layout_matmul = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_matmul]), None) }.unwrap();
-        
-        // Add push constant range for activation params (2x f32 = 8 bytes)
-        let pc_act_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(8)];
+
+        let pc_act_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];
         let pipe_layout_act = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_act]).push_constant_ranges(&pc_act_range), None) }.unwrap();
 
-        let dsl_reduce = dsl_act; // Re-use the exact same bindings layout (2 storage buffers)
-        let pc_reduce_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(12)];
+        let dsl_reduce = dsl_act;
+        let pc_reduce_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];
         let pipe_layout_reduce = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_reduce]).push_constant_ranges(&pc_reduce_range), None) }.unwrap();
 
         let dsl_elementwise = dsl_add;
-        let pc_elementwise_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(8)];
+        let pc_elementwise_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];
         let pipe_layout_elementwise = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_elementwise]).push_constant_ranges(&pc_elementwise_range), None) }.unwrap();
+
+        let pc_linear_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];
+        let pipe_layout_linear = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_linear]).push_constant_ranges(&pc_linear_range), None) }.unwrap();
 
         let load_shader = |bytes: &[u8]| -> vk::ShaderModule {
             let mut cursor = std::io::Cursor::new(bytes);
@@ -340,6 +370,8 @@ pub fn init_backend() {
         let sm_act = load_shader(include_bytes!("shaders/activation.wgsl.spv"));
         let sm_reduce = load_shader(include_bytes!("shaders/reduce.wgsl.spv"));
         let sm_elementwise = load_shader(include_bytes!("shaders/elementwise.comp.spv"));
+        let sm_softmax = load_shader(include_bytes!("shaders/softmax.wgsl.spv"));
+        let sm_linear = load_shader(include_bytes!("shaders/linear.comp.spv"));
 
         let entry_main = CString::new("main").unwrap();
         let entry_relu = CString::new("relu_main").unwrap();
@@ -365,6 +397,8 @@ pub fn init_backend() {
         let pipe_add = create_pipe(sm_add, &entry_main, pipe_layout_add);
         let pipe_matmul = create_pipe(sm_matmul, &entry_main, pipe_layout_matmul);
         let pipe_elementwise = create_pipe(sm_elementwise, &entry_main, pipe_layout_elementwise);
+        let pipe_softmax = create_pipe(sm_softmax, &entry_main, pipe_layout_act);
+        let pipe_linear = create_pipe(sm_linear, &entry_main, pipe_layout_linear);
         let pipe_relu = create_pipe(sm_act, &entry_relu, pipe_layout_act);
         let pipe_sigmoid = create_pipe(sm_act, &entry_sigm, pipe_layout_act);
         let pipe_silu = create_pipe(sm_act, &entry_silu, pipe_layout_act);
@@ -387,6 +421,7 @@ pub fn init_backend() {
             device.destroy_shader_module(sm_act, None);
             device.destroy_shader_module(sm_reduce, None);
             device.destroy_shader_module(sm_elementwise, None);
+            device.destroy_shader_module(sm_softmax, None);
         }
 
         let compute_cmd_pool_info = vk::CommandPoolCreateInfo::default()
@@ -407,18 +442,22 @@ pub fn init_backend() {
 
         // Bug #3 fix: Allocate 3 permanent descriptor sets once at startup.
         // From this point on, ops call UpdateDescriptorSets to re-point them at new buffers.
-        let perm_sets = unsafe {
-            let layouts = [dsl_matmul, dsl_add, dsl_act, dsl_reduce, dsl_add]; // elementwise reuses dsl_add
+        // Initialize Descriptor Set Pools
+        let create_pool = |layout: vk::DescriptorSetLayout, count: usize| -> DescriptorSetPool {
+            let layouts = vec![layout; count];
             let alloc_info = vk::DescriptorSetAllocateInfo::default()
                 .descriptor_pool(desc_pool)
                 .set_layouts(&layouts);
-            device.allocate_descriptor_sets(&alloc_info).expect("Failed to pre-alloc permanent descriptor sets")
+            let sets = unsafe { device.allocate_descriptor_sets(&alloc_info) }.expect("Failed to allocate descriptor set pool");
+            DescriptorSetPool { sets, current: 0 }
         };
-        let perm_desc_matmul = perm_sets[0];
-        let perm_desc_add    = perm_sets[1];
-        let perm_desc_act    = perm_sets[2];
-        let perm_desc_reduce = perm_sets[3];
-        let perm_desc_elementwise = perm_sets[4];
+
+        let pool_desc_matmul = create_pool(dsl_matmul, 64);
+        let pool_desc_add = create_pool(dsl_add, 64);
+        let pool_desc_act = create_pool(dsl_act, 128);
+        let pool_desc_reduce = create_pool(dsl_reduce, 64);
+        let pool_desc_elementwise = create_pool(dsl_elementwise, 64);
+        let pool_desc_linear = create_pool(dsl_linear, 64);
 
         // NEW: Phase 1 VRAM Pool Allocation
         let pool_size = 256 * 1024 * 1024; // 256MB (reduced for compatibility with R7 200 series)
@@ -447,17 +486,18 @@ pub fn init_backend() {
             transfer_queue, _transfer_family: transfer_family,
             allocator: Mutex::new(allocator),
             desc_pool: Mutex::new(desc_pool),
-            pipe_layout_add, pipe_layout_matmul, pipe_layout_act, pipe_layout_reduce, pipe_layout_elementwise,
-            pipe_add, pipe_matmul, pipe_elementwise, pipe_relu, pipe_sigmoid, pipe_silu,
+            pipe_layout_add, pipe_layout_matmul, pipe_layout_act, pipe_layout_reduce, pipe_layout_elementwise, pipe_layout_linear,
+            pipe_add, pipe_matmul, pipe_elementwise, pipe_relu, pipe_softmax, pipe_linear, pipe_sigmoid, pipe_silu,
             pipe_gelu, pipe_leaky_relu, pipe_elu, pipe_tanh, pipe_clamp,
             pipe_reduce_sum, pipe_reduce_max, pipe_reduce_min,
             compute_cmd_pool, transfer_cmd_pool,
             buffer_cache: Mutex::new(Vec::new()),
-            perm_desc_matmul: Mutex::new(perm_desc_matmul),
-            perm_desc_add:    Mutex::new(perm_desc_add),
-            perm_desc_act:    Mutex::new(perm_desc_act),
-            perm_desc_reduce: Mutex::new(perm_desc_reduce),
-            perm_desc_elementwise: Mutex::new(perm_desc_elementwise),
+            pool_desc_matmul: Mutex::new(pool_desc_matmul),
+            pool_desc_add:    Mutex::new(pool_desc_add),
+            pool_desc_act:    Mutex::new(pool_desc_act),
+            pool_desc_reduce: Mutex::new(pool_desc_reduce),
+            pool_desc_elementwise: Mutex::new(pool_desc_elementwise),
+            pool_desc_linear: Mutex::new(pool_desc_linear),
             timeline_semaphore,
             timeline_value: AtomicU64::new(0),
             pending_ops: Mutex::new(Vec::new()),
@@ -562,7 +602,7 @@ pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Opti
     let requirements = unsafe { backend.device.get_buffer_memory_requirements(buffer) };
     
     let location = if cpu_visible { 
-        MemoryLocation::CpuToGpu 
+        MemoryLocation::CpuToGpu    // CPU writes, GPU reads (upload staging)
     } else { 
         MemoryLocation::GpuOnly 
     };
@@ -600,6 +640,46 @@ pub fn get_buffer(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Opti
     CachedBuffer { size, usage, buffer, allocation: Some(allocation), cpu_visible: cpu_visible_actual, mapped_ptr, pool_offset: None }
 }
 
+/// Like get_buffer but allocates HOST-readable (GpuToCpu) memory.
+/// Must be used for all staging buffers the GPU writes and the CPU reads back from.
+pub fn get_buffer_readback(size: vk::DeviceSize, usage: vk::BufferUsageFlags, label: Option<&str>) -> CachedBuffer {
+    let backend = BACKEND.get().unwrap();
+
+    // Try cache first
+    if let Ok(mut cache) = backend.buffer_cache.lock() {
+        if let Some(idx) = cache.iter().position(|b| b.size >= size && b.usage.contains(usage) && b.cpu_visible && b.pool_offset.is_none()) {
+            let cached = cache.swap_remove(idx);
+            return cached;
+        }
+    }
+
+    let buffer_info = vk::BufferCreateInfo::default().size(size).usage(usage).sharing_mode(vk::SharingMode::EXCLUSIVE);
+    let buffer = unsafe { backend.device.create_buffer(&buffer_info, None) }.unwrap();
+    let requirements = unsafe { backend.device.get_buffer_memory_requirements(buffer) };
+
+    let mut retry_count = 0;
+    let allocation = loop {
+        let result = backend.allocator.lock().unwrap().allocate(&AllocationCreateDesc {
+            name: label.unwrap_or("ReadbackBuffer"),
+            requirements,
+            location: MemoryLocation::GpuToCpu,   // GPU writes, CPU reads
+            linear: true,
+            allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+        });
+        match result {
+            Ok(alloc) => break alloc,
+            Err(e) => {
+                if retry_count == 0 { clear_all_caches(); retry_count += 1; }
+                else { panic!("[VNN] Readback alloc failed: {:?}", e); }
+            }
+        }
+    };
+
+    let mapped_ptr = allocation.mapped_ptr().map(|p| p.as_ptr() as *mut u8);
+    unsafe { backend.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()) }.unwrap();
+    CachedBuffer { size, usage, buffer, allocation: Some(allocation), cpu_visible: true, mapped_ptr, pool_offset: None }
+}
+
 pub fn recycle_buffer(cached: CachedBuffer) {
     let backend = BACKEND.get().unwrap();
     
@@ -623,7 +703,7 @@ pub fn recycle_buffer(cached: CachedBuffer) {
     }
 }
 
-fn coalesce_pool(mut idx: usize, free_list: &mut Vec<PoolBlock>) {
+fn coalesce_pool(idx: usize, free_list: &mut Vec<PoolBlock>) {
     // Merge with right
     if idx + 1 < free_list.len() && !free_list[idx + 1].used {
         let next = free_list.remove(idx + 1);
@@ -786,7 +866,7 @@ pub fn execute_elementwise_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], 
 
     let stage_a = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Elem_Stage_A"), true);
     let stage_b = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Elem_Stage_B"), true);
-    let stage_c = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("Elem_Stage_C"), true);
+    let stage_c = get_buffer_readback(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("Elem_Stage_C"));
 
     upload_to_stage(a_raw, &stage_a, dtype);
     upload_to_stage(b_raw, &stage_b, dtype);
@@ -797,13 +877,13 @@ pub fn execute_elementwise_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], 
         backend.device.cmd_copy_buffer(cmd, stage_b.buffer, buf_b.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_b.pool_offset.unwrap_or(0), size: num_bytes_f32 }]);
         
         let barriers = [
-            vk::BufferMemoryBarrier::default().buffer(buf_a.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
-            vk::BufferMemoryBarrier::default().buffer(buf_b.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+            vk::BufferMemoryBarrier::default().buffer(buf_a.buffer).offset(buf_a.pool_offset.unwrap_or(0)).size(buf_a.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+            vk::BufferMemoryBarrier::default().buffer(buf_b.buffer).offset(buf_b.pool_offset.unwrap_or(0)).size(buf_b.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
         ];
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &barriers, &[]);
 
-        // Use permanent pre-allocated descriptor set.
-        let set = *backend.perm_desc_elementwise.lock().unwrap();
+        // Use rotating descriptor set pool to safely support async.
+        let set = backend.pool_desc_elementwise.lock().unwrap().next();
         let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(buf_a.pool_offset.unwrap_or(0)).range(buf_a.size)];
         let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(buf_b.pool_offset.unwrap_or(0)).range(buf_b.size)];
         let info_c = [vk::DescriptorBufferInfo::default().buffer(buf_c.buffer).offset(buf_c.pool_offset.unwrap_or(0)).range(buf_c.size)];
@@ -815,8 +895,10 @@ pub fn execute_elementwise_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], 
         ];
         backend.device.update_descriptor_sets(&writes, &[]);
 
-        // Operation ID via push constants: 0=mul, 1=sub, 2=div, 3=add
-        let pc = [num_elements as u32, op_id];
+        // Push constants: 16 bytes for consistency across all shaders.
+        let mut pc = [0u32; 4];
+        pc[0] = num_elements as u32;
+        pc[1] = op_id;
         let pc_bytes = bytemuck::cast_slice(&pc);
         backend.device.cmd_push_constants(cmd, backend.pipe_layout_elementwise, vk::ShaderStageFlags::COMPUTE, 0, pc_bytes);
 
@@ -825,7 +907,7 @@ pub fn execute_elementwise_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], 
         let workgroups = (num_elements as u32 + 255) / 256;
         backend.device.cmd_dispatch(cmd, workgroups, 1, 1);
         
-        let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_c.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_c.buffer).offset(buf_c.pool_offset.unwrap_or(0)).size(buf_c.size).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
         
         backend.device.cmd_copy_buffer(cmd, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: buf_c.pool_offset.unwrap_or(0), dst_offset: 0, size: num_bytes_f32 }]);
@@ -892,7 +974,7 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
     let stage_a = get_buffer(size_a_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("MatMul_Stage_A"), true);
     let stage_b = get_buffer(size_b_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("MatMul_Stage_B"), true);
     let stage_u = get_buffer(16, vk::BufferUsageFlags::TRANSFER_SRC, Some("MatMul_Stage_U"), true);
-    let stage_c = get_buffer(size_c_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("MatMul_Stage_C"), true);
+    let stage_c = get_buffer_readback(size_c_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("MatMul_Stage_C"));
 
     let uniform_data: [u32; 4] = [m, k, n, 0];
     upload_to_stage(a_raw, &stage_a, dtype);
@@ -909,13 +991,13 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
         backend.device.cmd_copy_buffer(cmd, stage_u.buffer, buf_u.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_u.pool_offset.unwrap_or(0), size: 16 }]);
 
         let barriers = [
-            vk::BufferMemoryBarrier::default().buffer(buf_a.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
-            vk::BufferMemoryBarrier::default().buffer(buf_b.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
-            vk::BufferMemoryBarrier::default().buffer(buf_u.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::UNIFORM_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+            vk::BufferMemoryBarrier::default().buffer(buf_a.buffer).offset(buf_a.pool_offset.unwrap_or(0)).size(buf_a.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+            vk::BufferMemoryBarrier::default().buffer(buf_b.buffer).offset(buf_b.pool_offset.unwrap_or(0)).size(buf_b.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+            vk::BufferMemoryBarrier::default().buffer(buf_u.buffer).offset(buf_u.pool_offset.unwrap_or(0)).size(buf_u.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::UNIFORM_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
         ];
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &barriers, &[]);
 
-        let set = *backend.perm_desc_matmul.lock().unwrap();
+        let set = backend.pool_desc_matmul.lock().unwrap().next();
         
         let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(buf_a.pool_offset.unwrap_or(0)).range(buf_a.size)];
         let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(buf_b.pool_offset.unwrap_or(0)).range(buf_b.size)];
@@ -934,33 +1016,30 @@ pub fn execute_matmul(a_raw: &[u8], b_raw: &[u8], m: u32, k: u32, n: u32, dtype:
         backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_matmul, 0, &[set], &[]);
         backend.device.cmd_dispatch(cmd, (n + 15) / 16, (m + 15) / 16, 1);
         
-        let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_c.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_c.buffer).offset(buf_c.pool_offset.unwrap_or(0)).size(buf_c.size).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
         
         backend.device.cmd_copy_buffer(cmd, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: buf_c.pool_offset.unwrap_or(0), dst_offset: 0, size: size_c_f32 }]);
         
         backend.device.end_command_buffer(cmd).unwrap();
-           let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
+        let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
         let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default().signal_semaphore_values(std::slice::from_ref(&wait_val));
         let cmds = [cmd];
         let submit_info = vk::SubmitInfo::default().push_next(&mut timeline_info).command_buffers(&cmds).signal_semaphores(std::slice::from_ref(&backend.timeline_semaphore));
             
         backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
         
-        let async_stage_c = stage_c.copy_for_async();
-
         backend.pending_ops.lock().unwrap().push(AsyncOp {
-            staging_buffers: vec![stage_a, stage_b, stage_u, async_stage_c],
+            staging_buffers: vec![stage_a, stage_b, stage_u, stage_c.copy_for_async()],
             device_buffers: vec![buf_a, buf_b, buf_u, buf_c],
             cmd_buffer: cmd,
-            desc_set: vk::DescriptorSet::null(),
+            desc_set: set,
             wait_id: wait_val,
         });
 
-        let backend_ref = BACKEND.get().unwrap();
-        let target = wait_val;
-        let wait_info = vk::SemaphoreWaitInfo::default().semaphores(std::slice::from_ref(&backend_ref.timeline_semaphore)).values(std::slice::from_ref(&target));
-        unsafe { backend_ref.device.wait_semaphores(&wait_info, u64::MAX).unwrap(); }
+        // Wait (synchronous fallback for Vec<u8> return)
+        let wait_info = vk::SemaphoreWaitInfo::default().semaphores(std::slice::from_ref(&backend.timeline_semaphore)).values(std::slice::from_ref(&wait_val));
+        backend.device.wait_semaphores(&wait_info, u64::MAX).unwrap();
         
         download_from_stage(&mut out_vec, &stage_c, dtype);
     }
@@ -1006,7 +1085,7 @@ pub fn execute_activation_chunked(
     let buf_in  = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Act_In"),  false);
     let buf_out = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Out"), false);
     let stage_in  = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Act_Stage_In"),  true);
-    let stage_out = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Stage_Out"), true);
+    let stage_out = get_buffer_readback(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Stage_Out"));
 
     upload_to_stage(tile_in, &stage_in, dtype);
 
@@ -1015,7 +1094,7 @@ pub fn execute_activation_chunked(
         backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_in.pool_offset.unwrap_or(0), size: num_bytes_f32 }]);
 
         let barrier = vk::BufferMemoryBarrier::default()
-            .buffer(buf_in.buffer).size(vk::WHOLE_SIZE)
+            .buffer(buf_in.buffer).offset(buf_in.pool_offset.unwrap_or(0)).size(buf_in.size)
             .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
             .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -1023,7 +1102,7 @@ pub fn execute_activation_chunked(
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[barrier], &[]);
 
         // Bug #3 fix: Use permanent pre-allocated descriptor set — no alloc/free per call.
-        let set = *backend.perm_desc_act.lock().unwrap();
+        let set = backend.pool_desc_act.lock().unwrap().next();
 
         let info_in  = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(buf_in.pool_offset.unwrap_or(0)).range(buf_in.size)];
         let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).range(buf_out.size)];
@@ -1055,7 +1134,7 @@ pub fn execute_activation_chunked(
         backend.device.cmd_dispatch(cmd, (elem_count as u32 + 255) / 256, 1, 1);
 
         let barrier_out = vk::BufferMemoryBarrier::default()
-            .buffer(buf_out.buffer).size(vk::WHOLE_SIZE)
+            .buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).size(buf_out.size)
             .src_access_mask(vk::AccessFlags::SHADER_WRITE)
             .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -1129,7 +1208,7 @@ pub fn execute_reduce(input_raw: &[u8], op: &str, dtype: DataType) -> Vec<f32> {
     let buf_in  = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Reduce_In"),  false);
     let buf_out = get_buffer(out_num_bytes, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("Reduce_Out"), false);
     let stage_in  = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Reduce_Stage_In"),  true);
-    let stage_out = get_buffer(out_num_bytes, vk::BufferUsageFlags::TRANSFER_DST, Some("Reduce_Stage_Out"), true);
+    let stage_out = get_buffer_readback(out_num_bytes, vk::BufferUsageFlags::TRANSFER_DST, Some("Reduce_Stage_Out"));
 
     upload_to_stage(input_raw, &stage_in, dtype);
 
@@ -1138,14 +1217,14 @@ pub fn execute_reduce(input_raw: &[u8], op: &str, dtype: DataType) -> Vec<f32> {
         backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_in.pool_offset.unwrap_or(0), size: num_bytes_f32 }]);
 
         let barrier = vk::BufferMemoryBarrier::default()
-            .buffer(buf_in.buffer).size(vk::WHOLE_SIZE)
+            .buffer(buf_in.buffer).offset(buf_in.pool_offset.unwrap_or(0)).size(buf_in.size)
             .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
             .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[barrier], &[]);
 
-        let set = *backend.perm_desc_reduce.lock().unwrap();
+        let set = backend.pool_desc_reduce.lock().unwrap().next();
 
         let info_in  = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(buf_in.pool_offset.unwrap_or(0)).range(buf_in.size)];
         let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).range(buf_out.size)];
@@ -1173,7 +1252,7 @@ pub fn execute_reduce(input_raw: &[u8], op: &str, dtype: DataType) -> Vec<f32> {
         backend.device.cmd_dispatch(cmd, num_blocks as u32, 1, 1);
 
         let barrier_out = vk::BufferMemoryBarrier::default()
-            .buffer(buf_out.buffer).size(vk::WHOLE_SIZE)
+            .buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).size(buf_out.size)
             .src_access_mask(vk::AccessFlags::SHADER_WRITE)
             .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -1219,7 +1298,7 @@ pub fn execute_reduce(input_raw: &[u8], op: &str, dtype: DataType) -> Vec<f32> {
 pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f32, _res_raw: &mut [u8], dtype: DataType, _is_hybrid: bool, _use_staging: bool) -> (u64, CachedBuffer) {
 
     let t_start = std::time::Instant::now();
-    let backend = BACKEND.get().unwrap();
+    let _backend = BACKEND.get().unwrap();
     let num_bytes = input_raw.len() as vk::DeviceSize;
     let bytes_per_elem = match dtype {
         DataType::F32 => 4,
@@ -1233,26 +1312,22 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
     let buf_out = get_buffer(num_bytes_staging, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Out"), false);
 
     let stage_in = get_buffer(num_bytes_staging, vk::BufferUsageFlags::TRANSFER_SRC, Some("Act_Stage_In"), true);
-    let stage_out = get_buffer(num_bytes_staging, vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Stage_Out"), true);
+    let stage_out = get_buffer_readback(num_bytes_staging, vk::BufferUsageFlags::TRANSFER_DST, Some("Act_Stage_Out"));
     let t_buf = t_start.elapsed();
 
     upload_to_stage(input_raw, &stage_in, dtype);
     let _t_up = t_start.elapsed() - t_buf;
 
-    let t_cmd_start = std::time::Instant::now();
-    let _t_desc_submit = std::time::Duration::ZERO;
-    let _t_wait_start = std::time::Instant::now();
-    let _t_wait = std::time::Duration::ZERO;
-
+    let backend = BACKEND.get().unwrap();
     let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
     unsafe {
         backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_in.pool_offset.unwrap_or(0), size: num_bytes_staging }]);
         
-        let barrier = vk::BufferMemoryBarrier::default().buffer(buf_in.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        let barrier = vk::BufferMemoryBarrier::default().buffer(buf_in.buffer).offset(buf_in.pool_offset.unwrap_or(0)).size(buf_in.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[barrier], &[]);
 
-        // Bug #3 fix: Use permanent pre-allocated descriptor set — no alloc/free in async op.
-        let set = *backend.perm_desc_act.lock().unwrap();
+        // Use rotating descriptor set pool to safely support async.
+        let set = backend.pool_desc_act.lock().unwrap().next();
         
         let info_in = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(buf_in.pool_offset.unwrap_or(0)).range(buf_in.size)];
         let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).range(buf_out.size)];
@@ -1278,14 +1353,14 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
         backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipe);
         backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_act, 0, &[set], &[]);
         
-        let pc_data = [param1, param2];
+        let pc_data = [num_elements as f32, 0.0, param1, param2];
         let pc_bytes = bytemuck::cast_slice(&pc_data);
         backend.device.cmd_push_constants(cmd, backend.pipe_layout_act, vk::ShaderStageFlags::COMPUTE, 0, pc_bytes);
         
         backend.device.cmd_dispatch(cmd, (num_elements + 255) / 256, 1, 1);
         
         // Wait for compute to finish BEFORE copying back to staging
-        let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_out.buffer).size(vk::WHOLE_SIZE).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).size(buf_out.size).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
         
         backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: buf_out.pool_offset.unwrap_or(0), dst_offset: 0, size: num_bytes_staging }]);
@@ -1319,4 +1394,188 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
         
         return (wait_id, stage_out.copy_for_async());
     }
+}
+
+pub fn execute_softmax_into(input_raw: &[u8], output_raw: &mut [u8], width: u32, height: u32, dtype: DataType) {
+    let backend = BACKEND.get().unwrap();
+    let num_bytes_f32 = (width * height * 4) as vk::DeviceSize;
+
+    let buf_in  = get_buffer(num_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Softmax_In"), false);
+    // buf_out must not alias buf_in in the pool — force it to a fresh standalone buffer
+    // by using TRANSFER_DST|SRC|STORAGE combination that pool won't reuse for buf_in:
+    let buf_out_size = num_bytes_f32 + 1; // size mismatch forces new allocation, avoids pool aliasing
+    let buf_out = get_buffer(buf_out_size, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("Softmax_Out"), false);
+    let stage_in  = get_buffer(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("Softmax_Stage_In"), true);
+    let stage_out = get_buffer_readback(num_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("Softmax_Stage_Out"));
+
+    upload_to_stage(input_raw, &stage_in, dtype);
+
+    let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
+    unsafe {
+        backend.device.cmd_copy_buffer(cmd, stage_in.buffer, buf_in.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_in.pool_offset.unwrap_or(0), size: num_bytes_f32 }]);
+
+        let barrier_in = vk::BufferMemoryBarrier::default()
+            .buffer(buf_in.buffer).offset(buf_in.pool_offset.unwrap_or(0)).size(buf_in.size)
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[barrier_in], &[]);
+
+        let set = backend.pool_desc_act.lock().unwrap().next();
+        let info_in  = [vk::DescriptorBufferInfo::default().buffer(buf_in.buffer).offset(buf_in.pool_offset.unwrap_or(0)).range(buf_in.size)];
+        let info_out = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).range(buf_out.size)];
+        let writes = [
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_in),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_out),
+        ];
+        backend.device.update_descriptor_sets(&writes, &[]);
+
+        backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_softmax);
+        backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_act, 0, &[set], &[]);
+
+        // Standardized 16-byte push constants: [width, height, param1, param2]
+        let pc_data: [u32; 4] = [width, height, 0, 0];
+        backend.device.cmd_push_constants(cmd, backend.pipe_layout_act, vk::ShaderStageFlags::COMPUTE, 0, bytemuck::cast_slice(&pc_data));
+
+        backend.device.cmd_dispatch(cmd, height, 1, 1);
+
+        let barrier_out = vk::BufferMemoryBarrier::default()
+            .buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).size(buf_out.size)
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
+
+        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: buf_out.pool_offset.unwrap_or(0), dst_offset: 0, size: num_bytes_f32 }]);
+             backend.device.end_command_buffer(cmd).unwrap();
+
+        let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
+
+        let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default()
+            .signal_semaphore_values(std::slice::from_ref(&wait_val));
+
+        let cmds = [cmd];
+        let submit_info = vk::SubmitInfo::default()
+            .push_next(&mut timeline_info)
+            .command_buffers(&cmds)
+            .signal_semaphores(std::slice::from_ref(&backend.timeline_semaphore));
+
+        backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
+
+        backend.pending_ops.lock().unwrap().push(AsyncOp {
+            staging_buffers: vec![stage_in, stage_out.copy_for_async()],
+            device_buffers: vec![buf_in, buf_out],
+            cmd_buffer: cmd,
+            desc_set: set,
+            wait_id: wait_val,
+        });
+
+        let wait_info = vk::SemaphoreWaitInfo::default()
+            .semaphores(std::slice::from_ref(&backend.timeline_semaphore))
+            .values(std::slice::from_ref(&wait_val));
+        backend.device.wait_semaphores(&wait_info, u64::MAX).unwrap();
+
+        download_from_stage(output_raw, &stage_out, dtype);
+    }
+    poll_async_ops();
+}
+
+pub fn execute_linear_into(a_raw: &[u8], b_raw: &[u8], bias_raw: &[u8], res_raw: &mut [u8], m: u32, k: u32, n: u32, act_type: u32, dtype: DataType) {
+    let backend = BACKEND.get().unwrap();
+    let num_bytes_f32_a = (m * k * 4) as vk::DeviceSize;
+    let num_bytes_f32_b = (k * n * 4) as vk::DeviceSize;
+    let num_bytes_f32_c = (m * n * 4) as vk::DeviceSize;
+    let num_bytes_f32_bias = (n * 4) as vk::DeviceSize;
+
+    let buf_a = get_buffer(num_bytes_f32_a, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Linear_A"), false);
+    let buf_b = get_buffer(num_bytes_f32_b, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Linear_B"), false);
+    let buf_bias = get_buffer(num_bytes_f32_bias, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("Linear_Bias"), false);
+    let buf_c = get_buffer(num_bytes_f32_c, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("Linear_C"), false);
+
+    let stage_a = get_buffer(num_bytes_f32_a, vk::BufferUsageFlags::TRANSFER_SRC, Some("Linear_Stage_A"), true);
+    let stage_b = get_buffer(num_bytes_f32_b, vk::BufferUsageFlags::TRANSFER_SRC, Some("Linear_Stage_B"), true);
+    let stage_bias = get_buffer(num_bytes_f32_bias, vk::BufferUsageFlags::TRANSFER_SRC, Some("Linear_Stage_Bias"), true);
+    let stage_c = get_buffer_readback(num_bytes_f32_c, vk::BufferUsageFlags::TRANSFER_DST, Some("Linear_Stage_C"));
+
+    upload_to_stage(a_raw, &stage_a, dtype);
+    upload_to_stage(b_raw, &stage_b, dtype);
+    upload_to_stage(bias_raw, &stage_bias, dtype);
+
+    let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
+    unsafe {
+        backend.device.cmd_copy_buffer(cmd, stage_a.buffer, buf_a.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_a.pool_offset.unwrap_or(0), size: num_bytes_f32_a }]);
+        backend.device.cmd_copy_buffer(cmd, stage_b.buffer, buf_b.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_b.pool_offset.unwrap_or(0), size: num_bytes_f32_b }]);
+        backend.device.cmd_copy_buffer(cmd, stage_bias.buffer, buf_bias.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_bias.pool_offset.unwrap_or(0), size: num_bytes_f32_bias }]);
+
+        let barriers = [
+            vk::BufferMemoryBarrier::default().buffer(buf_a.buffer).offset(buf_a.pool_offset.unwrap_or(0)).size(buf_a.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+            vk::BufferMemoryBarrier::default().buffer(buf_b.buffer).offset(buf_b.pool_offset.unwrap_or(0)).size(buf_b.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+            vk::BufferMemoryBarrier::default().buffer(buf_bias.buffer).offset(buf_bias.pool_offset.unwrap_or(0)).size(buf_bias.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+        ];
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &barriers, &[]);
+
+        let set = backend.pool_desc_linear.lock().unwrap().next();
+        let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(buf_a.pool_offset.unwrap_or(0)).range(buf_a.size)];
+        let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(buf_b.pool_offset.unwrap_or(0)).range(buf_b.size)];
+        let info_c = [vk::DescriptorBufferInfo::default().buffer(buf_c.buffer).offset(buf_c.pool_offset.unwrap_or(0)).range(buf_c.size)];
+        let info_bias = [vk::DescriptorBufferInfo::default().buffer(buf_bias.buffer).offset(buf_bias.pool_offset.unwrap_or(0)).range(buf_bias.size)];
+
+        let writes = [
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_a),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_b),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_c),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(3).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_bias),
+        ];
+        backend.device.update_descriptor_sets(&writes, &[]);
+
+        backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_linear);
+        backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_linear, 0, &[set], &[]);
+
+        let pc_data = [m, k, n, act_type];
+        backend.device.cmd_push_constants(cmd, backend.pipe_layout_linear, vk::ShaderStageFlags::COMPUTE, 0, bytemuck::cast_slice(&pc_data));
+
+        backend.device.cmd_dispatch(cmd, (n + 15) / 16, (m + 15) / 16, 1);
+
+        let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_c.buffer).offset(buf_c.pool_offset.unwrap_or(0)).size(buf_c.size).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
+
+        backend.device.cmd_copy_buffer(cmd, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: buf_c.pool_offset.unwrap_or(0), dst_offset: 0, size: num_bytes_f32_c }]);
+
+        backend.device.end_command_buffer(cmd).unwrap();
+        let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default().signal_semaphore_values(std::slice::from_ref(&wait_val));
+        let cmds = [cmd];
+        let submit_info = vk::SubmitInfo::default().push_next(&mut timeline_info).command_buffers(&cmds).signal_semaphores(std::slice::from_ref(&backend.timeline_semaphore));
+
+        backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
+
+        backend.pending_ops.lock().unwrap().push(AsyncOp {
+            staging_buffers: vec![stage_a, stage_b, stage_bias, stage_c.copy_for_async()],
+            device_buffers: vec![buf_a, buf_b, buf_bias, buf_c],
+            cmd_buffer: cmd,
+            desc_set: set,
+            wait_id: wait_val,
+        });
+
+        let wait_info = vk::SemaphoreWaitInfo::default().semaphores(std::slice::from_ref(&backend.timeline_semaphore)).values(std::slice::from_ref(&wait_val));
+        backend.device.wait_semaphores(&wait_info, u64::MAX).unwrap();
+        download_from_stage(res_raw, &stage_c, dtype);
+    }
+
+    poll_async_ops();
+}
+
+#[allow(dead_code)]
+pub fn wait_for_all() {
+    let backend = BACKEND.get().unwrap();
+    let current = backend.timeline_value.load(Ordering::SeqCst);
+    if current > 0 {
+        let wait_info = vk::SemaphoreWaitInfo::default()
+            .semaphores(std::slice::from_ref(&backend.timeline_semaphore))
+            .values(std::slice::from_ref(&current));
+        unsafe { backend.device.wait_semaphores(&wait_info, u64::MAX).unwrap(); }
+    }
+    poll_async_ops();
 }
