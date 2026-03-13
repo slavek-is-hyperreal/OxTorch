@@ -1,0 +1,55 @@
+#version 450
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) buffer InBuf { float data[]; } in_buf;
+layout(set = 0, binding = 1) buffer OutBuf { float data[]; } out_buf;
+
+layout(push_constant) uniform PushConsts {
+    uint width;
+    uint height;
+    float param1; // unused
+    float param2; // unused
+} params;
+
+shared float shared_data[256];
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    if (row >= params.height) return;
+    
+    uint tid = gl_LocalInvocationID.x;
+    uint width = params.width;
+    
+    // 1. Find max
+    float local_max = -1.0e38; // f32 neg infinity approximate
+    for (uint i = tid; i < width; i += 256) {
+        local_max = max(local_max, in_buf.data[row * width + i]);
+    }
+    shared_data[tid] = local_max;
+    barrier();
+    
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (tid < s) shared_data[tid] = max(shared_data[tid], shared_data[tid + s]);
+        barrier();
+    }
+    float row_max = shared_data[0];
+    
+    // 2. Find sum exp
+    float local_sum = 0.0;
+    for (uint i = tid; i < width; i += 256) {
+        local_sum += exp(in_buf.data[row * width + i] - row_max);
+    }
+    shared_data[tid] = local_sum;
+    barrier();
+    
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (tid < s) shared_data[tid] += shared_data[tid + s];
+        barrier();
+    }
+    float row_sum = shared_data[0];
+    
+    // 3. Normalize and write
+    for (uint i = tid; i < width; i += 256) {
+        out_buf.data[row * width + i] = exp(in_buf.data[row * width + i] - row_max) / row_sum;
+    }
+}
