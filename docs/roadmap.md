@@ -8,6 +8,13 @@
 
 ---
 
+## [Sprint 2] Logic Fusion & Heterogeneous Compute
+- [ ] **Multi-Device MSTS**: Support for simultaneous CPU + dGPU + iGPU execution.
+- [ ] **Fused MatMul+Bias+ReLU**: Single-kernel SPIR-V for transformer linear blocks.
+- [ ] **GELU Polynomial Kernels**: Sub-1.2x ratio on legacy CPUs.
+
+---
+
 ## Completed
 
 **v3.6.0 "Phase 3 — Hardware Acceleration & Int8 SWAR"** (dev)

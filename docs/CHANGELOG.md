@@ -2,6 +2,8 @@
 
 ## [3.6.0] - 2026-03-14
 ### Added
+- **Project Modularization (Phase 0)**: Split the monolithic `tensor.rs` into logical submodules (`src/tensor/`) and organized CPU kernels into `src/cpu/`.
+- **Log-Softmax Support**: Added `is_log` parameter to the Vulkan and CPU softmax implementations for training stability.
 - **Int8 SWAR (SIMD Within A Register)**: Parallel addition and ReLU for `int8` data on CPUs without AVX2.
 - **MSTS (Mera Style Tiling System)**: Hybrid CPU/GPU/SSD dispatch with circular buffer prefetching.
 - **Native PRNG**: Internal `Xoshiro256++` implementation to remove `numpy` dependency for tensor randomization.
@@ -10,10 +12,12 @@
 ### Fixed
 - Fixed race condition in Vulkan descriptor allocation.
 - Corrected bias addition logic in CPU `linear` fallback.
+- Resolved mutable borrow and type inference issues arising from modularization.
 
 ### Changed
 - Refined `matrixmultiply` and `gemm` integration for 17% overall speedup in F32 CPU MatMul.
-- Version bump to 3.6.0 "Hardware Acceleration & Int8 SWAR".
+- Consolidated `#[pymethods]` into `src/tensor/mod.rs` to prevent implementation conflicts.
+- Version bump to 3.6.0 "Hardware Acceleration & Modular Restructuring".
 
 All notable changes to this project are documented in this file.
 
