@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.6.0] - 2026-03-14
+### Added
+- **Int8 SWAR (SIMD Within A Register)**: Parallel addition and ReLU for `int8` data on CPUs without AVX2.
+- **MSTS (Mera Style Tiling System)**: Hybrid CPU/GPU/SSD dispatch with circular buffer prefetching.
+- **Native PRNG**: Internal `Xoshiro256++` implementation to remove `numpy` dependency for tensor randomization.
+- **Hard-Sync SPIR-V**: Explicit descriptor set pooling and sync for Vulkan 1.2 compute backend.
+
+### Fixed
+- Fixed race condition in Vulkan descriptor allocation.
+- Corrected bias addition logic in CPU `linear` fallback.
+
+### Changed
+- Refined `matrixmultiply` and `gemm` integration for 17% overall speedup in F32 CPU MatMul.
+- Version bump to 3.6.0 "Hardware Acceleration & Int8 SWAR".
+
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

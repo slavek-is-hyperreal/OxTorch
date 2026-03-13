@@ -1,24 +1,25 @@
-# API Reference (v3.5.0 "Sprint 1 — MLP Forward Pass")
+# VulkanNN Rusted - API Reference (v3.6.0)
 
-This document describes the public Python API exposed by `vulkannn_rusted` and its branch variants.
+This document provides a technical overview of the `vulkannn_rusted_dev` library.
 
 ---
 
 ## DataType Enum
 
-Source: `src/tensor.rs:16`
+Source: `src/tensor.rs:19`
 
 | Variant | Description |
 |:---|:---|
 | `DataType.F32` | 32-bit IEEE 754 float |
 | `DataType.F16` | 16-bit IEEE 754 half-precision float |
-| `DataType.BF16` | Brain Float 16 (8-bit exponent, 7-bit mantissa, same range as F32) |
+| `DataType.BF16` | Brain Float 16 (8-bit exponent, 7-bit mantissa) |
+| `DataType.Int8` | 8-bit signed integer |
 
 ---
 
 ## Tensor Class
 
-Source: `src/tensor.rs:35`
+Source: `src/tensor.rs:53`
 
 ### Constructor
 
@@ -34,13 +35,13 @@ Tensor(data=None, shape=None, dtype=DataType.F32, device="auto", name="Tensor")
 
 ### Static Methods
 
-**`Tensor.from_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:89`
+**`Tensor.from_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:149`
 
 Maps an existing binary file as a read-only SSD tensor backed by `io_uring`/`O_DIRECT`.
 The file must already exist and be at least `prod(shape) * bytes_per_element` bytes.
 Returns a tensor with `device="ssd"` and no in-memory storage.
 
-**`Tensor.new_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:103`
+**`Tensor.new_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:242`
 
 Creates a new file on disk and maps it read-write. Used for out-of-core results
 (e.g., the 16GB Monster ReLU benchmark). Aligned to 1MB ZFS recordsize boundaries.
@@ -49,7 +50,7 @@ Creates a new file on disk and maps it read-write. Used for out-of-core results
 
 ### Matrix Operations
 
-**`__matmul__(other: Tensor)`** — `src/tensor.rs:487` — operator: `@`
+**`__matmul__(other: Tensor)`** — `src/tensor.rs:747` — operator: `@`
 
 Dispatches based on `device`:
 
@@ -66,12 +67,12 @@ Dispatches based on `device`:
 
 | Method | Source line | Notes |
 |:---|:---|:---|
-| `relu()` | `src/tensor.rs:418` | Returns new Tensor |
-| `sigmoid()` | `src/tensor.rs:483` | Returns new Tensor |
-| `silu()` | `src/tensor.rs:484` | Returns new Tensor |
-| `relu_into(out)` | `src/tensor.rs:419` | Writes to pre-allocated out Tensor |
-| `sigmoid_into(out)` | `src/tensor.rs:420` | Writes to pre-allocated out Tensor |
-| `silu_into(out)` | `src/tensor.rs:421` | Writes to pre-allocated out Tensor |
+| `relu()` | `src/tensor.rs:660` | Returns new Tensor |
+| `sigmoid()` | `src/tensor.rs:742` | Returns new Tensor |
+| `silu()` | `src/tensor.rs:743` | Returns new Tensor |
+| `relu_into(out)` | `src/tensor.rs:661` | Writes to pre-allocated out Tensor |
+| `sigmoid_into(out)` | `src/tensor.rs:662` | Writes to pre-allocated out Tensor |
+| `silu_into(out)` | `src/tensor.rs:663` | Writes to pre-allocated out Tensor |
 
 For `device="hybrid"`, activations use the MSTS tile-pulling dispatch:
 

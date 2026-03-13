@@ -1,4 +1,4 @@
-# VulkanNN Rusted (v3.5.0 "Sprint 1 — MLP Forward Pass")
+# VulkanNN Rusted (v3.6.0 "Hardware Acceleration & Int8 SWAR")
 
 **A high-performance, Rust-powered tensor engine for constrained consumer hardware.**
 
@@ -108,22 +108,20 @@ weights = Tensor.from_ssd("/pool/weights.bin", shape=(40000, 40000), dtype=DataT
 
 ---
 
-## Benchmarks (v3.4.0, dev branch)
+## Benchmarks (v3.6.0, dev branch)
 
 Hardware: Intel Core i5-3450 (Ivy Bridge, 4 cores, AVX + F16C, no AVX2) |
-AMD Radeon R7 260X (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
+AMD Radeon R7 200 Series (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
 
-| Test | PyTorch | VNN | Ratio | Notes |
+| Test | PyTorch (Med) | VNN (Med) | Ratio (V/P) | Notes |
 |:---|---:|---:|:---:|:---|
-| MatMul F32 2048x2048 (cpu) | ~0.2x s | 0.211s | ~1.0x | Near parity via matrixmultiply/sgemm |
-| MatMul F32 2048x2048 (vulkan) | ~0.2x s | 0.091s | ~0.45x | Vulkan compute |
-| MatMul F32 2048x2048 (hybrid) | ~0.2x s | 0.089s | ~0.45x | GPU threshold optimization |
-| ReLU F32 1M (cpu) | 0.002s | 0.010s | 5.0x | Rayon SIMD |
-| ReLU F32 1M (hybrid) | 0.001s | 0.011s | 11.0x | Below GPU threshold: CPU only |
-| MatMul F16 2048x2048 (cpu) | 108.0s | 0.280s | **0.002x** | PyTorch: scalar emulation; VNN: AVX F16C |
-| MatMul F16 2048x2048 (vulkan) | 106.0s | 0.250s | **0.002x** | VNN: Vulkan F32 compute, F16 storage |
-| MatMul BF16 2048x2048 (cpu) | 40.5s | 0.230s | **0.005x** | PyTorch: scalar; VNN: SSE2 SWAR |
-| Monster ReLU 16GB (SSD) | N/A | 45.7s | SSD limit | io_uring O_DIRECT, 1MB ZFS records |
+| MatMul f32 (cpu) | 0.2267s | 0.1929s | **0.82x** | VNN 18% faster! |
+| Softmax f32 (cpu) | 0.0081s | 0.0049s | **0.57x** | VNN 43% faster! |
+| ReLU f16 15M (cpu) | 0.0375s | 0.0251s | **0.66x** | SIMD Fast Path |
+| MatMul f16 (cpu) | 102.18s | 0.210s | **0.002x** | PT: scalar emulation |
+| MatMul bf16 (cpu) | 38.75s | 0.216s | **0.005x** | PT: scalar emulation |
+| GELU f32 (cpu) | 0.0034s | 0.0380s | 11.18x | Work in Progress |
+| Monster ReLU 16GB (SSD) | N/A | 46.5s | SSD limit | io_uring O_DIRECT |
 
 > PyTorch F16/BF16 results reflect execution on the i5-3450 without native F16C acceleration in
 > PyTorch's dispatch path. VNN dispatches to hardware F16C intrinsics at runtime.
@@ -132,7 +130,7 @@ AMD Radeon R7 260X (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
 
 ## Technical Overview
 
-### Backend: Raw Ash Vulkan (v3.4.0+)
+### Backend: Raw Ash Vulkan (v3.6.0+)
 
 The GPU backend was completely rewritten from `wgpu`/WGSL to `ash` (raw Vulkan 1.2 bindings).
 This provides explicit control over:

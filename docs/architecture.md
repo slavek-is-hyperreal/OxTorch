@@ -1,4 +1,4 @@
-# Architecture (v3.5.0 "Sprint 1 — MLP Forward Pass")
+# Architecture (v3.6.0 "Hardware Acceleration & Int8 SWAR")
 
 VulkanNN Rusted is a zero-copy tensor engine optimized for hybrid CPU/GPU execution on
 consumer-grade hardware with sub-2GB VRAM, legacy CPUs, and SSD-resident model weights.
@@ -7,7 +7,7 @@ consumer-grade hardware with sub-2GB VRAM, legacy CPUs, and SSD-resident model w
 
 ## 1. Core Data Structure: Tensor
 
-Source: `src/tensor.rs:35`
+Source: `src/tensor.rs:29`
 
 A `Tensor` stores metadata, a `Storage` variant, and an optional SSD engine handle.
 
@@ -16,6 +16,7 @@ pub enum Storage {
     F32(Vec<f32>),
     F16(Vec<half::f16>),
     BF16(Vec<half::bf16>),
+    Int8(Vec<i8>),
     None,  // SSD tensors: data lives on disk
 }
 ```

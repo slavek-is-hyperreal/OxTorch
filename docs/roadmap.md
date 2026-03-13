@@ -1,4 +1,10 @@
-# Roadmap
+# Roadmap - VulkanNN Rusted
+
+## [3.6.0] Hardware Acceleration & Tiling (STABLE)
+- [x] **MSTS**: SSD-to-CPU-to-GPU streaming.
+- [x] **Int8 SWAR**: Bit-parallel logic for Int8.
+- [x] **Native PRNG**: Removal of Python-side random generation.
+- [x] **Initial CPU Wins**: MatMul/Softmax beating PyTorch.
 
 ---
 

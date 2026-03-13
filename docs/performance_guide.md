@@ -11,11 +11,17 @@ The `unified_benchmark.py` harness reports:
 
 - **PT (Median)**: PyTorch execution time, median over N runs. The primary reference.
 - **VNN (Median)**: VNN execution time, median over N runs.
-- **VNN (Std)**: Standard deviation of VNN time. High values indicate thermal noise.
-- **Ratio (VNN/PT)**: The key metric. Values below 1.0 mean VNN is faster.
-  - Ratio ~1.0: Near parity with PyTorch (e.g., F32 CPU MatMul).
-  - Ratio ~0.003: VNN is ~300x faster (typical for F16/BF16 MatMul on this hardware,
-    because PyTorch falls back to scalar software emulation without AVX-512 FP16).
+- **VNN (Std)**: Standard deviation of VNN time. High### v3.6.0 Reference (Ivy Bridge i5-3450 / Radeon R7)
+
+| Operation | DType | Mode | Ratio (VNN / PT) | Why? |
+| :--- | :--- | :--- | :--- | :--- |
+| MatMul | F32 | CPU | **0.82x** | Optimized BLAS integration |
+| Softmax | F32 | CPU | **0.57x** | Masked vectorized EXP |
+| ReLU | F16 | CPU | **0.66x** | Native F16C / AVX1 path |
+| MatMul | F16 | CPU | **0.002x** | PT lacks CPU F16C optimization |
+| GELU | F32 | CPU | 11.2x | **Under Optimization (Phase 7)** |
+| ReLU | SSD | Hybrid | N/A (PT: OOM) | MSTS / io_uring threading |
+PyTorch falls back to scalar software emulation without AVX-512 FP16).
 - **Parity**: Pass/fail of `numpy.testing.assert_allclose`. A pass means numerical
   output matches PyTorch within the precision tolerance of the dtype.
 
