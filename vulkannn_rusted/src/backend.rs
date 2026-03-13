@@ -4,7 +4,7 @@ use ash::vk;
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc, Allocation, AllocationCreateDesc};
 use gpu_allocator::MemoryLocation;
 use crate::tensor::DataType;
-use crate::avx_swar::*;
+use crate::cpu::*;
 // pub use crate::swar_int8::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1396,7 +1396,7 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
     }
 }
 
-pub fn execute_softmax_into(input_raw: &[u8], output_raw: &mut [u8], width: u32, height: u32, dtype: DataType) {
+pub fn execute_softmax_into(input_raw: &[u8], output_raw: &mut [u8], width: u32, height: u32, is_log: bool, dtype: DataType) {
     let backend = BACKEND.get().unwrap();
     let num_bytes_f32 = (width * height * 4) as vk::DeviceSize;
 
@@ -1434,8 +1434,8 @@ pub fn execute_softmax_into(input_raw: &[u8], output_raw: &mut [u8], width: u32,
         backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_softmax);
         backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_act, 0, &[set], &[]);
 
-        // Standardized 16-byte push constants: [width, height, param1, param2]
-        let pc_data: [u32; 4] = [width, height, 0, 0];
+        // Standardized 16-byte push constants: [width, height, is_log, 0]
+        let pc_data: [u32; 4] = [width, height, if is_log { 1 } else { 0 }, 0];
         backend.device.cmd_push_constants(cmd, backend.pipe_layout_act, vk::ShaderStageFlags::COMPUTE, 0, bytemuck::cast_slice(&pc_data));
 
         backend.device.cmd_dispatch(cmd, height, 1, 1);
