@@ -10,6 +10,7 @@
 //! - Per-bucket free-list capped at MAX_BUFS to bound memory usage.
 //! - Thread safety: try_lock per bucket (non-blocking — graceful degradation).
 use std::sync::{Mutex, OnceLock};
+use half::{f16, bf16};
 
 /// Maximum number of free buffers retained per size class.
 const MAX_BUFS_PER_CLASS: usize = 4;
@@ -18,59 +19,128 @@ const NUM_CLASSES: usize = 31;
 
 /// Internal pool storage.
 struct Pool {
-    /// buckets[i] holds Vec<f32> buffers whose capacity rounds up to 2^i elements.
-    buckets: Vec<Mutex<Vec<Vec<f32>>>>,
+    buckets_f32: Vec<Mutex<Vec<Vec<f32>>>>,
+    buckets_f16: Vec<Mutex<Vec<Vec<f16>>>>,
+    buckets_bf16: Vec<Mutex<Vec<Vec<bf16>>>>,
+    buckets_i8: Vec<Mutex<Vec<Vec<i8>>>>,
 }
 
 static INNER_POOL: OnceLock<Pool> = OnceLock::new();
 
-/// Initializes and returns the global singleton `Pool` instance.
 fn inner() -> &'static Pool {
     INNER_POOL.get_or_init(|| {
-        let mut buckets = Vec::with_capacity(NUM_CLASSES);
+        let mut buckets_f32 = Vec::with_capacity(NUM_CLASSES);
+        let mut buckets_f16 = Vec::with_capacity(NUM_CLASSES);
+        let mut buckets_bf16 = Vec::with_capacity(NUM_CLASSES);
+        let mut buckets_i8 = Vec::with_capacity(NUM_CLASSES);
         for _ in 0..NUM_CLASSES {
-            buckets.push(Mutex::new(Vec::new()));
+            buckets_f32.push(Mutex::new(Vec::new()));
+            buckets_f16.push(Mutex::new(Vec::new()));
+            buckets_bf16.push(Mutex::new(Vec::new()));
+            buckets_i8.push(Mutex::new(Vec::new()));
         }
-        Pool { buckets }
+        Pool { buckets_f32, buckets_f16, buckets_bf16, buckets_i8 }
     })
 }
 
-/// Returns the power-of-2 ceiling log2 of n (size class index).
-#[inline]
 fn size_class(n: usize) -> usize {
     if n <= 1 { return 0; }
     (usize::BITS - (n - 1).leading_zeros()) as usize
 }
 
-/// Public API — zero-sized struct (all state is in the global `INNER_POOL`).
 pub struct BufPool;
 
 impl BufPool {
-    /// Obtain a `Vec<f32>` with at least `n` elements (may be longer).
-    /// Call `.resize(n, 0.0f32)` after to ensure exact length.
-    /// Returns a pooled buffer if available, otherwise allocates fresh.
     #[inline]
     pub fn get(n: usize) -> Vec<f32> {
         let cls = size_class(n).min(NUM_CLASSES - 1);
-        if let Ok(mut bucket) = inner().buckets[cls].try_lock() {
+        if let Ok(mut bucket) = inner().buckets_f32[cls].try_lock() {
             if let Some(mut v) = bucket.pop() {
-                // Pooled buffer reuse: warm memory, no OS page fault
-                v.resize(n, 0.0f32);
+                v.resize(n, 0.0);
                 return v;
             }
         }
-        // Fresh allocation (first call for this size class)
-        vec![0.0f32; n]
+        vec![0.0; n]
     }
 
-    /// Return a `Vec<f32>` to the pool for future reuse.
-    /// Silently drops if the bucket is full or lock is contended.
     #[inline]
     pub fn put(mut v: Vec<f32>) {
         if v.capacity() == 0 { return; }
         let cls = size_class(v.capacity()).min(NUM_CLASSES - 1);
         v.clear();
-        if let Ok(mut bucket) = inner().buckets[cls].try_lock() {
+        if let Ok(mut bucket) = inner().buckets_f32[cls].try_lock() {
+            if bucket.len() < MAX_BUFS_PER_CLASS {
+                bucket.push(v);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn get_f16(n: usize) -> Vec<f16> {
+        let cls = size_class(n).min(NUM_CLASSES - 1);
+        if let Ok(mut bucket) = inner().buckets_f16[cls].try_lock() {
+            if let Some(mut v) = bucket.pop() {
+                v.resize(n, f16::ZERO);
+                return v;
+            }
+        }
+        vec![f16::ZERO; n]
+    }
+
+    #[inline]
+    pub fn put_f16(mut v: Vec<f16>) {
+        if v.capacity() == 0 { return; }
+        let cls = size_class(v.capacity()).min(NUM_CLASSES - 1);
+        v.clear();
+        if let Ok(mut bucket) = inner().buckets_f16[cls].try_lock() {
+            if bucket.len() < MAX_BUFS_PER_CLASS {
+                bucket.push(v);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn get_bf16(n: usize) -> Vec<bf16> {
+        let cls = size_class(n).min(NUM_CLASSES - 1);
+        if let Ok(mut bucket) = inner().buckets_bf16[cls].try_lock() {
+            if let Some(mut v) = bucket.pop() {
+                v.resize(n, bf16::ZERO);
+                return v;
+            }
+        }
+        vec![bf16::ZERO; n]
+    }
+
+    #[inline]
+    pub fn put_bf16(mut v: Vec<bf16>) {
+        if v.capacity() == 0 { return; }
+        let cls = size_class(v.capacity()).min(NUM_CLASSES - 1);
+        v.clear();
+        if let Ok(mut bucket) = inner().buckets_bf16[cls].try_lock() {
+            if bucket.len() < MAX_BUFS_PER_CLASS {
+                bucket.push(v);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn get_i8(n: usize) -> Vec<i8> {
+        let cls = size_class(n).min(NUM_CLASSES - 1);
+        if let Ok(mut bucket) = inner().buckets_i8[cls].try_lock() {
+            if let Some(mut v) = bucket.pop() {
+                v.resize(n, 0);
+                return v;
+            }
+        }
+        vec![0; n]
+    }
+
+    #[inline]
+    pub fn put_i8(mut v: Vec<i8>) {
+        if v.capacity() == 0 { return; }
+        let cls = size_class(v.capacity()).min(NUM_CLASSES - 1);
+        v.clear();
+        if let Ok(mut bucket) = inner().buckets_i8[cls].try_lock() {
             if bucket.len() < MAX_BUFS_PER_CLASS {
                 bucket.push(v);
             }

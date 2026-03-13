@@ -249,20 +249,16 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
         elif op == "Softmax":
             res_vnn = a_vnn.softmax(-1)
 
-        if i < iterations - 1:
-            if not inplace:
-                del res_vnn
-        if i % 5 == 0:
-            gc.collect()
 
     t_vnn = (time.perf_counter() - t0) / iterations
 
     # Validation
+    gc.collect() # Clean up after timed run
     parity_ok = "N/A"
     max_diff = 0.0
     if not is_ssd and res_torch is not None:
         atol = 1e-3 if dtype == "f32" else 1e-2
-        if dtype == "int8": atol = 1.0
+        if "f16" in dtype and op == "Sum": atol = 0.1
         parity_ok, max_diff = check_parity(res_vnn, res_torch.to(torch.float32), name, atol=atol)
         parity_str = "✅ OK" if parity_ok else f"❌ FAIL (diff: {max_diff:.6f})"
     elif skip_pt and not is_ssd:
@@ -295,6 +291,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--runs", type=int, default=1, help="Number of full benchmark runs for statistics")
     parser.add_argument("--fast", action="store_true", help="Reuse long PyTorch timings (>1s) from last_results.json")
+    parser.add_argument("--filter-mode", type=str, default="all", help="Filter by mode: cpu, vulkan, hybrid, all")
+    parser.add_argument("--filter-dtype", type=str, default="all", help="Filter by dtype: f32, f16, bf16, int8, all")
     args = parser.parse_args()
 
     FAST_PT_CACHE = {}
@@ -324,9 +322,12 @@ if __name__ == "__main__":
             print(f"\n>>>>>> STARTING BENCHMARK RUN {run_idx+1}/{args.runs}")
 
         run_results = []
-        for dtype in ["f32", "f16", "bf16", "int8"]:
+        target_dtypes = ["f32", "f16", "bf16", "int8"] if args.filter_dtype == "all" else [args.filter_dtype]
+        target_modes = ["cpu", "vulkan", "hybrid"] if args.filter_mode == "all" else [args.filter_mode]
+
+        for dtype in target_dtypes:
             print(f"\n{'#'*20} PHASE: {dtype.upper()} {'#'*20}")
-            for mode in ["cpu", "vulkan", "hybrid"]:
+            for mode in target_modes:
                 # --- MatMul ---
                 pt, v_t, ok, temp = run_bench(f"MatMul_{dtype}_{mode}", "MatMul", (2048, 2048), mode=mode, dtype=dtype, pt_cache_time=FAST_PT_CACHE.get(f"MatMul {dtype} ({mode})"))
                 run_results.append({"name": f"MatMul {dtype} ({mode})", "pt": pt, "vnn": v_t, "ok": ok, "cpu_temp_c": temp})

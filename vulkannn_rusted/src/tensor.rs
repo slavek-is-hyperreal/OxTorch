@@ -34,6 +34,18 @@ pub enum Storage {
     None,
 }
 
+impl Drop for Storage {
+    fn drop(&mut self) {
+        match self {
+            Storage::F32(v) => BufPool::put(std::mem::take(v)),
+            Storage::F16(v) => BufPool::put_f16(std::mem::take(v)),
+            Storage::BF16(v) => BufPool::put_bf16(std::mem::take(v)),
+            Storage::Int8(v) => BufPool::put_i8(std::mem::take(v)),
+            _ => {}
+        }
+    }
+}
+
 /// A multi-precision, multi-device, stateful Tensor object.
 /// Bridges Rust's high-speed core with Python's ease of use via PyO3.
 #[pyclass(unsendable)]
@@ -119,12 +131,13 @@ impl Tensor {
             (storage, final_shape)
         } else if let Some(s) = shape {
             let size = s.iter().product();
-            match dtype {
-                DataType::F32 => (Storage::F32(vec![0.0; size]), s),
-                DataType::F16 => (Storage::F16(vec![half::f16::ZERO; size]), s),
-                DataType::BF16 => (Storage::BF16(vec![half::bf16::ZERO; size]), s),
-                DataType::Int8 => (Storage::Int8(vec![0i8; size]), s),
-            }
+            let storage = match dtype {
+                DataType::F32 => Storage::F32(BufPool::get(size)),
+                DataType::F16 => Storage::F16(BufPool::get_f16(size)),
+                DataType::BF16 => Storage::BF16(BufPool::get_bf16(size)),
+                DataType::Int8 => Storage::Int8(BufPool::get_i8(size)),
+            };
+            (storage, s)
         } else {
             return Err(PyValueError::new_err("Must provide either data or shape"));
         };
@@ -313,7 +326,7 @@ impl Tensor {
             
             // Loop unrolling for 4 elements at a time
             let mut it = chunk.chunks_exact_mut(4);
-            for mut dst in it.by_ref() {
+            for dst in it.by_ref() {
                 let (n1, n2) = rng.next_randn_pair();
                 let (n3, n4) = rng.next_randn_pair();
                 dst[0] = n1;
@@ -680,47 +693,41 @@ impl Tensor {
     #[pyo3(signature = (dim))]
     fn log_softmax(&self, dim: i64) -> PyResult<Tensor> { self.apply_softmax(dim, true) }
 
-    fn act_into(&mut self, op: &str, param1: f32, param2: f32, out: &mut Tensor) -> PyResult<()> {
+    fn act_into(&self, op: &str, param1: f32, param2: f32, out: &mut Tensor) -> PyResult<()> {
         if self.device == "cpu" {
             match self.dtype {
                 DataType::F32 => {
                     let (out_slice, _) = out.get_slice_raw_mut_f32();
                     let (i_s, _) = self.get_slice_raw_f32();
-                    Self::act_into_raw_f32(i_s, op, param1, param2, out_slice)
+                    if out_slice.as_ptr() != i_s.as_ptr() { out_slice.copy_from_slice(i_s); }
+                    Self::act_into_raw_parallel_f32(out_slice, op, param1, param2);
+                    Ok(())
                 }
                 DataType::F16 => {
                     let (out_slice, _) = out.get_slice_raw_mut_f16();
                     let (i_s, _) = self.get_slice_raw_f16();
-                    match op {
-                        "relu" => {
-                            let mut tmp_f32 = vec![0.0f32; i_s.len()];
-                            crate::avx_swar::convert_f16_to_f32(i_s, &mut tmp_f32);
-                            crate::avx_swar::relu_f32_inplace(&mut tmp_f32);
-                            crate::avx_swar::convert_f32_to_f16(&tmp_f32, out_slice);
-                        },
-                        _ => panic!("Unsupported F16 CPU op into: {}", op),
-                    }
+                    let mut tmp_f32 = BufPool::get(i_s.len());
+                    crate::avx_swar::convert_f16_to_f32(i_s, &mut tmp_f32);
+                    Self::act_into_raw_parallel_f32(&mut tmp_f32, op, param1, param2);
+                    crate::avx_swar::convert_f32_to_f16(&tmp_f32, out_slice);
+                    BufPool::put(tmp_f32);
                     Ok(())
                 }
                 DataType::BF16 => {
                     let (out_slice, _) = out.get_slice_raw_mut_bf16();
                     let (i_s, _) = self.get_slice_raw_bf16();
-                    if op == "relu" {
-                        let mut tmp_f32 = vec![0.0f32; i_s.len()];
-                        crate::avx_swar::convert_bf16_to_f32(i_s, &mut tmp_f32);
-                        crate::avx_swar::relu_f32_inplace(&mut tmp_f32);
-                        crate::avx_swar::convert_f32_to_bf16(&tmp_f32, out_slice);
-                    } else {
-                        Self::act_into_raw_bf16(i_s, op, param1, param2, out_slice);
-                    }
+                    let mut tmp_f32 = BufPool::get(i_s.len());
+                    crate::avx_swar::convert_bf16_to_f32(i_s, &mut tmp_f32);
+                    Self::act_into_raw_parallel_f32(&mut tmp_f32, op, param1, param2);
+                    crate::avx_swar::convert_f32_to_bf16(&tmp_f32, out_slice);
+                    BufPool::put(tmp_f32);
                     Ok(())
                 },
                 DataType::Int8 => {
                     let (out_slice, _) = out.get_slice_raw_mut_i8();
                     let (i_s, _) = self.get_slice_raw_i8();
-                    if op == "relu" {
-                        out_slice.par_iter_mut().zip(i_s.par_iter()).for_each(|(o, &i)| *o = if i > 0 { i } else { 0 });
-                    }
+                    if out_slice.as_ptr() != i_s.as_ptr() { out_slice.copy_from_slice(i_s); }
+                    Self::act_into_raw_parallel_i8(out_slice, op, param1, param2);
                     Ok(())
                 }
             }
@@ -773,56 +780,56 @@ impl Tensor {
                         Storage::F32(out)
                     },
                     DataType::F16 => {
-                        let mut out = vec![half::f16::ZERO; m * n];
-                        let a_f32 = if self.is_ssd() { self.load_to_f32_vec_msts() } else {
-                            let mut v = vec![0.0; self.shape.iter().product()];
-                            crate::avx_swar::convert_f16_to_f32(self.get_slice_raw_f16().0, &mut v);
-                            v
-                        };
-                        let b_f32 = if other.is_ssd() { other.load_to_f32_vec_msts() } else {
-                            let mut v = vec![0.0; other.shape.iter().product()];
-                            crate::avx_swar::convert_f16_to_f32(other.get_slice_raw_f16().0, &mut v);
-                            v
-                        };
+                        let mut out = BufPool::get_f16(m * n);
+                        out.resize(m * n, half::f16::ZERO);
+                        let mut a_f32 = BufPool::get(m * k); a_f32.resize(m * k, 0.0);
+                        let mut b_f32 = BufPool::get(k * n); b_f32.resize(k * n, 0.0);
+                        crate::avx_swar::convert_f16_to_f32(self.get_slice_raw_f16().0, &mut a_f32);
+                        crate::avx_swar::convert_f16_to_f32(other.get_slice_raw_f16().0, &mut b_f32);
+                        
                         let mut res_f32 = BufPool::get(m * n);
                         res_f32.resize(m * n, 0.0f32);
                         self.cpu_sgemm_f32(&a_f32, &b_f32, &mut res_f32, m, k, n, rsa, csa, rsb, csb);
                         out.par_iter_mut().zip(res_f32.par_iter()).for_each(|(o, &x)| *o = half::f16::from_f32(x));
-                        BufPool::put(res_f32); // Return intermediate buffer to pool
+                        
+                        BufPool::put(a_f32); BufPool::put(b_f32); BufPool::put(res_f32);
                         Storage::F16(out)
                     },
                     DataType::BF16 => {
-                        let mut out = vec![half::bf16::ZERO; m * n];
-                        let a_f32 = if self.is_ssd() { self.load_to_f32_vec_msts() } else {
-                            let mut v = vec![0.0; self.shape.iter().product()];
-                            crate::avx_swar::convert_bf16_to_f32(self.get_slice_raw_bf16().0, &mut v);
-                            v
-                        };
-                        let b_f32 = if other.is_ssd() { other.load_to_f32_vec_msts() } else {
-                            let mut v = vec![0.0; other.shape.iter().product()];
-                            crate::avx_swar::convert_bf16_to_f32(other.get_slice_raw_bf16().0, &mut v);
-                            v
-                        };
+                        let mut out = BufPool::get_bf16(m * n);
+                        out.resize(m * n, half::bf16::ZERO);
+                        let mut a_f32 = BufPool::get(m * k); a_f32.resize(m * k, 0.0);
+                        let mut b_f32 = BufPool::get(k * n); b_f32.resize(k * n, 0.0);
+                        crate::avx_swar::convert_bf16_to_f32(self.get_slice_raw_bf16().0, &mut a_f32);
+                        crate::avx_swar::convert_bf16_to_f32(other.get_slice_raw_bf16().0, &mut b_f32);
+                        
                         let mut res_f32 = BufPool::get(m * n);
                         res_f32.resize(m * n, 0.0f32);
                         self.cpu_sgemm_f32(&a_f32, &b_f32, &mut res_f32, m, k, n, rsa, csa, rsb, csb);
                         out.par_iter_mut().zip(res_f32.par_iter()).for_each(|(o, &x)| *o = half::bf16::from_f32(x));
-                        BufPool::put(res_f32); // Return intermediate buffer to pool
+                        
+                        BufPool::put(a_f32); BufPool::put(b_f32); BufPool::put(res_f32);
                         Storage::BF16(out)
                     },
                     DataType::Int8 => {
-                        // For now fallback Int8 matmul to F32 then cast back
-                        let mut out = vec![0i8; m * n];
-                        let a_f32 = self.to_numpy_f32_vec();
-                        let b_f32 = other.to_numpy_f32_vec();
+                        let mut out = BufPool::get_i8(m * n);
+                        out.resize(m * n, 0);
+                        let (a, _) = self.get_slice_raw_i8();
+                        let (b, _) = other.get_slice_raw_i8();
+                        let mut a_f32 = BufPool::get(a.len()); a_f32.resize(a.len(), 0.0);
+                        let mut b_f32 = BufPool::get(b.len()); b_f32.resize(b.len(), 0.0);
+                        a_f32.par_iter_mut().zip(a.par_iter()).for_each(|(o, &i)| *o = i as f32);
+                        b_f32.par_iter_mut().zip(b.par_iter()).for_each(|(o, &i)| *o = i as f32);
+                        
                         let mut res_f32 = BufPool::get(m * n);
                         res_f32.resize(m * n, 0.0f32);
                         self.cpu_sgemm_f32(&a_f32, &b_f32, &mut res_f32, m, k, n, rsa, csa, rsb, csb);
                         out.par_iter_mut().zip(res_f32.par_iter()).for_each(|(o, &x)| *o = x as i8);
-                        BufPool::put(res_f32);
+                        BufPool::put(a_f32); BufPool::put(b_f32); BufPool::put(res_f32);
                         Storage::Int8(out)
                     }
                 }
+
             } else {
                 match dtype {
                     DataType::F32 => {
@@ -847,21 +854,31 @@ impl Tensor {
                         let (a_f32, b_f32) = if is_f16 {
                             let a_f16: &[half::f16] = bytemuck::cast_slice(a_bytes);
                             let b_f16: &[half::f16] = bytemuck::cast_slice(b_bytes);
-                            (a_f16.par_iter().map(|&x| x.to_f32()).collect::<Vec<_>>(),
-                             b_f16.par_iter().map(|&x| x.to_f32()).collect::<Vec<_>>())
+                            let mut v_a = BufPool::get(a_f16.len()); v_a.resize(a_f16.len(), 0.0);
+                            let mut v_b = BufPool::get(b_f16.len()); v_b.resize(b_f16.len(), 0.0);
+                            crate::avx_swar::convert_f16_to_f32(a_f16, &mut v_a);
+                            crate::avx_swar::convert_f16_to_f32(b_f16, &mut v_b);
+                            (v_a, v_b)
                         } else if is_int8 {
                             let a_int8: &[i8] = bytemuck::cast_slice(a_bytes);
                             let b_int8: &[i8] = bytemuck::cast_slice(b_bytes);
-                            (a_int8.par_iter().map(|&x| x as f32).collect::<Vec<_>>(),
-                             b_int8.par_iter().map(|&x| x as f32).collect::<Vec<_>>())
+                            let mut v_a = BufPool::get(a_int8.len()); v_a.resize(a_int8.len(), 0.0);
+                            let mut v_b = BufPool::get(b_int8.len()); v_b.resize(b_int8.len(), 0.0);
+                            for i in 0..a_int8.len() { v_a[i] = a_int8[i] as f32; }
+                            for i in 0..b_int8.len() { v_b[i] = b_int8[i] as f32; }
+                            (v_a, v_b)
                         } else { // BF16
                             let a_bf16: &[half::bf16] = bytemuck::cast_slice(a_bytes);
                             let b_bf16: &[half::bf16] = bytemuck::cast_slice(b_bytes);
-                            (a_bf16.par_iter().map(|&x| x.to_f32()).collect::<Vec<_>>(),
-                             b_bf16.par_iter().map(|&x| x.to_f32()).collect::<Vec<_>>())
+                            let mut v_a = BufPool::get(a_bf16.len()); v_a.resize(a_bf16.len(), 0.0);
+                            let mut v_b = BufPool::get(b_bf16.len()); v_b.resize(b_bf16.len(), 0.0);
+                            crate::avx_swar::convert_bf16_to_f32(a_bf16, &mut v_a);
+                            crate::avx_swar::convert_bf16_to_f32(b_bf16, &mut v_b);
+                            (v_a, v_b)
                         };
                         
-                        self.cpu_sgemm_streamed_f32(&a_f32, &b_f32, &mut res_f32, m, k, n, rsa, csa, rsb, csb);
+                        self.cpu_sgemm_f32(&a_f32, &b_f32, &mut res_f32, m, k, n, rsa, csa, rsb, csb);
+                        BufPool::put(a_f32); BufPool::put(b_f32);
                         
                         if is_f16 {
                             let out_f16: &mut [half::f16] = bytemuck::cast_slice_mut(&mut out_bytes);
@@ -950,33 +967,65 @@ impl Tensor {
                 let (a, _) = self.get_slice_raw_f32();
                 let (b, _) = other.get_slice_raw_f32();
                 let mut res = BufPool::get(a.len());
-                match op {
-                    "mul" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = a * b),
-                    "sub" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = a - b),
-                    "div" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = a / b),
-                    _ => {}
+                let n = a.len();
+                if n >= crate::avx_swar::RAYON_THRESHOLD {
+                    match op {
+                        "mul" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = a * b),
+                        "sub" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = a - b),
+                        "div" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = a / b),
+                        _ => {}
+                    }
+                } else {
+                    // Serial: avoid Rayon wakeup overhead on small tensors
+                    match op {
+                        "mul" => { for i in 0..n { res[i] = a[i] * b[i]; } }
+                        "sub" => { for i in 0..n { res[i] = a[i] - b[i]; } }
+                        "div" => { for i in 0..n { let bv = b[i]; res[i] = if bv != 0.0 { a[i] / bv } else { f32::INFINITY }; } }
+                        _ => {}
+                    }
                 }
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: op_name.to_string(), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(res), mmap_data: None })
             } else if self.dtype == DataType::F16 {
                 let (a, _) = self.get_slice_raw_f16();
                 let (b, _) = other.get_slice_raw_f16();
-                let mut res = vec![f16::ZERO; a.len()];
-                match op {
-                    "mul" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = f16::from_f32(a.to_f32() * b.to_f32())),
-                    "sub" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = f16::from_f32(a.to_f32() - b.to_f32())),
-                    "div" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = f16::from_f32(a.to_f32() / b.to_f32())),
-                    _ => {}
+                let n = a.len();
+                // Use BufPool for F16 (treat as [u16] for pooling then cast)
+                let mut res = BufPool::get_f16(n);
+                if n >= crate::avx_swar::RAYON_THRESHOLD {
+                    match op {
+                        "mul" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = f16::from_f32(a.to_f32() * b.to_f32())),
+                        "sub" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = f16::from_f32(a.to_f32() - b.to_f32())),
+                        "div" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = f16::from_f32(a.to_f32() / b.to_f32())),
+                        _ => {}
+                    }
+                } else {
+                    match op {
+                        "mul" => { for i in 0..n { res[i] = f16::from_f32(a[i].to_f32() * b[i].to_f32()); } }
+                        "sub" => { for i in 0..n { res[i] = f16::from_f32(a[i].to_f32() - b[i].to_f32()); } }
+                        "div" => { for i in 0..n { res[i] = f16::from_f32(a[i].to_f32() / b[i].to_f32()); } }
+                        _ => {}
+                    }
                 }
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: op_name.to_string(), is_transposed: false, dtype: DataType::F16, storage: Storage::F16(res), mmap_data: None })
             } else if self.dtype == DataType::BF16 {
                 let (a, _) = self.get_slice_raw_bf16();
                 let (b, _) = other.get_slice_raw_bf16();
-                let mut res = vec![bf16::ZERO; a.len()];
-                match op {
-                    "mul" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = bf16::from_f32(a.to_f32() * b.to_f32())),
-                    "sub" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = bf16::from_f32(a.to_f32() - b.to_f32())),
-                    "div" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = bf16::from_f32(a.to_f32() / b.to_f32())),
-                    _ => {}
+                let n = a.len();
+                let mut res = BufPool::get_bf16(n);
+                if n >= crate::avx_swar::RAYON_THRESHOLD {
+                    match op {
+                        "mul" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = bf16::from_f32(a.to_f32() * b.to_f32())),
+                        "sub" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = bf16::from_f32(a.to_f32() - b.to_f32())),
+                        "div" => res.par_iter_mut().zip(a.par_iter()).zip(b.par_iter()).for_each(|((c, &a), &b)| *c = bf16::from_f32(a.to_f32() / b.to_f32())),
+                        _ => {}
+                    }
+                } else {
+                    match op {
+                        "mul" => { for i in 0..n { res[i] = bf16::from_f32(a[i].to_f32() * b[i].to_f32()); } }
+                        "sub" => { for i in 0..n { res[i] = bf16::from_f32(a[i].to_f32() - b[i].to_f32()); } }
+                        "div" => { for i in 0..n { res[i] = bf16::from_f32(a[i].to_f32() / b[i].to_f32()); } }
+                        _ => {}
+                    }
                 }
                 Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: op_name.to_string(), is_transposed: false, dtype: self.dtype, storage: Storage::BF16(res), mmap_data: None })
             } else if self.dtype == DataType::Int8 {
@@ -1456,43 +1505,139 @@ impl Tensor {
 
                 Ok(Tensor { shape: out_shape, device: self.device.clone(), name: format!("{}_dim_res", op), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(out), mmap_data: None })
             } else {
-                let val = match op {
-                    "sum" => input.par_iter().sum::<f32>(),
-                    "mean" => input.par_iter().sum::<f32>() / input.len() as f32,
-                    "max" => input.par_iter().cloned().reduce(|| f32::NEG_INFINITY, f32::max),
-                    "min" => input.par_iter().cloned().reduce(|| f32::INFINITY, f32::min),
-                    _ => panic!("Unsupported reduction op: {}", op),
+                let n = input.len();
+                let res_val = if n >= crate::avx_swar::RAYON_THRESHOLD {
+                    match op {
+                        "sum" | "mean" => {
+                            // 256k items (1MB) per chunk fits comfortably in L3 cache slices.
+                            const SUM_CHUNK: usize = 262_144; 
+                            let total_sum = input.par_chunks(SUM_CHUNK).map(|chunk| unsafe {
+                                #[cfg(target_arch = "x86_64")]
+                                { crate::avx_swar::sum_f32_dispatch(chunk) }
+                                #[cfg(not(target_arch = "x86_64"))]
+                                { chunk.iter().sum::<f32>() }
+                            }).sum::<f32>();
+                            if op == "mean" { total_sum / n as f32 } else { total_sum }
+                        },
+                        "max" => input.par_iter().cloned().reduce(|| f32::NEG_INFINITY, f32::max),
+                        "min" => input.par_iter().cloned().reduce(|| f32::INFINITY, f32::min),
+                        _ => panic!("Unsupported reduction op: {}", op),
+                    }
+                } else {
+                    match op {
+                        "sum" => { 
+                            #[cfg(target_arch = "x86_64")]
+                            { unsafe { crate::avx_swar::sum_f32_dispatch(input) } }
+                            #[cfg(not(target_arch = "x86_64"))]
+                            { let mut s = 0.0; for &x in input { s += x; } s }
+                        }
+                        "mean" => { 
+                            #[cfg(target_arch = "x86_64")]
+                            let s = unsafe { crate::avx_swar::sum_f32_dispatch(input) };
+                            #[cfg(not(target_arch = "x86_64"))]
+                            let s = { let mut s = 0.0; for &x in input { s += x; } s };
+                            s / n as f32 
+                        }
+                        "max" => { let mut m = f32::NEG_INFINITY; for &x in input { m = m.max(x); } m }
+                        "min" => { let mut m = f32::INFINITY; for &x in input { m = m.min(x); } m }
+                        _ => panic!("Unsupported reduction op: {}", op),
+                    }
                 };
-                Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(vec![val]), mmap_data: None })
+                Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(vec![res_val]), mmap_data: None })
             }
         } else if self.dtype == DataType::F16 {
             let (input, _) = self.get_slice_raw_f16();
-            let val = match op {
-                "sum" => input.par_iter().map(|&x| x.to_f32()).sum::<f32>(),
-                "mean" => input.par_iter().map(|&x| x.to_f32()).sum::<f32>() / input.len() as f32,
-                "max" => input.par_iter().map(|&x| x.to_f32()).reduce(|| f32::NEG_INFINITY, f32::max),
-                "min" => input.par_iter().map(|&x| x.to_f32()).reduce(|| f32::INFINITY, f32::min),
-                _ => panic!("Unsupported reduction op: {}", op),
+            let n = input.len();
+            let val = if n >= crate::avx_swar::RAYON_THRESHOLD {
+                match op {
+                    "sum" | "mean" => {
+                        let total_sum = input.par_chunks(262_144).map(|chunk| {
+                            let mut s = 0.0;
+                            for &x in chunk { s += x.to_f32(); }
+                            s
+                        }).sum::<f32>();
+                        if op == "mean" { total_sum / n as f32 } else { total_sum }
+                    },
+                    "max" => input.par_chunks(262_144).map(|chunk| {
+                        let mut m = f32::NEG_INFINITY;
+                        for &x in chunk { m = m.max(x.to_f32()); }
+                        m
+                    }).reduce(|| f32::NEG_INFINITY, f32::max),
+                    "min" => input.par_chunks(262_144).map(|chunk| {
+                        let mut m = f32::INFINITY;
+                        for &x in chunk { m = m.min(x.to_f32()); }
+                        m
+                    }).reduce(|| f32::INFINITY, f32::min),
+                    _ => panic!("Unsupported reduction op: {}", op),
+                }
+            } else {
+                match op {
+                    "sum" => { let mut s = 0.0; for &x in input { s += x.to_f32(); } s }
+                    "mean" => { let mut s = 0.0; for &x in input { s += x.to_f32(); } s / n as f32 }
+                    "max" => { let mut m = f32::NEG_INFINITY; for &x in input { m = m.max(x.to_f32()); } m }
+                    "min" => { let mut m = f32::INFINITY; for &x in input { m = m.min(x.to_f32()); } m }
+                    _ => panic!("Unsupported reduction op: {}", op),
+                }
             };
             Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F16, storage: Storage::F16(vec![half::f16::from_f32(val)]), mmap_data: None })
         } else if self.dtype == DataType::BF16 {
             let (input, _) = self.get_slice_raw_bf16();
-            let val = match op {
-                "sum" => input.par_iter().map(|&x| x.to_f32()).sum::<f32>(),
-                "mean" => input.par_iter().map(|&x| x.to_f32()).sum::<f32>() / input.len() as f32,
-                "max" => input.par_iter().map(|&x| x.to_f32()).reduce(|| f32::NEG_INFINITY, f32::max),
-                "min" => input.par_iter().map(|&x| x.to_f32()).reduce(|| f32::INFINITY, f32::min),
-                _ => panic!("Unsupported reduction op: {}", op),
+            let n = input.len();
+            let val = if n >= crate::avx_swar::RAYON_THRESHOLD {
+                match op {
+                    "sum" | "mean" => {
+                        let total_sum = input.par_chunks(262_144).map(|chunk| {
+                            let mut s = 0.0;
+                            for &x in chunk { s += x.to_f32(); }
+                            s
+                        }).sum::<f32>();
+                        if op == "mean" { total_sum / n as f32 } else { total_sum }
+                    },
+                    "max" => input.par_chunks(262_144).map(|chunk| {
+                        let mut m = f32::NEG_INFINITY;
+                        for &x in chunk { m = m.max(x.to_f32()); }
+                        m
+                    }).reduce(|| f32::NEG_INFINITY, f32::max),
+                    "min" => input.par_chunks(262_144).map(|chunk| {
+                        let mut m = f32::INFINITY;
+                        for &x in chunk { m = m.min(x.to_f32()); }
+                        m
+                    }).reduce(|| f32::INFINITY, f32::min),
+                    _ => panic!("Unsupported reduction op: {}", op),
+                }
+            } else {
+                match op {
+                    "sum" => { let mut s = 0.0; for &x in input { s += x.to_f32(); } s }
+                    "mean" => { let mut s = 0.0; for &x in input { s += x.to_f32(); } s / n as f32 }
+                    "max" => { let mut m = f32::NEG_INFINITY; for &x in input { m = m.max(x.to_f32()); } m }
+                    "min" => { let mut m = f32::INFINITY; for &x in input { m = m.min(x.to_f32()); } m }
+                    _ => panic!("Unsupported reduction op: {}", op),
+                }
             };
             Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::BF16, storage: Storage::BF16(vec![half::bf16::from_f32(val)]), mmap_data: None })
         } else if self.dtype == DataType::Int8 {
             let (input, _) = self.get_slice_raw_i8();
-            let val = match op {
-                "sum" => input.par_iter().map(|&x| x as i32).sum::<i32>() as f32,
-                "mean" => (input.par_iter().map(|&x| x as i32).sum::<i32>() as f32) / input.len() as f32,
-                "max" => input.par_iter().map(|&x| x as i32).reduce(|| i8::MIN as i32, |a, b| a.max(b)) as f32,
-                "min" => input.par_iter().map(|&x| x as i32).reduce(|| i8::MAX as i32, |a, b| a.min(b)) as f32,
-                _ => panic!("Unsupported reduction op: {}", op),
+            let n = input.len();
+            let val: f32 = if n >= crate::avx_swar::RAYON_THRESHOLD {
+                match op {
+                    "sum" | "mean" => {
+                        let total_sum: i32 = input.par_chunks(262_144).map(|chunk| {
+                            crate::avx_swar::sum_i8_swar(chunk)
+                        }).sum();
+                        if op == "mean" { total_sum as f32 / n as f32 } else { total_sum as f32 }
+                    },
+                    "max" => input.par_iter().cloned().reduce(|| i8::MIN, i8::max) as f32,
+                    "min" => input.par_iter().cloned().reduce(|| i8::MAX, i8::min) as f32,
+                    _ => panic!("Unsupported reduction op: {}", op),
+                }
+            } else {
+                match op {
+                    "sum" => crate::avx_swar::sum_i8_swar(input) as f32,
+                    "mean" => crate::avx_swar::sum_i8_swar(input) as f32 / n as f32,
+                    "max" => { let mut m = i8::MIN; for &x in input { m = m.max(x); } m as f32 }
+                    "min" => { let mut m = i8::MAX; for &x in input { m = m.min(x); } m as f32 }
+                    _ => panic!("Unsupported reduction op: {}", op),
+                }
             };
             if op == "sum" || op == "mean" {
                 Ok(Tensor { shape: vec![], device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(vec![val]), mmap_data: None })
@@ -1508,238 +1653,9 @@ impl Tensor {
         if self.is_ssd() {
             return self.unary_op_ssd(op, param1, param2);
         }
-        if self.device == "cpu" {
-            if self.dtype == DataType::F32 {
-                let (input, _) = self.get_slice_raw_f32();
-                // BufPool::get reuses warm memory from a previous call — avoids cold OS page fault.
-                // This is the primary fix for relu() being 10x slower than PyTorch on small tensors.
-                let mut res = BufPool::get(input.len());
-                Self::act_into_raw_f32(input, op, param1, param2, &mut res)?;
-                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F32, storage: Storage::F32(res), mmap_data: None })
-            } else if self.dtype == DataType::F16 {
-                let (input, _) = self.get_slice_raw_f16();
-                let mut res = vec![f16::ZERO; input.len()];
-                match op {
-                    "relu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { f16::ZERO }),
-                    "sigmoid" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
-                    "silu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = f16::from_f32(f / (1.0 + (-f).exp())) }),
-                    "gelu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = f16::from_f32(0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) }),
-                    "leaky_relu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = f16::from_f32(if f > 0.0 { f } else { f * param1 }) }),
-                    "elu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = f16::from_f32(if f > 0.0 { f } else { param1 * (f.exp() - 1.0) }) }),
-                    "tanh" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(i.to_f32().tanh())),
-                    "clamp" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = f16::from_f32(i.to_f32().clamp(param1, param2))),
-                    _ => panic!("Unsupported F16 CPU op: {}", op),
-                }
-                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::F16, storage: Storage::F16(res), mmap_data: None })
-            } else if self.dtype == DataType::BF16 {
-                let (input, _) = self.get_slice_raw_bf16();
-                let mut res = vec![bf16::ZERO; input.len()];
-                match op {
-                    "relu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = if i.to_f32() > 0.0 { i } else { bf16::ZERO }),
-                    "sigmoid" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
-                    "silu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = bf16::from_f32(f / (1.0 + (-f).exp())) }),
-                    "gelu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = bf16::from_f32(0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) }),
-                    "leaky_relu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = bf16::from_f32(if f > 0.0 { f } else { f * param1 }) }),
-                    "elu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = bf16::from_f32(if f > 0.0 { f } else { param1 * (f.exp() - 1.0) }) }),
-                    "tanh" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(i.to_f32().tanh())),
-                    "clamp" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = bf16::from_f32(i.to_f32().clamp(param1, param2))),
-                    _ => panic!("Unsupported BF16 CPU op: {}", op),
-                }
-                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::BF16, storage: Storage::BF16(res), mmap_data: None })
-            } else if self.dtype == DataType::Int8 {
-                let (input, _) = self.get_slice_raw_i8();
-                let mut res = vec![0i8; input.len()];
-                match op {
-                    "relu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = if i > 0 { i } else { 0 }),
-                    "clamp" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| *o = i.clamp(param1 as i8, param2 as i8)),
-                    "sigmoid" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { *o = (1.0 / (1.0 + (-(i as f32)).exp()) * 127.0) as i8 }),
-                    "gelu" => res.par_iter_mut().zip(input.par_iter()).for_each(|(o, &i)| { 
-                        let f = i as f32;
-                        *o = (0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) as i8;
-                    }),
-                    _ => return Err(PyValueError::new_err(format!("Unsupported Int8 CPU op: {}", op))),
-                }
-                Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: DataType::Int8, storage: Storage::Int8(res), mmap_data: None })
-            } else {
-                return Err(PyValueError::new_err("Unsupported DataType for CPU Unary Op"));
-            }
-        } else if self.device == "hybrid" {
-            // --- MSTS Tile-Pulling Hybrid Dispatch (Phase 4) ---
-            // Divide the tensor into N tiles of ~TILE_ELEMS elements each.
-            // An AtomicUsize acts as a shared tile counter (Tagged-Token Dataflow).
-            // One GPU dispatcher thread and multiple CPU worker threads race to claim
-            // tiles via fetch_add. The fastest resource "eats" the most work.
-            let (input_raw, _) = self.get_slice_raw_bytes();
-            let bpe_fetch = match self.dtype {
-                DataType::F32  => 4,
-                DataType::Int8 => 1,
-                _ => 2,
-            };
-            let num_total = input_raw.len() / bpe_fetch;
-
-            // Tile size: ~256K elements (~1MB for F32) aligns with our ZFS block target
-            const TILE_ELEMS: usize = 256 * 1024;
-            // Vulkan dispatch has a fixed overhead of ~80ms on Bonaire (PCIe staging roundtrip).
-            // Only use the GPU dispatcher when the total data is large enough to amortize that cost.
-            // Below this threshold, pure CPU SWAR is always faster on this hardware.
-            const VULKAN_MIN_ELEMS: usize = 4 * 1024 * 1024; // ~16MB F32 / ~8MB F16
-
-            let num_tiles = num_total.div_ceil(TILE_ELEMS);
-
-            let out_bytes_len = input_raw.len();
-            let mut out_raw = vec![0u8; out_bytes_len];
-
-            // We need raw ptrs for cross-thread writes into disjoint non-overlapping slices.
-            // Safety: tiles are non-overlapping; the AtomicUsize guarantees each tile is
-            // claimed at most once. We never write the same byte from two threads.
-            let input_ptr = input_raw.as_ptr() as usize; // Send as usize (no &ref lifetime issue)
-            let output_ptr = out_raw.as_mut_ptr() as usize;
-            let total_len  = out_bytes_len;
-            let dtype      = self.dtype;
-            let op_str     = op.to_string();
-
-            let tile_counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
-            rayon::scope(|s| {
-                // GPU dispatcher thread: only spawn if tensor is above the Vulkan break-even point.
-                // Below VULKAN_MIN_ELEMS the PCIe staging overhead dominates; pure CPU is faster.
-                if num_total >= VULKAN_MIN_ELEMS {
-                let counter_gpu = tile_counter.clone();
-                let op_gpu = op_str.clone();
-                s.spawn(move |_| {
-
-                    loop {
-                        let tile_id = counter_gpu.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if tile_id >= num_tiles { break; }
-                        let elem_start = tile_id * TILE_ELEMS;
-                        let elem_count = (TILE_ELEMS).min(num_total - elem_start);
-                        let bpe = match dtype {
-                            DataType::F32 => 4usize,
-                            DataType::Int8 => 1usize,
-                            _ => 2usize,
-                        };
-                        // Safety: raw ptrs are valid for `total_len` bytes
-                        let in_sl  = unsafe { std::slice::from_raw_parts    (input_ptr  as *const u8, total_len) };
-                        let out_sl = unsafe { std::slice::from_raw_parts_mut(output_ptr as *mut   u8, total_len) };
-                        let _ = bpe; // suppress lint
-                        crate::backend::execute_activation_chunked(in_sl, out_sl, elem_start, elem_count, &op_gpu, param1, param2, dtype);
-                    }
-                });
-                } // end if num_total >= VULKAN_MIN_ELEMS
-
-                // Bug #5 fix: was a single CPU worker — only 1 core used!
-                // Now spawn N CPU workers (one per Rayon thread available), racing on the
-                // tile_counter. This matches the work-stealing intent of the MSTS architecture.
-                let num_cpu_workers = rayon::current_num_threads();
-                for _ in 0..num_cpu_workers {
-                let cpu_tiles = num_tiles; // upper bound visible to Rayon workers below
-                let counter_cpu = tile_counter.clone();
-                let op_cpu = op_str.clone();
-                s.spawn(move |_| {
-                    loop {
-                        let tile_id = counter_cpu.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if tile_id >= cpu_tiles { break; }
-                        let elem_start = tile_id * TILE_ELEMS;
-                        let elem_count = (TILE_ELEMS).min(num_total - elem_start);
-                        let bpe = match dtype {
-                            DataType::F32 => 4usize,
-                            DataType::Int8 => 1usize,
-                            _ => 2usize,
-                        };
-                        let in_sl  = unsafe { std::slice::from_raw_parts    (input_ptr  as *const u8, total_len) };
-                        let out_sl = unsafe { std::slice::from_raw_parts_mut(output_ptr as *mut   u8, total_len) };
-                        match dtype {
-                            DataType::F32 => {
-                                let in_f  = unsafe { std::slice::from_raw_parts    (in_sl.as_ptr()  .add(elem_start * bpe) as *const f32, elem_count) };
-                                let out_f = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut f32, elem_count) };
-                                match op_cpu.as_str() {
-                                    "relu"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { 0.0 }),
-                                    "sigmoid" => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = 1.0 / (1.0 + (-i).exp())),
-                                    "silu"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = i / (1.0 + (-i).exp())),
-                                    "gelu"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = 0.5 * i * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (i + 0.044715 * i.powi(3))).tanh())),
-                                    "leaky_relu" => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { i * param1 }),
-                                    "elu"     => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = if i > 0.0 { i } else { param1 * (i.exp() - 1.0) }),
-                                    "tanh"    => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = i.tanh()),
-                                    "clamp"   => out_f.iter_mut().zip(in_f.iter()).for_each(|(o, &i)| *o = i.clamp(param1, param2)),
-                                    _ => panic!("Unsupported CPU op in hybrid tile worker"),
-                                }
-                            },
-                            DataType::F16 => {
-                                let in_h  = unsafe { std::slice::from_raw_parts    (in_sl.as_ptr()  .add(elem_start * bpe) as *const half::f16, elem_count) };
-                                let out_h = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut half::f16, elem_count) };
-                                match op_cpu.as_str() {
-                                    "relu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| *o = if i > half::f16::ZERO { i } else { half::f16::ZERO }),
-                                    "sigmoid" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| *o = half::f16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
-                                    "silu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::f16::from_f32(f / (1.0 + (-f).exp())) }),
-                                    "gelu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::f16::from_f32(0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) }),
-                                    "leaky_relu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::f16::from_f32(if f > 0.0 { f } else { f * param1 }) }),
-                                    "elu" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::f16::from_f32(if f > 0.0 { f } else { param1 * (f.exp() - 1.0) }) }),
-                                    "tanh" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| *o = half::f16::from_f32(i.to_f32().tanh())),
-                                    "clamp" => out_h.iter_mut().zip(in_h.iter()).for_each(|(o, &i)| *o = half::f16::from_f32(i.to_f32().clamp(param1, param2))),
-                                    _ => panic!("Unsupported F16 hybrid tile op"),
-                                }
-                            },
-                            DataType::BF16 => {
-                                let in_b  = unsafe { std::slice::from_raw_parts    (in_sl.as_ptr()  .add(elem_start * bpe) as *const half::bf16, elem_count) };
-                                let out_b = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut half::bf16, elem_count) };
-                                match op_cpu.as_str() {
-                                    "relu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| *o = if i > half::bf16::ZERO { i } else { half::bf16::ZERO }),
-                                    "sigmoid" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| *o = half::bf16::from_f32(1.0 / (1.0 + (-i.to_f32()).exp()))),
-                                    "silu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::bf16::from_f32(f / (1.0 + (-f).exp())) }),
-                                    "gelu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::bf16::from_f32(0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) }),
-                                    "leaky_relu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::bf16::from_f32(if f > 0.0 { f } else { f * param1 }) }),
-                                    "elu" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| { let f = i.to_f32(); *o = half::bf16::from_f32(if f > 0.0 { f } else { param1 * (f.exp() - 1.0) }) }),
-                                    "tanh" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| *o = half::bf16::from_f32(i.to_f32().tanh())),
-                                    "clamp" => out_b.iter_mut().zip(in_b.iter()).for_each(|(o, &i)| *o = half::bf16::from_f32(i.to_f32().clamp(param1, param2))),
-                                    _ => panic!("Unsupported BF16 hybrid tile op"),
-                                }
-                            },
-                            DataType::Int8 => {
-                                let in_i  = unsafe { std::slice::from_raw_parts    (in_sl.as_ptr()  .add(elem_start * bpe) as *const i8, elem_count) };
-                                let out_i = unsafe { std::slice::from_raw_parts_mut(out_sl.as_mut_ptr().add(elem_start * bpe) as *mut i8, elem_count) };
-                                    match op_cpu.as_str() {
-                                        "relu" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| *o = if i > 0 { i } else { 0 }),
-                                        "clamp" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| *o = i.clamp(param1 as i8, param2 as i8)),
-                                        "mul_scalar" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| *o = i.wrapping_mul(param1 as i8)),
-                                        "add_scalar" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| *o = i.wrapping_add(param1 as i8)),
-                                        "sigmoid" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| { *o = (1.0 / (1.0 + (-(i as f32)).exp()) * 127.0) as i8 }),
-                                        "gelu" => out_i.iter_mut().zip(in_i.iter()).for_each(|(o, &i)| { 
-                                            let f = i as f32;
-                                            *o = (0.5 * f * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (f + 0.044715 * f.powi(3))).tanh())) as i8;
-                                        }),
-                                        _ => {
-                                            for k in 0..elem_count {
-                                                out_i[k] = in_i[k];
-                                            }
-                                        }
-                                    }
-                            }
-                        }
-                    }
-                });
-                } // end for cpu workers
-            });
-
-            let storage = match dtype {
-                DataType::F16 => Storage::F16(bytemuck::cast_slice(&out_raw).to_vec()),
-                DataType::BF16 => Storage::BF16(bytemuck::cast_slice(&out_raw).to_vec()),
-                DataType::Int8 => Storage::Int8(bytemuck::cast_slice(&out_raw).to_vec()),
-                _ => Storage::F32(bytemuck::cast_slice(&out_raw).to_vec()),
-            };
-            Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: self.dtype, storage, mmap_data: None })
-
-        } else {
-            // Pure Vulkan path (device == "vulkan")
-            let (input_raw, _) = self.get_slice_raw_bytes();
-            let res_raw = crate::backend::execute_activation(input_raw, op, param1, param2, self.dtype, false);
-            let storage = match self.dtype {
-                DataType::F16 => Storage::F16(bytemuck::cast_slice(&res_raw).to_vec()),
-                DataType::BF16 => Storage::BF16(bytemuck::cast_slice(&res_raw).to_vec()),
-                DataType::Int8 => Storage::Int8(bytemuck::cast_slice(&res_raw).to_vec()),
-                _ => Storage::F32(bytemuck::cast_slice(&res_raw).to_vec()),
-            };
-            Ok(Tensor { shape: self.shape.clone(), device: self.device.clone(), name: format!("{}_res", op), is_transposed: false, dtype: self.dtype, storage, mmap_data: None })
-        }
+        let mut out = Self::zeros(self.shape.clone(), self.dtype, &self.device)?;
+        self.act_into(op, param1, param2, &mut out)?;
+        Ok(out)
     }
 
     fn unary_op_ssd(&self, op: &str, param1: f32, param2: f32) -> PyResult<Tensor> {
@@ -1830,31 +1746,88 @@ impl Tensor {
         Ok(res_tensor)
     }
 
-    fn act_into_raw_bf16(slice: &[half::bf16], op: &str, param1: f32, param2: f32, out_slice: &mut [half::bf16]) {
-        out_slice.par_iter_mut().zip(slice.par_iter()).for_each(|(o, &i)| {
-            let f = i.to_f32();
-            *o = half::bf16::from_f32(match op {
-                "relu" => if f > 0.0 { f } else { 0.0 },
-                "sigmoid" => 1.0 / (1.0 + (-f).exp()),
-                "silu" => f / (1.0 + (-f).exp()),
-                "tanh" => f.tanh(),
-                "clamp" => f.clamp(param1, param2),
-                _ => f,
-            });
-        });
-    }
+
 
     fn act_into_raw_parallel_f32(slice: &mut [f32], op: &str, param1: f32, param2: f32) {
+        if slice.len() < crate::avx_swar::RAYON_THRESHOLD {
+            match op {
+                "relu" => crate::avx_swar::relu_f32_inplace(slice),
+                "gelu" => crate::avx_swar::gelu_f32_inplace(slice),
+                "sigmoid" => for x in slice.iter_mut() { *x = 1.0 / (1.0 + (-*x).exp()); },
+                "silu"    => for x in slice.iter_mut() { *x = *x / (1.0 + (-*x).exp()); },
+                "leaky_relu" => for x in slice.iter_mut() { if *x < 0.0 { *x *= param1; } },
+                "elu"    => for x in slice.iter_mut() { if *x < 0.0 { *x = param1 * (x.exp() - 1.0); } },
+                "tanh"   => for x in slice.iter_mut() { *x = x.tanh(); },
+                "clamp"  => for x in slice.iter_mut() { *x = x.clamp(param1, param2); },
+                _ => panic!("Unsupported Op: {}", op),
+            }
+            return;
+        }
+
+        // 256k items (1MB) per chunk fits comfortably in L3 cache slices across 4 cores.
+        const CHUNK: usize = 262_144;
+
         match op {
-            "relu" => slice.par_iter_mut().for_each(|x| if *x < 0.0 { *x = 0.0; }),
-            "sigmoid" => slice.par_iter_mut().for_each(|x| *x = 1.0 / (1.0 + (-*x).exp())),
-            "silu" => slice.par_iter_mut().for_each(|x| *x = *x / (1.0 + (-*x).exp())),
-            "gelu" => slice.par_iter_mut().for_each(|x| *x = 0.5 * *x * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (*x + 0.044715 * x.powi(3))).tanh())),
-            "leaky_relu" => slice.par_iter_mut().for_each(|x| if *x < 0.0 { *x *= param1; }),
-            "elu" => slice.par_iter_mut().for_each(|x| if *x < 0.0 { *x = param1 * (x.exp() - 1.0); }),
-            "tanh" => slice.par_iter_mut().for_each(|x| *x = x.tanh()),
-            "clamp" => slice.par_iter_mut().for_each(|x| *x = x.clamp(param1, param2)),
+            "relu" => slice.par_chunks_mut(CHUNK).for_each(|chunk| {
+                crate::avx_swar::relu_f32_inplace(chunk);
+            }),
+            "gelu" => slice.par_chunks_mut(CHUNK).for_each(|chunk| {
+                crate::avx_swar::gelu_f32_inplace(chunk);
+            }),
+            "sigmoid" => slice.par_chunks_mut(CHUNK).for_each(|chunk| {
+                for x in chunk { *x = 1.0 / (1.0 + (-*x).exp()); }
+            }),
+            "silu"    => slice.par_chunks_mut(CHUNK).for_each(|chunk| {
+                for x in chunk { *x = *x / (1.0 + (-*x).exp()); }
+            }),
+            "leaky_relu" => slice.par_chunks_mut(CHUNK).for_each(|chunk| {
+                for x in chunk { if *x < 0.0 { *x *= param1; } }
+            }),
+            "elu"    => slice.par_chunks_mut(CHUNK).for_each(|chunk| {
+                for x in chunk { if *x < 0.0 { *x = param1 * (x.exp() - 1.0); } }
+            }),
+            "tanh"   => slice.par_chunks_mut(CHUNK).for_each(|chunk| {
+                for x in chunk { *x = x.tanh(); }
+            }),
+            "clamp"  => slice.par_chunks_mut(CHUNK).for_each(|chunk| {
+                for x in chunk { *x = x.clamp(param1, param2); }
+            }),
             _ => panic!("Unsupported Op: {}", op),
+        }
+    }
+
+    fn act_into_raw_parallel_i8(slice: &mut [i8], op: &str, param1: f32, param2: f32) {
+        if slice.len() < crate::avx_swar::RAYON_THRESHOLD {
+            match op {
+                "relu" => crate::avx_swar::relu_i8_swar(slice),
+                "clamp" => for x in slice.iter_mut() { *x = (*x).clamp(param1 as i8, param2 as i8) },
+                _ => {
+                    let mut f32_buf = BufPool::get(slice.len());
+                    for (f, &i) in f32_buf.iter_mut().zip(slice.iter()) { *f = i as f32; }
+                    Self::act_into_raw_parallel_f32(&mut f32_buf, op, param1, param2);
+                    for (i, &f) in slice.iter_mut().zip(f32_buf.iter()) { *i = f as i8; }
+                    BufPool::put(f32_buf);
+                }
+            }
+            return;
+        }
+
+        match op {
+            "relu" => {
+                // Int8 is 1-byte, so 1MB chunk = 1_048_576 items.
+                slice.par_chunks_mut(1_048_576).for_each(|chunk| {
+                    crate::avx_swar::relu_i8_swar(chunk);
+                });
+            },
+            "clamp" => slice.par_iter_mut().for_each(|x| *x = (*x).clamp(param1 as i8, param2 as i8)),
+            _ => {
+                // Fallback for complex ops (sigmoid, gelu) on Int8 — upconvert to F32
+                let mut f32_buf = BufPool::get(slice.len());
+                for (f, &i) in f32_buf.iter_mut().zip(slice.iter()) { *f = i as f32; }
+                Self::act_into_raw_parallel_f32(&mut f32_buf, op, param1, param2);
+                for (i, &f) in slice.iter_mut().zip(f32_buf.iter()) { *i = f as i8; }
+                BufPool::put(f32_buf);
+            }
         }
     }
 
@@ -2001,53 +1974,6 @@ impl Tensor {
         Ok(())
     }
 
-    fn act_into_raw_f32(i_s: &[f32], op: &str, param1: f32, param2: f32, out: &mut [f32]) -> PyResult<()> {
-        let total_elements = i_s.len();
-        // Use serial execution for very small arrays (L1 cache size, < 32k items)
-        // For larger arrays, Rayon overhead is well compensated by utilizing all cores.
-        if total_elements < 32_000 {
-            // Serial path — AVX1 vmaxps (8 floats/cycle) for relu, scalar fallback for rest
-            match op {
-                "relu"    => {
-                    out.copy_from_slice(i_s);
-                    crate::avx_swar::relu_f32_inplace(out);
-                },
-                "sigmoid" => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = 1.0 / (1.0 + (-i).exp()); } },
-                "silu"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = i * (1.0 / (1.0 + (-i).exp())); } },
-                "gelu"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = 0.5 * i * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (i + 0.044715 * i.powi(3))).tanh()); } },
-                "leaky_relu" => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = if i > 0.0 { i } else { i * param1 }; } },
-                "elu"     => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = if i > 0.0 { i } else { param1 * (i.exp() - 1.0) }; } },
-                "tanh"    => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = i.tanh(); } },
-                "clamp"   => { for (o, &i) in out.iter_mut().zip(i_s.iter()) { *o = i.clamp(param1, param2); } },
-                _ => {}
-            }
-        } else {
-            let tile = 1024 * 1024 / 4;
-            out.par_chunks_mut(tile).enumerate().for_each(|(idx, chunk)| {
-                let s = idx * tile;
-                let end = std::cmp::min(s + chunk.len(), i_s.len());
-                if s < end {
-                    let isub = &i_s[s..end];
-                    let process_len = std::cmp::min(chunk.len(), isub.len());
-                    match op {
-                        "relu" => {
-                            chunk[..process_len].copy_from_slice(isub);
-                            crate::avx_swar::relu_f32_inplace(&mut chunk[..process_len]);
-                        },
-                        "sigmoid" => for k in 0..process_len { chunk[k] = 1.0 / (1.0 + (-isub[k]).exp()); },
-                        "silu" => for k in 0..process_len { chunk[k] = isub[k] * (1.0 / (1.0 + (-isub[k]).exp())); },
-                        "gelu" => for k in 0..process_len { chunk[k] = 0.5 * isub[k] * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI / std::f32::consts::SQRT_2 * (isub[k] + 0.044715 * isub[k].powi(3))).tanh()); },
-                        "leaky_relu" => for k in 0..process_len { chunk[k] = if isub[k] > 0.0 { isub[k] } else { isub[k] * param1 }; },
-                        "elu" => for k in 0..process_len { chunk[k] = if isub[k] > 0.0 { isub[k] } else { param1 * (isub[k].exp() - 1.0) }; },
-                        "tanh" => for k in 0..process_len { chunk[k] = isub[k].tanh(); },
-                        "clamp" => for k in 0..process_len { chunk[k] = isub[k].clamp(param1, param2); },
-                        _ => {}
-                    }
-                }
-            });
-        }
-        Ok(())
-    }
 
     /// Extreme I/O MERA-400 architecture for SSD tensors
     pub fn load_to_f32_vec_msts(&self) -> Vec<f32> {
