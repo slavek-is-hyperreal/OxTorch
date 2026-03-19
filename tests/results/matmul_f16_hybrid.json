@@ -3,10 +3,10 @@
     "op": "MatMul",
     "dtype": "f16",
     "mode": "hybrid",
-    "pt_time": 134.6176799729983,
-    "vnn_time": 0.15917239900045388,
-    "ratio": 0.00118240337400244,
+    "pt_time": 146.3256772094992,
+    "vnn_time": 0.16387562549971335,
+    "ratio": 0.0011199375846051088,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 47.0
+    "cpu_temp": 51.0
 }

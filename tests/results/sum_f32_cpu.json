@@ -1,0 +1,12 @@
+{
+    "name": "Sum_f32_cpu",
+    "op": "Sum",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.0025143862500044633,
+    "vnn_time": 0.0008643698998639593,
+    "ratio": 0.3437697369934412,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 40.0
+}
