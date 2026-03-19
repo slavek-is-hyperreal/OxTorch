@@ -20,6 +20,21 @@ _DTYPE_ATTR_MAP = {
     "ternary": "Ternary",
 }
 
+# Map PascalCase op names (used in benchmark names) -> actual PyTorch/torch.nn.functional names
+_OP_NAME_MAP = {
+    "Mul": "mul",
+    "Sub": "sub",
+    "Sum": "sum",
+    "Softmax": "softmax",
+    "ReLU": "relu",
+    "GELU": "gelu",
+}
+
+# Ops that require keyword args when calling torch.nn.functional
+_OP_KWARGS = {
+    "softmax": {"dim": -1},
+}
+
 class BenchmarkBase:
     def __init__(self, name, op, shape, mode="cpu", dtype="f32", iterations=None, is_ssd=False, inplace=False):
         self.name = name
@@ -61,31 +76,41 @@ class BenchmarkBase:
 
             # PyTorch Setup
             a_torch = torch.from_numpy(a_np).to(torch_dtype)
-            b_torch = torch.from_numpy(b_np).to(torch_dtype) if self.op not in ["ReLU", "GELU", "Sum", "Softmax", "trunc", "cosh", "erf"] else None
-            
             # OxTorch Setup
             a_vnn = self.vnn.Tensor(data=a_np, dtype=vnn_dtype, device=self.mode)
-            b_vnn = self.vnn.Tensor(data=b_np, dtype=vnn_dtype, device=self.mode) if b_torch is not None else None
+            if self.op in ["ScalarAdd", "ScalarMul"]:
+                b_torch = 10.0
+                b_ox = 10.0
+                b_vnn = None
+            else:
+                b_torch = torch.from_numpy(b_np).to(torch_dtype) if self.op not in ["ReLU", "GELU", "Sum", "Softmax", "trunc", "cosh", "erf"] else None
+                b_vnn = self.vnn.Tensor(data=b_np, dtype=vnn_dtype, device=self.mode) if b_torch is not None else None
+                b_ox = None # Set later
             
             del a_np, b_np
             gc.collect()
+
+            # Resolve op name: PascalCase -> actual torch function name
+            _resolved_op = _OP_NAME_MAP.get(self.op, self.op)
+            _op_kwargs = _OP_KWARGS.get(_resolved_op, {})
 
             # PyTorch Benchmark
             t0 = time.perf_counter()
             for _ in range(self.iterations):
                 if self.op == "MatMul":
                     res_torch = torch.matmul(a_torch, b_torch)
-                elif hasattr(torch, self.op):
-                    op_func = getattr(torch, self.op)
+                elif self.op == "ScalarAdd":
+                    res_torch = a_torch + b_torch
+                elif self.op == "ScalarMul":
+                    res_torch = a_torch * b_torch
+                elif hasattr(torch, _resolved_op):
+                    op_func = getattr(torch, _resolved_op)
                     if b_torch is not None:
-                        res_torch = op_func(a_torch, b_torch)
+                        res_torch = op_func(a_torch, b_torch, **_op_kwargs)
                     else:
-                        res_torch = op_func(a_torch)
-                elif hasattr(torch.nn.functional, self.op.lower()):
-                    op_func = getattr(torch.nn.functional, self.op.lower())
-                    res_torch = op_func(a_torch)
+                        res_torch = op_func(a_torch, **_op_kwargs)
                 else:
-                    raise AttributeError(f"Op {self.op} not found in torch")
+                    raise AttributeError(f"Op {self.op} (resolved: {_resolved_op}) not found in torch")
             t_pt = (time.perf_counter() - t0) / self.iterations
         else:
             # SSD Mapped setup (special case for Monster tests)
@@ -102,28 +127,31 @@ class BenchmarkBase:
         # Let's import oxtorch as torch_ox
         import oxtorch as torch_ox
         a_ox = torch_ox.Tensor(a_vnn)
-        b_ox = torch_ox.Tensor(b_vnn) if b_vnn is not None else None
+        if b_ox is None:
+            b_ox = torch_ox.Tensor(b_vnn) if b_vnn is not None else None
 
         t0 = time.perf_counter()
         for _ in range(self.iterations):
             if self.op == "MatMul":
                 res_vnn = a_ox @ b_ox
-            elif hasattr(torch_ox, self.op):
-                op_func = getattr(torch_ox, self.op)
+            elif self.op == "Add" or self.op == "ScalarAdd":
+                res_vnn = a_ox + b_ox
+            elif self.op == "Mul" or self.op == "ScalarMul":
+                res_vnn = a_ox * b_ox
+            elif self.op == "Sum":
+                res_vnn = a_ox.sum()
+            elif hasattr(torch_ox, _resolved_op):
+                op_func = getattr(torch_ox, _resolved_op)
                 if b_ox is not None:
-                    res_vnn = op_func(a_ox, b_ox)
+                    res_vnn = op_func(a_ox, b_ox, **_op_kwargs)
                 else:
-                    res_vnn = op_func(a_ox)
-            elif hasattr(torch_ox, self.op.lower()):
-                 op_func = getattr(torch_ox, self.op.lower())
-                 res_vnn = op_func(a_ox)
+                    res_vnn = op_func(a_ox, **_op_kwargs)
+            elif hasattr(a_ox, _resolved_op):
+                # Try as tensor method (e.g. a_ox.softmax(dim=-1))
+                op_func = getattr(a_ox, _resolved_op)
+                res_vnn = op_func(**_op_kwargs)
             else:
-                 # Fallback to direct native calls if not in oxtorch globals
-                 if self.op == "Add": res_vnn = a_ox + b_ox
-                 elif self.op == "Sub": res_vnn = a_ox - b_ox
-                 elif self.op == "Mul": res_vnn = a_ox * b_ox
-                 else:
-                    raise AttributeError(f"Op {self.op} not found in oxtorch")
+                raise AttributeError(f"Op {self.op} not found in oxtorch")
         t_vnn = (time.perf_counter() - t0) / self.iterations
 
         # Parity
@@ -143,4 +171,12 @@ class BenchmarkBase:
         }
         
         save_benchmark_result(self.name, result)
+
+        ratio = result["ratio"]
+        ratio_str = f"{ratio:.2f}x" if ratio > 0.1 else f"{ratio:.4f}x"
+        parity_str = f"✅ PASS (max_diff={max_diff:.2e})" if parity_ok else f"❌ FAIL (max_diff={max_diff:.2e})"
+        faster = "OxTorch FASTER" if ratio < 1.0 else "PyTorch faster"
+        print(f"    [PyTorch] {t_pt:.4f}s", flush=True)
+        print(f"    [OxTorch] {t_vnn:.4f}s | Ratio: {ratio_str} ({faster}) | Parity: {parity_str}", flush=True)
+
         return result
