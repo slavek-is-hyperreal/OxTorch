@@ -51,7 +51,8 @@ impl Tensor {
                     let (b, _) = other.get_slice_raw_i8();
                     let (res, _) = out.get_slice_raw_mut_i8();
                     crate::cpu::elementwise_op_i8(a, b, res, op);
-                }
+                },
+                DataType::Ternary => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for Ternary")); }
             }
         } else {
             let (a_raw, _) = self.get_slice_raw_bytes();
@@ -110,7 +111,8 @@ impl Tensor {
                         "gelu" => crate::cpu::gelu_i8_dispatch(v_out),
                         _ => {},
                     }
-                }
+                },
+                DataType::Ternary => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for Ternary")); }
             }
         } else {
             let (input_raw, _) = self.get_slice_raw_bytes();
@@ -161,6 +163,7 @@ impl Tensor {
                         _ => {},
                     }
                 },
+                DataType::Ternary => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for Ternary")); }
              }
         } else {
              let (input_raw, _) = self.get_slice_raw_bytes();

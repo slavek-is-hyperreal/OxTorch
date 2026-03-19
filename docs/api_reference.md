@@ -1,4 +1,4 @@
-# VulkanNN Rusted - API Reference (v3.6.0)
+# OxTorch Rusted - API Reference (v3.6.0)
 
 This document provides a technical overview of the `vulkannn_rusted_dev` library.
 
@@ -6,7 +6,7 @@ This document provides a technical overview of the `vulkannn_rusted_dev` library
 
 ## DataType Enum
 
-Source: `src/tensor.rs:19`
+Source: `src/tensor/types.rs`
 
 | Variant | Description |
 |:---|:---|
@@ -14,12 +14,13 @@ Source: `src/tensor.rs:19`
 | `DataType.F16` | 16-bit IEEE 754 half-precision float |
 | `DataType.BF16` | Brain Float 16 (8-bit exponent, 7-bit mantissa) |
 | `DataType.Int8` | 8-bit signed integer |
+| `DataType.Ternary` | 1.58-bit BitNet quantization (weights: -1, 0, 1) |
 
 ---
 
 ## Tensor Class
 
-Source: `src/tensor.rs:53`
+Source: `src/tensor/mod.rs`
 
 ### Constructor
 
@@ -35,13 +36,13 @@ Tensor(data=None, shape=None, dtype=DataType.F32, device="auto", name="Tensor")
 
 ### Static Methods
 
-**`Tensor.from_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:149`
+**`Tensor.from_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor/mod.rs:149`
 
 Maps an existing binary file as a read-only SSD tensor backed by `io_uring`/`O_DIRECT`.
 The file must already exist and be at least `prod(shape) * bytes_per_element` bytes.
 Returns a tensor with `device="ssd"` and no in-memory storage.
 
-**`Tensor.new_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor.rs:242`
+**`Tensor.new_ssd(path, shape, dtype=DataType.F32)`** — `src/tensor/mod.rs:242`
 
 Creates a new file on disk and maps it read-write. Used for out-of-core results
 (e.g., the 16GB Monster ReLU benchmark). Aligned to 1MB ZFS recordsize boundaries.
@@ -50,16 +51,23 @@ Creates a new file on disk and maps it read-write. Used for out-of-core results
 
 ### Matrix Operations
 
-**`__matmul__(other: Tensor)`** — `src/tensor.rs:747` — operator: `@`
+**`__matmul__(other: Tensor)`** — `src/tensor/linalg.rs` — operator: `@`
 
 Dispatches based on `device`:
 
-- `"cpu"`: Uses `matrixmultiply::sgemm` (F32) or SWAR upcast + sgemm (F16/BF16).
-- `"vulkan"`: Uploads A and B to GPU via staging buffers, runs SPIR-V compute shader,
-  downloads result. All types computed as F32 on GPU (Bonaire has no native F16 math).
-- `"hybrid"`: Currently routes to Vulkan for MatMul (tile-pulling Phase 4 applies to
-  activations only; MatMul hybrid tiling is in progress).
-- `"ssd"`: Loads tiles via `load_to_f32_vec_msts()` per the MSTS ring buffer, then runs sgemm.
+- `"cpu"`: Uses optimized SIMD kernels (AVX1/F16C/NEON).
+- `"vulkan"`: Runs SPIR-V compute shader (tiled 16x16).
+- `"hybrid"`: MSTS tile-pulling between CPU and Vulkan.
+- `"ssd"`: Directly streams tiles from disk via MSTS.
+
+**`bit_linear(activation, weight, scale)`** — `src/tensor/linalg.rs` — static method
+
+Specialized **BitNet 1.58-bit** linear layer.
+- `activation`: Int8 tensor.
+- `weight`: Ternary tensor (1.58-bit).
+- `scale`: F32 scale vector for dequantization.
+
+Uses hardware-optimized `BitLinear` kernels that replace float multiplications with efficient accumulation of ternary weights.
 
 ---
 
@@ -67,12 +75,12 @@ Dispatches based on `device`:
 
 | Method | Source line | Notes |
 |:---|:---|:---|
-| `relu()` | `src/tensor.rs:660` | Returns new Tensor |
-| `sigmoid()` | `src/tensor.rs:742` | Returns new Tensor |
-| `silu()` | `src/tensor.rs:743` | Returns new Tensor |
-| `relu_into(out)` | `src/tensor.rs:661` | Writes to pre-allocated out Tensor |
-| `sigmoid_into(out)` | `src/tensor.rs:662` | Writes to pre-allocated out Tensor |
-| `silu_into(out)` | `src/tensor.rs:663` | Writes to pre-allocated out Tensor |
+| `relu()` | `src/tensor/mod.rs:660` | Returns new Tensor |
+| `sigmoid()` | `src/tensor/mod.rs:742` | Returns new Tensor |
+| `silu()` | `src/tensor/mod.rs:743` | Returns new Tensor |
+| `relu_into(out)` | `src/tensor/mod.rs:661` | Writes to pre-allocated out Tensor |
+| `sigmoid_into(out)` | `src/tensor/mod.rs:662` | Writes to pre-allocated out Tensor |
+| `silu_into(out)` | `src/tensor/mod.rs:663` | Writes to pre-allocated out Tensor |
 
 For `device="hybrid"`, activations use the MSTS tile-pulling dispatch:
 
@@ -83,7 +91,7 @@ For `device="hybrid"`, activations use the MSTS tile-pulling dispatch:
 
 ### Other Methods
 
-**`to_numpy()`** — `src/tensor.rs` — Converts F16/BF16 storage back to F32 numpy array
+**`to_numpy()`** — `src/tensor/mod.rs` — Converts F16/BF16 storage back to F32 numpy array
 via Rayon parallel SIMD upcast.
 
 **`transpose()`** — Returns a transposed view (no data copy, flips `is_transposed` flag

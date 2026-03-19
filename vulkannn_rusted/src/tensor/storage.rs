@@ -8,6 +8,7 @@ pub enum Storage {
     F16(Vec<half::f16>),
     BF16(Vec<half::bf16>),
     Int8(Vec<i8>),
+    Ternary(Vec<i8>), // BitNet 1.58b weights unpacked
     None,
 }
 
@@ -18,6 +19,7 @@ impl Drop for Storage {
             Storage::F16(v) => BufPool::put_f16(std::mem::take(v)),
             Storage::BF16(v) => BufPool::put_bf16(std::mem::take(v)),
             Storage::Int8(v) => BufPool::put_i8(std::mem::take(v)),
+            Storage::Ternary(v) => BufPool::put_i8(std::mem::take(v)),
             _ => {}
         }
     }

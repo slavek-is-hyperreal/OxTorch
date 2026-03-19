@@ -15,6 +15,7 @@ pub enum DataType {
     F16,
     BF16,
     Int8,
+    Ternary, // BitNet 1.58b: {-1, 0, 1}
 }
 
 impl DataType {
@@ -22,7 +23,7 @@ impl DataType {
         match self {
             DataType::F32 => 4,
             DataType::F16 | DataType::BF16 => 2,
-            DataType::Int8 => 1,
+            DataType::Int8 | DataType::Ternary => 1,
         }
     }
 }

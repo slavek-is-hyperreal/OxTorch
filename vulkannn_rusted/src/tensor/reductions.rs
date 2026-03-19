@@ -6,6 +6,7 @@ impl Tensor {
     pub fn execute_softmax(&self, dim: i64, is_log: bool) -> PyResult<Tensor> {
         let d_usize = if dim < 0 { (self.shape.len() as i64 + dim) as usize } else { dim as usize };
         if d_usize >= self.shape.len() { return Err(pyo3::exceptions::PyValueError::new_err("Invalid dimension")); }
+        if self.dtype == DataType::Ternary { return Err(pyo3::exceptions::PyValueError::new_err("Softmax not supported for Ternary")); }
         
         if self.device != "cpu" {
              let (a_raw, _) = self.get_slice_raw_bytes();
@@ -54,6 +55,7 @@ impl Tensor {
                         crate::cpu::softmax_i8_dispatch(&mut row, is_log);
                         for j in 0..dim_size { unsafe { *(out_ptr.add(row_offset + j * inner) as *mut i8) = row[j]; } }
                     },
+                    _ => unreachable!(),
                 }
             };
 
@@ -76,6 +78,7 @@ impl Tensor {
     }
 
     pub fn execute_reduce(&self, op: &str, dim: Option<i64>) -> PyResult<Tensor> {
+        if self.dtype == DataType::Ternary { return Err(pyo3::exceptions::PyValueError::new_err("Reduction not supported for Ternary")); }
         if self.device != "cpu" && dim.is_none() {
             let (a_raw, _) = self.get_slice_raw_bytes();
             let blocks = crate::backend::execute_reduce(a_raw, op, self.dtype);
@@ -142,6 +145,7 @@ impl Tensor {
                             _ => 0.0,
                         }
                     },
+                    _ => unreachable!(),
                 };
                 match out_dtype {
                     DataType::F32 => unsafe { *(out_raw.as_ptr() as *mut f32) = val; },
@@ -166,6 +170,7 @@ impl Tensor {
                                 DataType::F16 => row.push(unsafe { (*(in_raw.as_ptr().add((row_base + j * inner) * 2) as *const half::f16)).to_f32() }),
                                 DataType::BF16 => row.push(unsafe { (*(in_raw.as_ptr().add((row_base + j * inner) * 2) as *const half::bf16)).to_f32() }),
                                 DataType::Int8 => row.push(unsafe { *(in_raw.as_ptr().add(row_base + j * inner) as *const i8) as f32 }),
+                                DataType::Ternary => row.push(unsafe { *(in_raw.as_ptr().add(row_base + j * inner) as *const i8) as f32 }),
                             }
                         }
                         let acc = match op {

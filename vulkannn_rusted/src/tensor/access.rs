@@ -32,6 +32,12 @@ impl Tensor {
                     let (slice, _) = self.get_slice_raw_i8();
                     slice.iter().map(|&x| x as f32).collect()
                 }
+            },
+            DataType::Ternary => {
+                if self.is_ssd() { self.load_to_f32_vec_msts() } else {
+                    let (slice, _) = self.get_slice_raw_ternary();
+                    slice.iter().map(|&x| x as f32).collect()
+                }
             }
         };
         let array = numpy::ndarray::Array::from_shape_vec(self.shape.clone(), vec).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
@@ -56,6 +62,10 @@ impl Tensor {
                 },
                 DataType::Int8 => {
                     let (s, _) = self.get_slice_raw_i8();
+                    s.iter().map(|&x| x as f32).collect()
+                },
+                DataType::Ternary => {
+                    let (s, _) = self.get_slice_raw_ternary();
                     s.iter().map(|&x| x as f32).collect()
                 }
             }
@@ -118,12 +128,27 @@ impl Tensor {
         }
     }
 
+    pub fn get_slice_raw_ternary(&self) -> (&[i8], usize) {
+        match &self.storage {
+            Storage::Ternary(v) => (v.as_slice(), v.len()),
+            _ => (&[], 0),
+        }
+    }
+
+    pub fn get_slice_raw_mut_ternary(&mut self) -> (&mut [i8], usize) {
+        match &mut self.storage {
+            Storage::Ternary(v) => { let l = v.len(); (v.as_mut_slice(), l) },
+            _ => (&mut [], 0),
+        }
+    }
+
     pub fn get_slice_raw_bytes(&self) -> (&[u8], usize) {
         match &self.storage {
             Storage::F32(v) => (bytemuck::cast_slice(v), v.len() * 4),
             Storage::F16(v) => (bytemuck::cast_slice(v), v.len() * 2),
             Storage::BF16(v) => (bytemuck::cast_slice(v), v.len() * 2),
             Storage::Int8(v) => (bytemuck::cast_slice(v), v.len()),
+            Storage::Ternary(v) => (bytemuck::cast_slice(v), v.len()),
             Storage::None => (&[], 0),
         }
     }
@@ -134,6 +159,7 @@ impl Tensor {
             Storage::F16(v) => { let l = v.len() * 2; (bytemuck::cast_slice_mut(v), l) },
             Storage::BF16(v) => { let l = v.len() * 2; (bytemuck::cast_slice_mut(v), l) },
             Storage::Int8(v) => { let l = v.len(); (bytemuck::cast_slice_mut(v), l) },
+            Storage::Ternary(v) => { let l = v.len(); (bytemuck::cast_slice_mut(v), l) },
             Storage::None => (&mut [], 0),
         }
     }
@@ -144,6 +170,7 @@ impl Tensor {
             DataType::F16 => Storage::F16(bytemuck::cast_slice(raw).to_vec()),
             DataType::BF16 => Storage::BF16(bytemuck::cast_slice(raw).to_vec()),
             DataType::Int8 => Storage::Int8(bytemuck::cast_slice(raw).to_vec()),
+            DataType::Ternary => Storage::Ternary(bytemuck::cast_slice(raw).to_vec()),
         }
     }
 }

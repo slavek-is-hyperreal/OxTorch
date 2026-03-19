@@ -1,7 +1,9 @@
 use half;
+#[allow(unused_imports)]
 use rayon::prelude::*;
 
 #[cfg(target_arch = "x86_64")]
+#[allow(unused_imports)]
 use std::arch::x86_64::*;
 
 pub fn matmul_f16(m: usize, k: usize, n: usize, a: &[half::f16], b: &[half::f16], c: &mut [half::f16]) {
@@ -23,119 +25,183 @@ unsafe fn matmul_f16_avx1_f16c(m: usize, k: usize, n: usize, a: &[half::f16], b:
     let block_n = 512;
     let block_k = 128;
 
-    c.fill(half::f16::ZERO);
-
     c.par_chunks_mut(block_m * n).enumerate().for_each(|(mi_idx, c_m_tile)| {
         let mi = mi_idx * block_m;
         let m_this_tile = (m - mi).min(block_m);
         
+        // Intermediate f32 accumulator for the whole row-block
+        let mut acc_f32 = vec![0.0f32; m_this_tile * n];
+
         for ki in (0..k).step_by(block_k) {
             let k_end = (ki + block_k).min(k);
-            for ni in (0..n).step_by(block_n) {
-                let n_end = (ni + block_n).min(n);
-
-                for i_rel in (0..m_this_tile).step_by(6) {
-                    let i = mi + i_rel;
-                    let i_rows = (m_this_tile - i_rel).min(6);
-                    for j in (ni..n_end).step_by(8) {
-                        if n_end - j < 8 {
-                             // Tail
-                             for ii in 0..i_rows {
-                                 for kk in ki..k_end {
-                                     let aval = a[(i + ii) * k + kk].to_f32();
-                                     for jj in j..n_end {
-                                         let mut res = c_m_tile[(i_rel+ii)*n + jj].to_f32();
-                                         res += aval * b[kk*n + jj].to_f32();
-                                         c_m_tile[(i_rel+ii)*n + jj] = half::f16::from_f32(res);
-                                     }
-                                 }
-                             }
-                             continue;
-                        }
-
-                        let mut accs = [_mm256_setzero_ps(); 6];
-                        for ii in 0..i_rows {
-                            let curr_c = &c_m_tile[(i_rel+ii)*n + j .. (i_rel+ii)*n + j + 8];
-                            accs[ii] = _mm256_cvtph_ps(_mm_loadu_si128(curr_c.as_ptr() as *const __m128i));
-                        }
-
-                        for kk in ki..k_end {
-                            let b_vec = _mm256_cvtph_ps(_mm_loadu_si128(b.as_ptr().add(kk * n + j) as *const __m128i));
-                            for ii in 0..i_rows {
-                                let a_vec = _mm256_set1_ps(a[(i + ii) * k + kk].to_f32());
-                                accs[ii] = _mm256_add_ps(accs[ii], _mm256_mul_ps(a_vec, b_vec));
-                            }
-                        }
-
-                        for ii in 0..i_rows {
-                            let c_bits = _mm256_cvtps_ph(accs[ii], _MM_FROUND_TO_NEAREST_INT);
-                            _mm_storeu_si128(c_m_tile.as_mut_ptr().add((i_rel+ii)*n + j) as *mut __m128i, c_bits);
+            
+            for i_rel in (0..m_this_tile).step_by(6) {
+                let i = mi + i_rel;
+                let i_rows = (m_this_tile - i_rel).min(6);
+                
+                for j in (0..n).step_by(8) {
+                    let mut accs = [_mm256_setzero_ps(); 6];
+                    // Load current f32 partial sums
+                    for ii in 0..i_rows {
+                        if n - j >= 8 {
+                            accs[ii] = _mm256_loadu_ps(acc_f32.as_ptr().add(ii_rel_to_idx(i_rel + ii, j, n)));
                         }
                     }
+
+                    for kk in ki..k_end {
+                        let b_ptr = b.as_ptr().add(kk * n + j);
+                        let b_vec = if n - j >= 8 {
+                            _mm256_cvtph_ps(_mm_loadu_si128(b_ptr as *const __m128i))
+                        } else {
+                            let mut tmp = [half::f16::ZERO; 8];
+                            for jj in 0..(n-j) { tmp[jj] = *b_ptr.add(jj); }
+                            _mm256_cvtph_ps(_mm_loadu_si128(tmp.as_ptr() as *const __m128i))
+                        };
+
+                        for ii in 0..i_rows {
+                            let a_vec = _mm256_set1_ps(a[(i + ii) * k + kk].to_f32());
+                            accs[ii] = _mm256_add_ps(accs[ii], _mm256_mul_ps(a_vec, b_vec));
+                        }
+                    }
+
+                    // Store back to f32 accumulator
+                    for ii in 0..i_rows {
+                        if n - j >= 8 {
+                            _mm256_storeu_ps(acc_f32.as_mut_ptr().add(ii_rel_to_idx(i_rel + ii, j, n)), accs[ii]);
+                        } else {
+                            let mut tmp = [0.0f32; 8];
+                            _mm256_storeu_ps(tmp.as_mut_ptr(), accs[ii]);
+                            for jj in 0..(n-j) { acc_f32[ii_rel_to_idx(i_rel + ii, j + jj, n)] = tmp[jj]; }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Final convert to f16
+        for i_rel in 0..m_this_tile {
+            for j in (0..n).step_by(8) {
+                let f_ptr = acc_f32.as_ptr().add(i_rel * n + j);
+                let f_vec = if n - j >= 8 {
+                    _mm256_loadu_ps(f_ptr)
+                } else {
+                    let mut tmp = [0.0f32; 8];
+                    for jj in 0..(n-j) { tmp[jj] = *f_ptr.add(jj); }
+                    _mm256_loadu_ps(tmp.as_ptr())
+                };
+                let h_bits = _mm256_cvtps_ph(f_vec, _MM_FROUND_TO_NEAREST_INT);
+                let c_ptr = c_m_tile.as_mut_ptr().add(i_rel * n + j);
+                if n - j >= 8 {
+                    _mm_storeu_si128(c_ptr as *mut __m128i, h_bits);
+                } else {
+                    let h_tmp: [half::f16; 8] = core::mem::transmute(h_bits);
+                    for jj in 0..(n-j) { *c_ptr.add(jj) = h_tmp[jj]; }
                 }
             }
         }
     });
 }
 
+#[inline(always)]
+fn ii_rel_to_idx(i_rel: usize, j: usize, n: usize) -> usize {
+    i_rel * n + j
+}
+
 #[cfg(all(target_arch = "x86_64", target_feature = "avx", target_feature = "fma", target_feature = "f16c"))]
 unsafe fn matmul_f16_avx2_fma_f16c(m: usize, k: usize, n: usize, a: &[half::f16], b: &[half::f16], c: &mut [half::f16]) {
-    // Exact same optimization as before, using fmadd
     let block_m = 64;
-    c.fill(half::f16::ZERO);
+    let block_k = 128;
 
     c.par_chunks_mut(block_m * n).enumerate().for_each(|(mi_idx, c_m_tile)| {
         let mi = mi_idx * block_m;
         let m_this_tile = (m - mi).min(block_m);
         
-        for ki in (0..k).step_by(128) {
-            let k_end = (ki + 128).min(k);
-            for ni in (0..n).step_by(64) {
-                let n_end = (ni + 64).min(n);
+        let mut acc_f32 = vec![0.0f32; m_this_tile * n];
 
-                for i_rel in (0..m_this_tile).step_by(4) {
-                    let i = mi + i_rel;
-                    let i_rows = (m_this_tile - i_rel).min(4);
-                    for j in (ni..n_end).step_by(16) {
-                        if n_end - j < 16 {
-                             for ii in 0..i_rows {
-                                 for kk in ki..k_end {
-                                     let aval = a[(i + ii) * k + kk].to_f32();
-                                     for jj in j..n_end {
-                                         let mut res = c_m_tile[(i_rel+ii)*n + jj].to_f32();
-                                         res += aval * b[kk*n + jj].to_f32();
-                                         c_m_tile[(i_rel+ii)*n + jj] = half::f16::from_f32(res);
-                                     }
-                                 }
-                             }
-                             continue;
-                        }
-
-                        let mut accs = [[_mm256_setzero_ps(); 2]; 4];
-                        for ii in 0..i_rows {
-                            for jj_off in 0..2 {
-                                let curr_c = &c_m_tile[(i_rel+ii)*n + j + jj_off*8 .. (i_rel+ii)*n + j + jj_off*8 + 8];
-                                accs[ii][jj_off] = _mm256_cvtph_ps(_mm_loadu_si128(curr_c.as_ptr() as *const __m128i));
-                            }
-                        }
-
-                        for kk in ki..k_end {
-                            let b_vec0 = _mm256_cvtph_ps(_mm_loadu_si128(b.as_ptr().add(kk * n + j) as *const __m128i));
-                            let b_vec1 = _mm256_cvtph_ps(_mm_loadu_si128(b.as_ptr().add(kk * n + j + 8) as *const __m128i));
-                            for ii in 0..i_rows {
-                                let a_vec = _mm256_set1_ps(a[(i + ii) * k + kk].to_f32());
-                                accs[ii][0] = _mm256_fmadd_ps(a_vec, b_vec0, accs[ii][0]);
-                                accs[ii][1] = _mm256_fmadd_ps(a_vec, b_vec1, accs[ii][1]);
-                            }
-                        }
-
-                        for ii in 0..i_rows {
-                            for jj_off in 0..2 {
-                                let res_bits = _mm256_cvtps_ph(accs[ii][jj_off], _MM_FROUND_TO_NEAREST_INT);
-                                _mm_storeu_si128(c_m_tile.as_mut_ptr().add((i_rel+ii)*n + j + jj_off*8) as *mut __m128i, res_bits);
+        for ki in (0..k).step_by(block_k) {
+            let k_end = (ki + block_k).min(k);
+            
+            for i_rel in (0..m_this_tile).step_by(4) {
+                let i = mi + i_rel;
+                let i_rows = (m_this_tile - i_rel).min(4);
+                
+                for j in (0..n).step_by(16) {
+                    let mut accs = [[_mm256_setzero_ps(); 2]; 4];
+                    
+                    for ii in 0..i_rows {
+                        for jj_off in 0..2 {
+                            let curr_j = j + jj_off * 8;
+                            if curr_j < n {
+                                if n - curr_j >= 8 {
+                                    accs[ii][jj_off] = _mm256_loadu_ps(acc_f32.as_ptr().add(ii_rel_to_idx(i_rel + ii, curr_j, n)));
+                                }
                             }
                         }
                     }
+
+                    for kk in ki..k_end {
+                        let b0_ptr = b.as_ptr().add(kk * n + j);
+                        let b_vec0 = if n - j >= 8 {
+                            _mm256_cvtph_ps(_mm_loadu_si128(b0_ptr as *const __m128i))
+                        } else {
+                            let mut tmp = [half::f16::ZERO; 8];
+                            for jj in 0..(n-j) { tmp[jj] = *b0_ptr.add(jj); }
+                            _mm256_cvtph_ps(_mm_loadu_si128(tmp.as_ptr() as *const __m128i))
+                        };
+
+                        let b_vec1 = if n - j >= 16 {
+                            _mm256_cvtph_ps(_mm_loadu_si128(b0_ptr.add(8) as *const __m128i))
+                        } else if n - j > 8 {
+                            let mut tmp = [half::f16::ZERO; 8];
+                            for jj in 0..(n-j-8) { tmp[jj] = *b0_ptr.add(8+jj); }
+                            _mm256_cvtph_ps(_mm_loadu_si128(tmp.as_ptr() as *const __m128i))
+                        } else {
+                            _mm256_setzero_ps()
+                        };
+
+                        for ii in 0..i_rows {
+                            let a_vec = _mm256_set1_ps(a[(i + ii) * k + kk].to_f32());
+                            accs[ii][0] = _mm256_fmadd_ps(a_vec, b_vec0, accs[ii][0]);
+                            accs[ii][1] = _mm256_fmadd_ps(a_vec, b_vec1, accs[ii][1]);
+                        }
+                    }
+
+                    for ii in 0..i_rows {
+                        for jj_off in 0..2 {
+                            let curr_j = j + jj_off * 8;
+                            if curr_j < n {
+                                if n - curr_j >= 8 {
+                                    _mm256_storeu_ps(acc_f32.as_mut_ptr().add(ii_rel_to_idx(i_rel + ii, curr_j, n)), accs[ii][jj_off]);
+                                } else {
+                                    let mut tmp = [0.0f32; 8];
+                                    _mm256_storeu_ps(tmp.as_mut_ptr(), accs[ii][jj_off]);
+                                    for jj in 0..(n - curr_j) { acc_f32[ii_rel_to_idx(i_rel + ii, curr_j + jj, n)] = tmp[jj]; }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Convert to f16
+        for i_rel in 0..m_this_tile {
+            for j in (0..n).step_by(8) {
+                let f_ptr = acc_f32.as_ptr().add(i_rel * n + j);
+                let f_vec = if n - j >= 8 {
+                    _mm256_loadu_ps(f_ptr)
+                } else {
+                    let mut tmp = [0.0f32; 8];
+                    for jj in 0..(n-j) { tmp[jj] = *f_ptr.add(jj); }
+                    _mm256_loadu_ps(tmp.as_ptr())
+                };
+                let h_bits = _mm256_cvtps_ph(f_vec, _MM_FROUND_TO_NEAREST_INT);
+                let c_ptr = c_m_tile.as_mut_ptr().add(i_rel * n + j);
+                if n - j >= 8 {
+                    _mm_storeu_si128(c_ptr as *mut __m128i, h_bits);
+                } else {
+                    let h_tmp: [half::f16; 8] = core::mem::transmute(h_bits);
+                    for jj in 0..(n-j) { *c_ptr.add(jj) = h_tmp[jj]; }
                 }
             }
         }
@@ -143,17 +209,19 @@ unsafe fn matmul_f16_avx2_fma_f16c(m: usize, k: usize, n: usize, a: &[half::f16]
 }
 
 pub fn matmul_f16_scalar(m: usize, k: usize, n: usize, a: &[half::f16], b: &[half::f16], c: &mut [half::f16]) {
-    c.fill(half::f16::ZERO);
-    for i in 0..m {
+    c.par_chunks_mut(n).enumerate().for_each(|(i, row_c)| {
+        let mut acc = vec![0.0f32; n];
         for kk in 0..k {
             let aval = a[i * k + kk].to_f32();
+            if aval == 0.0 { continue; }
             for j in 0..n {
-                let mut res = c[i * n + j].to_f32();
-                res += aval * b[kk * n + j].to_f32();
-                c[i * n + j] = half::f16::from_f32(res);
+                acc[j] += aval * b[kk * n + j].to_f32();
             }
         }
-    }
+        for j in 0..n {
+            row_c[j] = half::f16::from_f32(acc[j]);
+        }
+    });
 }
 
 pub fn linear_f16(m: usize, k: usize, n: usize, a: &[half::f16], b: &[half::f16], c: &mut [half::f16]) {
@@ -162,16 +230,15 @@ pub fn linear_f16(m: usize, k: usize, n: usize, a: &[half::f16], b: &[half::f16]
         unsafe { linear_f16_avx1_f16c(m, k, n, a, b, c); return; }
     }
     
-    c.fill(half::f16::ZERO);
-    for i in 0..m {
+    c.par_chunks_mut(n).enumerate().for_each(|(i, row_c)| {
         for j in 0..n {
             let mut sum = 0.0f32;
             for kk in 0..k {
                 sum += a[i * k + kk].to_f32() * b[j * k + kk].to_f32();
             }
-            c[i * n + j] = half::f16::from_f32(sum);
+            row_c[j] = half::f16::from_f32(sum);
         }
-    }
+    });
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx", target_feature = "f16c"))]

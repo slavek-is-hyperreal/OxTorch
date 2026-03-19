@@ -119,6 +119,45 @@ impl Tensor {
         Ok(res)
     }
 
+    pub fn execute_bit_linear(input: &Tensor, weight: &Tensor, scale: &Tensor, bias: Option<&Tensor>) -> PyResult<Tensor> {
+        let m = input.shape[0];
+        let k = input.shape[1];
+        let n = weight.shape[0];
+        
+        if input.dtype != DataType::Int8 { return Err(PyValueError::new_err("BitLinear input must be Int8")); }
+        if weight.dtype != DataType::Ternary { return Err(PyValueError::new_err("BitLinear weights must be Ternary")); }
+        if weight.shape[1] != k { return Err(PyValueError::new_err("BitLinear shape mismatch (K dimension)")); }
+        
+        // Result is dequantized to F32 (or could be F16/Int8 target)
+        let mut res = Tensor::new_zeros(vec![m, n], DataType::F32, &input.device)?;
+        
+        if input.device == "cpu" {
+            let (a, _) = input.get_slice_raw_i8();
+            let (b, _) = weight.get_slice_raw_ternary();
+            let (s, _) = scale.get_slice_raw_f32();
+            let (c, _) = res.get_slice_raw_mut_f32();
+            
+            crate::cpu::bit_linear_f32(m, k, n, a, b, s, c);
+            
+            if let Some(b_t) = bias {
+                let (bias_v, _) = b_t.get_slice_raw_f32();
+                c.par_chunks_mut(n).for_each(|row| {
+                    for j in 0..n { row[j] += bias_v[j]; }
+                });
+            }
+        } else {
+            let (a_raw, _) = input.get_slice_raw_bytes();
+            let (b_raw, _) = weight.get_slice_raw_bytes();
+            let (s_raw, _) = scale.get_slice_raw_bytes();
+            let bias_raw = bias.map(|b| b.get_slice_raw_bytes().0).unwrap_or(&[]);
+            let (out_raw, _) = res.get_slice_raw_mut_bytes();
+            
+            crate::backend::execute_bit_linear_into(a_raw, b_raw, s_raw, bias_raw, out_raw, m as u32, k as u32, n as u32);
+        }
+        
+        Ok(res)
+    }
+
     pub fn execute_transpose(&self) -> PyResult<Tensor> {
         if self.shape.len() != 2 { return Err(PyValueError::new_err("2D required for transpose")); }
         Ok(Tensor { 

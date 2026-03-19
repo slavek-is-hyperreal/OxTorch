@@ -1,7 +1,9 @@
 use half;
+#[allow(unused_imports)]
 use rayon::prelude::*;
 
 #[cfg(target_arch = "x86_64")]
+#[allow(unused_imports)]
 use std::arch::x86_64::*;
 
 pub fn matmul_bf16(m: usize, k: usize, n: usize, a: &[half::bf16], b: &[half::bf16], c: &mut [half::bf16]) {

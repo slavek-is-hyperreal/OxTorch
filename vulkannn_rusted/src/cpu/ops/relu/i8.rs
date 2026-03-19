@@ -1,4 +1,5 @@
 #[cfg(target_arch = "x86_64")]
+#[allow(unused_imports)]
 use std::arch::x86_64::*;
 
 pub fn relu_i8_inplace(buf: &mut [i8]) {

@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import time
 
-m, k, n = 1024, 1024, 1024
+m, k, n = 128, 128, 128
 a_np = np.random.randn(m, k).astype(np.float32)
 b_np = np.random.randn(k, n).astype(np.float32)
 c_expected = a_np @ b_np

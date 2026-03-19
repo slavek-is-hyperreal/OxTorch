@@ -62,6 +62,11 @@ impl Tensor {
                     let slice = bytemuck::cast_slice::<u8, i8>(&payload[..bytes_in_tile]);
                     let start_idx = offset as usize;
                     for (i, val) in slice.iter().enumerate() { out[start_idx + i] = *val as f32; }
+                },
+                DataType::Ternary => {
+                    let slice = bytemuck::cast_slice::<u8, i8>(&payload[..bytes_in_tile]);
+                    let start_idx = offset as usize;
+                    for (i, val) in slice.iter().enumerate() { out[start_idx + i] = *val as f32; }
                 }
             }
             
@@ -132,6 +137,10 @@ impl Tensor {
                     slice.par_iter_mut().for_each(|x| { if op == "relu" && x.to_f32() < 0.0 { *x = half::bf16::ZERO; } });
                 },
                 DataType::Int8 => {
+                    let slice = bytemuck::cast_slice_mut::<u8, i8>(&mut payload[..bytes_in_tile]);
+                    slice.par_iter_mut().for_each(|x| { if op == "relu" && *x < 0 { *x = 0; } });
+                },
+                DataType::Ternary => {
                     let slice = bytemuck::cast_slice_mut::<u8, i8>(&mut payload[..bytes_in_tile]);
                     slice.par_iter_mut().for_each(|x| { if op == "relu" && *x < 0 { *x = 0; } });
                 }

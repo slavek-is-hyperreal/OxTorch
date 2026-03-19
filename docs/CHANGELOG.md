@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.7.0] - 2026-03-19 "The BitNet Leapfrog & OxTorch Rebranding"
+### Added
+- **Project Rebranding**: Transitioned from `VulkanNN Rusted` to **OxTorch**.
+- **BitNet (1.58-bit) Support**: Native `Ternary` (`{-1, 0, 1}`) quantization and `BitLinear` kernels.
+- **Vulkan BitLinear Shader**: Custom compatible compute shader with manual bit-unpacking for legacy GPUs (AMD Bonaire).
+- **Architecture Support Matrix**: Detailed CPU/GPU support tables in `README.md`.
+- **Source File Deep Dive**: Comprehensive documentation of every Rust source file in `docs/architecture.md`.
+
+### Fixed
+- **F16 CPU Efficiency**: Parallelized the scalar fallback path for MatMul and Linear, providing significant speedups when hardware intrinsics aren't detected.
+- **F32 Vulkan Stability**: Resolved numerical divergence in large-scale matrix multiplications.
+- **BitNet Parity**: Achieved 100% bit-perfect parity between CPU and Vulkan BitNet implementations.
+
+---
+
 ## [3.6.0] - 2026-03-14
 ### Added
 - **Project Modularization (Phase 0)**: Split the monolithic `tensor.rs` into logical submodules (`src/tensor/`) and organized CPU kernels into `src/cpu/`.
@@ -119,7 +134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Coefficient of Variation (CV%) and P95 percentile tracking in benchmark harness.
 - API Reference documentation with source line references.
-- Hardware-invariant Ratio (VNN/PT) as primary regression metric.
+- Hardware-invariant Ratio (OxTorch/PT) as primary regression metric.
 
 ---
 
@@ -136,7 +151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.5.0] - 2026-03-01: VulkanNN Rusted Edition
+## [2.5.0] - 2026-03-01: OxTorch Rusted Edition
 
 Initial Rust rewrite using PyO3 and maturin. Introduced:
 - `Tensor` class with Python operator overloading (`@`, `+`)

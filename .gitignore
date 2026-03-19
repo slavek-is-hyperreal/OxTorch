@@ -52,3 +52,6 @@ gemma-weights/
 # Workflows
 .agent/workflows/technical_references.md
 .agent/workflows/tools.txt
+
+# Research Repos (External)
+BitNet_repo/

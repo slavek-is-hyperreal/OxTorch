@@ -1,10 +1,10 @@
 use pyo3::prelude::*;
 use numpy::{PyArrayMethods, PyUntypedArrayMethods};
-use super::{Tensor, DataType};
+use super::Tensor;
 
 pub fn call_pytorch_op(op_name: &str, input: &Tensor) -> PyResult<Tensor> {
     Python::with_gil(|py| {
-        let torch = py.import("torch")?;
+        let torch = py.import_bound("torch")?;
         
         // Convert VNN Tensor to Numpy for PyTorch ingestion
         let np_data = input.to_numpy(py)?;
@@ -26,7 +26,7 @@ pub fn call_pytorch_op(op_name: &str, input: &Tensor) -> PyResult<Tensor> {
 // Specialized fallback for MatMul
 pub fn call_pytorch_matmul(a: &Tensor, b: &Tensor) -> PyResult<Tensor> {
     Python::with_gil(|py| {
-        let torch = py.import("torch")?;
+        let torch = py.import_bound("torch")?;
         let a_pt = torch.call_method1("from_numpy", (a.to_numpy(py)?,))?;
         let b_pt = torch.call_method1("from_numpy", (b.to_numpy(py)?,))?;
         

@@ -79,6 +79,12 @@ impl Tensor {
         Self::execute_linear(input, weight, bias, activation)
     }
 
+    #[staticmethod]
+    #[pyo3(signature = (input, weight, scale, bias=None))]
+    pub fn bit_linear(input: &Tensor, weight: &Tensor, scale: &Tensor, bias: Option<&Tensor>) -> PyResult<Tensor> {
+        Self::execute_bit_linear(input, weight, scale, bias)
+    }
+
     #[pyo3(name = "__matmul__")]
     pub fn py_matmul(&self, other: &Tensor) -> PyResult<Tensor> {
          self.__matmul__(other)

@@ -1,6 +1,7 @@
 use half;
 
 #[cfg(target_arch = "x86_64")]
+#[allow(unused_imports)]
 use std::arch::x86_64::*;
 
 pub fn relu_f16(src: &[half::f16], dst: &mut [half::f16]) {

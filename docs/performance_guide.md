@@ -10,10 +10,10 @@ on the target hardware (i5-3450, AMD Bonaire R7 260X, 24GB DDR3, ZFS SSD pool).
 The `unified_benchmark.py` harness reports:
 
 - **PT (Median)**: PyTorch execution time, median over N runs. The primary reference.
-- **VNN (Median)**: VNN execution time, median over N runs.
-- **VNN (Std)**: Standard deviation of VNN time. High### v3.6.0 Reference (Ivy Bridge i5-3450 / Radeon R7)
+- **OxTorch (Median)**: OxTorch execution time, median over N runs.
+- **OxTorch (Std)**: Standard deviation of OxTorch time. High### v3.6.0 Reference (Ivy Bridge i5-3450 / Radeon R7)
 
-| Operation | DType | Mode | Ratio (VNN / PT) | Why? |
+| Operation | DType | Mode | Ratio (OxTorch / PT) | Why? |
 | :--- | :--- | :--- | :--- | :--- |
 | MatMul | F32 | CPU | **0.82x** | Optimized BLAS integration |
 | Softmax | F32 | CPU | **0.57x** | Masked vectorized EXP |
@@ -61,7 +61,7 @@ Observed across long benchmark sessions (9000+ seconds):
 
 - **Cold start**: L3 cache is empty, first runs take slightly longer.
 - **Warm**: After a few minutes, tile sizes are cache-resident and times stabilize.
-- **Heat soak (after 2+ hours)**: CPU and GPU clock-down by 10-15%. The VNN/PT ratio
+- **Heat soak (after 2+ hours)**: CPU and GPU clock-down by 10-15%. The OxTorch/PT ratio
   remains stable because both are equally affected. Use Median to filter isolated spikes.
 
 StdDev thresholds:
@@ -75,11 +75,11 @@ StdDev thresholds:
 
 `VULKAN_MIN_ELEMS = 4_194_304` (4M elements, ~16MB F32, ~8MB F16)
 
-This constant in `src/tensor.rs` controls the hybrid tile-pulling dispatcher:
+This constant in `src/tensor/mod.rs` controls the hybrid tile-pulling dispatcher:
 - Below the threshold: only CPU SWAR workers run. GPU dispatcher thread is not spawned.
 - At or above the threshold: GPU dispatcher competes for tiles alongside CPU workers.
 
-To tune this for different hardware, search for `VULKAN_MIN_ELEMS` in `src/tensor.rs`.
+To tune this for different hardware, search for `VULKAN_MIN_ELEMS` in `src/tensor/mod.rs`.
 On GPUs with lower PCIe latency (e.g., discrete desktop cards with fast transfers),
 the threshold can be lowered significantly.
 

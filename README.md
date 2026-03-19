@@ -1,4 +1,4 @@
-# VulkanNN Rusted (v3.6.0 "Hardware Acceleration & Int8 SWAR")
+# OxTorch (v3.6.0 "Hardware Acceleration & BitNet 1.58b")
 
 **A high-performance, Rust-powered tensor engine for constrained consumer hardware.**
 
@@ -73,12 +73,13 @@ to claim work without locks, without a clock, and without static splits.
 
 ---
 
-## Why VulkanNN Rusted?
+## Why OxTorch?
 
 - **Tri-Precision Engine**: Native F32, F16, and BF16 support with runtime-dispatched SIMD
   conversion (F16C/AVX on Ivy Bridge, SSE2 SWAR on older hardware, NEON on AArch64).
+- **BitNet 1.58-bit Support**: Native `Ternary` (`{-1, 0, 1}`) quantization and `BitLinear` kernels for both CPU and Vulkan, enabling LLM inference on legacy hardware with near-zero memory footprint.
 - **300-700x speedup over PyTorch on F16/BF16 MatMul**: PyTorch falls back to scalar software
-  emulation on CPUs without AVX-512 FP16. VNN uses explicit SIMD upcasting and Vulkan compute.
+  emulation on CPUs without AVX-512 FP16. OxTorch uses explicit SIMD upcasting and Vulkan compute.
 - **SSD-as-RAM**: Asynchronous Linux `io_uring` with `O_DIRECT` streams weights directly from a
   ZFS pool at 1MB record boundaries, bypassing the OS page cache entirely.
 - **MSTS Tile-Pulling Hybrid Dispatch**: CPU and GPU workers autonomously race to claim 256K-element
@@ -126,6 +127,28 @@ AMD Radeon R7 200 Series (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
 > PyTorch F16/BF16 results reflect execution on the i5-3450 without native F16C acceleration in
 > PyTorch's dispatch path. VNN dispatches to hardware F16C intrinsics at runtime.
 
+## Architecture Support Matrix
+
+OxTorch is designed to provide native, optimized kernels where PyTorch typically falls back to slow scalar code.
+
+### CPU Support (SIMD & SWAR)
+| PyTorch Op | `no-avx` (SSE) | `avx1` (Ivy) | `avx2` (Haswell) | `avx512` | `arm_neon` |
+|:---|:---:|:---:|:---:|:---:|:---:|
+| **MatMul (F32)** | Native (Ox) | Native (Ox) | Native (Ox) | Fallback | Fallback |
+| **MatMul (F16)** | **Ox (SWAR)**| **Ox (F16C)**| **Ox (F16C)**| Fallback | Fallback |
+| **Linear** | Native (Ox) | Native (Ox) | Native (Ox) | Fallback | Fallback |
+| **BitLinear** | **Ox Only** | **Ox Only** | **Ox Only** | **Ox Only**| **Ox Only** |
+| **ReLU / GELU** | Native (Ox) | Native (Ox) | Native (Ox) | Fallback | Native (Ox)|
+| **Softmax** | Native (Ox) | Native (Ox) | Native (Ox) | Fallback | Fallback |
+
+### Vulkan Support (GPU)
+| Op | `vulkan_f32` | `vulkan_f16` | `vulkan_i8` | `vulkan_ternary` |
+|:---|:---:|:---:|:---:|:---:|
+| **MatMul** | Native | Native | Native | N/A |
+| **Linear** | Native | Native | Native | N/A |
+| **BitLinear** | **Native** | **Native** | **Native** | **Native** |
+| **Activations**| Native | Native | Native | N/A |
+
 ---
 
 ## Technical Overview
@@ -166,14 +189,16 @@ Runtime dispatch via `is_x86_feature_detected!()` — no compile-time feature fl
 
 ### Source Map
 
-| Component | File |
-|:---|:---|
-| Tensor operations, hybrid dispatch | `src/tensor.rs` |
-| Raw Vulkan backend, chunked GPU dispatch | `src/backend.rs` |
-| SIMD conversions, SWAR fallbacks | `src/avx_swar.rs` |
-| io_uring O_DIRECT SSD streaming | `src/io_uring_engine.rs` |
-| MSTS StatefulTile ring buffer | `src/crook_scheduler.rs` |
-| Streaming budgets and prefetcher | `src/streaming.rs` |
+| Component | File | Description |
+|:---|:---|:---|
+| Python API & Tensor Base | `src/tensor/mod.rs` | Main `Tensor` class and PyO3 bindings. |
+| CPU Backend Dispatch | `src/cpu/mod.rs` | Entry point for all CPU operations. |
+| Vulkan Backend | `src/backend.rs` | Explicit Vulkan pipeline control and ASH dispatcher. |
+| BitNet Kernels | `src/cpu/ops/bit_linear.rs` | 1.58-bit (Ternary) matrix multiplication. |
+| SSD Streaming (MERA) | `src/streaming.rs` | MERA-400 inspired out-of-core prefetcher. |
+| io_uring Engine | `src/io_uring_engine.rs` | O_DIRECT Linux I/O with Zero-Copy. |
+| MSTS Scheduler | `src/crook_scheduler.rs` | Asynchronous work-stealing tile puller. |
+| SIMD/SWAR Kernels | `src/cpu/ops/` | Specialized AVX1/F16C/NEON implementations. |
 
 ---
 

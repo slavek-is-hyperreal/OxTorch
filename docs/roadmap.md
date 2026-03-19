@@ -1,4 +1,4 @@
-# Roadmap - VulkanNN Rusted
+# Roadmap - OxTorch Rusted
 
 ## [3.6.0] Strategy: Hardware Acceleration & High-Precision Reductions (STABLE)
 - [x] **MSTS**: SSD-to-CPU-to-GPU streaming.
@@ -49,6 +49,13 @@
 - [ ] **Attention**: `scaled_dot_product_attention` (fused Vulkan mega-kernel).
 - [ ] **Decoding**: `argmax`, `topk`.
 
+### [Sprint 2.1] BitNet (1.58b) - The LLM Leapfrog
+*Target: native support for 1.58-bit ternary models (Bielik, BitNet-7B).*
+- [x] **BitLinear Layer**: Custom CPU (parallel) and Vulkan kernels.
+- [x] **1.58b Quantization**: Ternary weights `{-1, 0, 1}` integrated into `Tensor` constructors.
+- [ ] **Bielik-to-BitNet**: Conversion scripts for Oxido's LLM ecosystem (On Deck).
+- [x] **Zero-Multiplication Inference**: Efficient accumulation path for ternary weights.
+
 ### [Sprint 3] CNN & Vision Models
 *Target: run ResNet / EfficientNet / ViT inference.*
 - [ ] `conv2d` (Winograd 3x3 optimized for Ivy Bridge).
@@ -83,14 +90,11 @@
 - [ ] Automatic Broadcasting alignment.
 - [ ] `torch.save` / `torch.load` pickle compatibility.
 
-### [Sprint 6] Quantization & GGUF
-*Target: run quantized LLMs that don't fit in F16.*
-- [ ] **INT8 quantization** — symmetric per-tensor.
 - [ ] **GGUF Support**: `Q4_K`, `Q8_0`, `Q6_K` block-quantized formats.
 - [ ] On-the-fly dequantization inside SPIR-V registers.
 
 ### [Sprint 7] Training (Long Term)
-*Target: VulkanNN as a training engine.*
+*Target: OxTorch as a training engine.*
 - [ ] Autograd: `requires_grad`, `.backward()`, gradient tape.
 - [ ] Optimizer primitives: SGD, Adam.
 - [ ] Loss functions: `cross_entropy`, `mse_loss`.
@@ -108,4 +112,4 @@ For a complete record of all technical changes and releases, see:
 👉 [Changelog](file:///my_data/gaussian_room/docs/CHANGELOG.md)
 
 ---
-*VulkanNN: High-performance AI inference on legacy hardware. Constraints breed architecture.*
+*OxTorch: High-performance AI inference on legacy hardware. Constraints breed architecture.*

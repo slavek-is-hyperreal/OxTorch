@@ -1,6 +1,6 @@
-# Implementation Guides - VulkanNN
+# Implementation Guides - OxTorch
 
-This document contains detailed, step-by-step implementation plans for core VulkanNN operations. These guides were prepared by an AI agent to ensure numerical parity and performance.
+This document contains detailed, step-by-step implementation plans for core OxTorch operations. These guides were prepared by an AI agent to ensure numerical parity and performance.
 
 ---
 
