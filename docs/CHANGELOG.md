@@ -6,6 +6,8 @@
 - **Log-Softmax Support**: Added `is_log` parameter to the Vulkan and CPU softmax implementations for training stability.
 - **Int8 SWAR (SIMD Within A Register)**: Parallel addition and ReLU for `int8` data on CPUs without AVX2.
 - **MSTS (Mera Style Tiling System)**: Hybrid CPU/GPU/SSD dispatch with circular buffer prefetching.
+- **Safe 64-bit Reductions**: Migrated all Int8/F32/F16/BF16 summation kernels to `i64` internal accumulation, ensuring bit-perfect parity for sums exceeding 4B elements (outperforming PyTorch's default accumulation).
+- **SIMD Optimized Softmax**: Implemented fully vectorized 3-pass kernels for AVX-512, AVX2, and SSE4.1, including a custom 256-bit Taylor series approximation for the exponential function.
 - **Native PRNG**: Internal `Xoshiro256++` implementation to remove `numpy` dependency for tensor randomization.
 - **Hard-Sync SPIR-V**: Explicit descriptor set pooling and sync for Vulkan 1.2 compute backend.
 
@@ -17,6 +19,7 @@
 ### Changed
 - Refined `matrixmultiply` and `gemm` integration for 17% overall speedup in F32 CPU MatMul.
 - Consolidated `#[pymethods]` into `src/tensor/mod.rs` to prevent implementation conflicts.
+- **Dynamic Upcasting**: Enforced `DataType::F32` for all reduction outputs (Sum, Mean) to prevent saturation in `Int8` paths.
 - Version bump to 3.6.0 "Hardware Acceleration & Modular Restructuring".
 
 All notable changes to this project are documented in this file.
