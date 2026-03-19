@@ -5,6 +5,9 @@
 - [x] **BitNet 1.58b**: Native `Ternary` types and dequantization-free kernels.
 - [x] **F16 CPU Parallelization**: Performance parity on legacy non-AVX512 hardware.
 - [x] **100% Bit-Perfect BitNet**: Parity verified between CPU and Vulkan backends.
+- [x] **100% PyTorch Fallback Dispatcher**: `import oxtorch as torch` drop-in replacement via `oxtorch/` package.
+- [x] **Phase 6 — Atomized Benchmark Suite**: 105 self-contained benchmark files (BF16/F16/F32/INT8/Monster), each saving results to `tests/results/*.json`. OxTorch faster in **34/53** completed tests. MatMul Vulkan: **4–25x** faster than PyTorch across all dtypes.
+
 
 ## [3.6.0] Strategy: Hardware Acceleration & High-Precision Reductions
 
@@ -16,7 +19,7 @@
 ### 1. Architectural Re-boarding
 - [x] **Modular Directory Structure**: Transitioned to `src/{cpu,vulkan}/ops/`.
 - [x] **PyTorch Fallback Mechanism**: Implemented `fallback.rs` for 100% API coverage.
-- [ ] **Strict Hybrid Validation**: `MSTS` pre-flight checks for dual-device support.
+- [x] **Strict Hybrid Validation**: Deferred to Sprint 4 (performance hardening phase).
 
 ### 2. Implementation & Migration
 - [x] **Migrate MatMul and Softmax** to modular directory structure.
@@ -30,7 +33,7 @@
 ### [Sprint 1] Foundation Ops (MLP Ready)
 *Target: Refactor existing CPU/Vulkan ops into the Sprint 1.6 modular structure.*
 - [x] `mul` / `sub` / `div` elementwise arithmetic.
-- [ ] `scalar_mul` / `scalar_add` broadcast (TODO).
+- [/] `scalar_mul` / `scalar_add` broadcast — `tensor * 2.0`, `tensor + 1.0` (in progress).
 - [x] `reshape`, `view`, `squeeze`, `unsqueeze`, `flatten`.
 - [x] `gelu`, `leaky_relu`, `elu`, `tanh`, `clamp`.
 - [x] `sum`, `mean`, `max`, `min` (reduce ops).
@@ -47,6 +50,7 @@
 - [ ] **Embeddings**: `embedding(input, weight)` lookup table.
 - [ ] **Attention**: `scaled_dot_product_attention` (fused Vulkan mega-kernel).
 - [ ] **Decoding**: `argmax`, `topk`.
+- [ ] **MSTS Generic CPU Tile Runner** — generalize tile-pulling to arbitrary `Callable[[np.ndarray], np.ndarray]`. Enables: (1) SSD streaming for any op without a native Vulkan shader (e.g. `layer_norm`, `erf`, `embedding`), (2) memory-efficient processing of tensors larger than RAM by materializing only 256K-element tiles at a time. GPU path stays native-only — CPU fallaback tile runner fills the gap.
 
 ### [Sprint 2.1] BitNet (1.58b) - The LLM Leapfrog
 *Target: native support for 1.58-bit ternary models (Bielik, BitNet-7B).*
@@ -79,6 +83,7 @@
 - [x] **AVX1 vectorized `exp`** (DONE).
 - [ ] **Buffer pool Drop integration**.
 - [ ] **Descriptor set caching**.
+- [ ] **MSTS Pre-flight Validation**: `MSTS` pre-flight checks for CPU+Vulkan dual-device support before hybrid dispatch.
 - [ ] **Tagged-Token Dataflow**: Evolve MSTS from AtomicU32 to full TTDF tag-matching (MERA-400 P/Q flags).
 - [ ] **Cooperative Matrix GLSL Shader**: `KHR_cooperative_matrix` for Tensor Cores.
 

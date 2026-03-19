@@ -1,8 +1,42 @@
-# OxTorch - API Reference (v3.7.0)
+# OxTorch — API Reference (v3.7.0)
 
-This document provides a technical overview of the `vulkannn_rusted_dev` library.
+This document covers both the native `vulkannn_rusted` API and the `oxtorch` drop-in package.
 
 ---
+
+## The `oxtorch` Drop-in Package
+
+The `oxtorch` Python package (located in `vulkannn_rusted/oxtorch/`) provides a transparent
+PyTorch-compatible interface. For most use cases, this is the recommended entry point.
+
+```python
+import oxtorch as torch   # single import change — that's it
+
+x = torch.randn(1024, 1024)       # uses real torch.randn (fallback)
+y = torch.relu(x)                 # routes to OxTorch CPU/Vulkan kernel
+z = torch.matmul(x.half(), x.t()) # OxTorch F16 Vulkan — up to 25x faster
+```
+
+### Fallback Mechanism
+
+`OxTorchTensor.__getattr__` intercepts every attribute access:
+1. If the attribute exists natively on the tensor → use it directly.
+2. Otherwise → convert to `numpy` array → call on real `torch.Tensor` → wrap result back.
+
+Module-level `__getattr__` in `oxtorch/__init__.py` handles factory functions
+(e.g., `torch.zeros`, `torch.randn`) the same way.
+
+> **Requirement**: PyTorch must be installed. OxTorch falls back to it for unimplemented ops.
+
+### Running scripts with oxtorch
+
+```bash
+# oxtorch is not pip-installed yet — set PYTHONPATH to the source tree:
+PYTHONPATH=/path/to/vulkannn_rusted python your_script.py
+```
+
+---
+
 
 ## DataType Enum
 

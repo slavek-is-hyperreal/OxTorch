@@ -154,33 +154,53 @@ effective throughput from the ZFS pool.
 
 ```mermaid
 graph TD
-    A[Python call] --> B[Tensor.unary_op / matmul]
-    B --> C{device?}
-    C -- cpu --> D[matrixmultiply sgemm / Rayon SIMD]
-    C -- vulkan --> E[AshBackend]
-    C -- hybrid --> F[MSTS tile counter AtomicUsize]
-    F -- tile claimed by GPU --> E
-    F -- tile claimed by CPU --> D
-    C -- ssd --> G[DirectIoEngine io_uring O_DIRECT]
-    G --> H[StatefulTile ring buffer]
-    H --> D
-    E --> I[Vulkan Timeline Semaphore]
-    I --> J[staging buffer download]
-    D --> K[Output Tensor]
-    J --> K
+    A[Python call via oxtorch] --> B{OxTorch knows this op?}
+    B -- Yes --> C[Tensor.unary_op / matmul]
+    B -- No --> Z[Fallback: numpy → real PyTorch → wrap back]
+    C --> D{device?}
+    D -- cpu --> E[matrixmultiply sgemm / Rayon SIMD]
+    D -- vulkan --> F[AshBackend]
+    D -- hybrid --> G[MSTS tile counter AtomicUsize]
+    G -- tile claimed by GPU --> F
+    G -- tile claimed by CPU --> E
+    D -- ssd --> H[DirectIoEngine io_uring O_DIRECT]
+    H --> I[StatefulTile ring buffer]
+    I --> E
+    F --> J[Vulkan Timeline Semaphore]
+    J --> K[staging buffer download]
+    E --> L[Output OxTorchTensor]
+    K --> L
+    Z --> L
 ```
 
 ---
 
-## 7. Statistical Benchmark Harness
+## 7. Benchmark Harness
 
-Source: `tests/unified_benchmark.py`
+### Atomized Suite (`tests/benchmarks/`)
+
+Phase 6 introduced 105 self-contained benchmark scripts, each covering one op/dtype/backend combination.
+Results are written to `tests/results/<name>.json` and printed live:
+
+```
+>>> TEST: MatMul_f16_vulkan (VULKAN, F16) | Shape: (2048, 2048) | Iter: 2
+    [PyTorch]  4.6100s
+    [OxTorch]  0.1999s | Ratio: 0.04x (OxTorch FASTER) | Parity: ✅ PASS (max_diff=2.50e-01)
+[benchmark] Result saved to tests/results/matmul_f16_vulkan.json
+```
+
+Run all benchmarks:
+```bash
+PYTHONPATH=/path/to/vulkannn_rusted python tests/run_all_benchmarks.py
+```
+
+### Statistical Suite (`tests/unified_benchmark.py`)
 
 Multi-run audit with per-test tracking of Median, Mean, StdDev, and OxTorch/PyTorch ratio.
-Results are written to `tests/last_results.json` (history of all runs) and
-`tests/benchmark_history.log` (human-readable log).
+Results written to `tests/last_results.json` and `tests/benchmark_history.log`.
 
-Parity checking uses `numpy.testing.assert_allclose` with precision-appropriate tolerances:
+Parity tolerances:
 - F32: `atol=1e-4`
 - F16: `atol=0.1`
 - BF16: `atol=1.0` (7-bit mantissa accumulation error on 2k MatMul)
+- INT8: `atol=2.0` (integer accumulation rounding)

@@ -11,19 +11,21 @@ The `unified_benchmark.py` harness reports:
 
 - **PT (Median)**: PyTorch execution time, median over N runs. The primary reference.
 - **OxTorch (Median)**: OxTorch execution time, median over N runs.
-- **OxTorch (Std)**: Standard deviation of OxTorch time. High### v3.7.0 (The BitNet Leapfrog))
+- **OxTorch (Std)**: Standard deviation. High std = thermal or OS interference.
+- **Ratio**: `OxTorch / PyTorch`. Values below 1.0 mean OxTorch is faster.
 
-| Operation | DType | Mode | Ratio (OxTorch / PT) | Why? |
+### v3.7.0 — Phase 6 Complete (53 benchmarks, AMD Bonaire / i5-3450)
+
+| Operation | DType | Mode | Ratio | Why? |
 | :--- | :--- | :--- | :--- | :--- |
-| MatMul | F32 | CPU | **0.82x** | Optimized BLAS integration |
-| Softmax | F32 | CPU | **0.57x** | Masked vectorized EXP |
-| ReLU | F16 | CPU | **0.66x** | Native F16C / AVX1 path |
-| MatMul | F16 | CPU | **0.002x** | PT lacks CPU F16C optimization |
-| GELU | F32 | CPU | 11.2x | **Under Optimization (Phase 7)** |
-| ReLU | SSD | Hybrid | N/A (PT: OOM) | MSTS / io_uring threading |
-PyTorch falls back to scalar software emulation without AVX-512 FP16).
-- **Parity**: Pass/fail of `numpy.testing.assert_allclose`. A pass means numerical
-  output matches PyTorch within the precision tolerance of the dtype.
+| MatMul | F16 | Vulkan | **0.04x** 🚀 | PT lacks CPU F16C; OxTorch uses Vulkan tiled shader |
+| MatMul | BF16 | Vulkan | **0.05x** 🚀 | Same — PT scalar emulation |
+| MatMul | F32 | Vulkan | **0.06x** 🚀 | Vulkan tiled SGEMM |
+| MatMul | INT8 | CPU | **0.04x** 🚀 | AVX2 SIMD vs PT scalar |
+| ReLU | INT8 | CPU | **0.085x** 🚀 | Dedicated INT8 AVX2 kernel |
+| ReLU | F32 | CPU | **0.44x** ✅ | AVX1 `vmaxps` |
+| GELU | F32 | CPU | 1.85x ⚠️ | PT vectorized GELU still ahead for F32 |
+| ReLU 15M | INT8 | Hybrid | 15.8x ⚠️ | PCIe overhead kills small INT8 on Vulkan |
 
 ---
 
@@ -107,9 +109,13 @@ the threshold can be lowered significantly.
 ## 6. Known Limitations
 
 - **Small GPU dispatches are expensive on Bonaire**: The ~80ms PCIe staging cost means
-  Vulkan is a net negative below 4M elements. This is a hardware characteristic, not a bug.
-- **F16 MatMul Hybrid**: the tile-pulling dispatch (Phase 4) currently covers only
-  activation functions. MatMul hybrid still uses a full-tensor Vulkan dispatch.
+  Vulkan is a net negative below 4M elements. Hardware characteristic, not a bug.
+- **F16 MatMul Hybrid**: tile-pulling dispatch currently covers only activation functions.
+  MatMul hybrid still uses a full-tensor Vulkan dispatch.
 - **No native FP16 shader compute**: Bonaire GCN 1.1 does not support FP16 in compute
-  shaders via Vulkan. All SPIR-V shaders operate on FP32. F16/BF16 data is converted
-  on the CPU before upload and after download.
+  shaders via Vulkan. All SPIR-V shaders operate on F32. F16/BF16 is converted on CPU
+  before upload and after download.
+- **INT8 GELU/Mul via fallback**: PyTorch itself does not support GELU or element-wise Mul
+  on `int8` tensors. OxTorch has native kernels for these. When using `oxtorch` as a drop-in
+  and calling GELU on INT8, it routes to OxTorch natively — but there is no PyTorch reference
+  to compare against, so the benchmark shows `FAILED` for the PT side only.
