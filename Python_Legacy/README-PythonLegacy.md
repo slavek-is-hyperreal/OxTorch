@@ -1,4 +1,4 @@
-# 🐍 VNN Python Legacy Edition (vulkan_nn_lib)
+# 🐍 OxTorch Python Legacy Edition (vulkan_nn_lib)
 
 > [!CAUTION]
 > **Status: LEGACY.**

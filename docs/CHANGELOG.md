@@ -2,7 +2,7 @@
 
 ## [3.7.0] - 2026-03-19 "The BitNet Leapfrog & OxTorch Rebranding"
 ### Added
-- **Project Rebranding**: Transitioned from `VulkanNN Rusted` to **OxTorch**.
+- **Project Rebranding**: Transitioned from `OxTorch` to **OxTorch**.
 - **BitNet (1.58-bit) Support**: Native `Ternary` (`{-1, 0, 1}`) quantization and `BitLinear` kernels.
 - **Vulkan BitLinear Shader**: Custom compatible compute shader with manual bit-unpacking for legacy GPUs (AMD Bonaire).
 - **Architecture Support Matrix**: Detailed CPU/GPU support tables in `README.md`.
@@ -97,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GPU operation chaining, buffer recycling cache.
 - **Out-of-Core `io_uring` Engine**: `src/io_uring_engine.rs` streams data with `O_DIRECT` at
   1MB ZFS recordsize boundaries, bypassing the Linux VFS page cache.
-- **MERA Style Task Scheduler (MSTS)**: `src/crook_scheduler.rs` implements `StatefulTile`, a
+- **Mera Style Tiling System (MSTS)**: `src/crook_scheduler.rs` implements `StatefulTile`, a
   lockless ring buffer with atomic state transitions inspired by the MERA-400 CROOK OS.
 - **15M Element ReLU Benchmark**: Added to `unified_benchmark.py` across all dtypes and modes to
   reveal the GPU dispatch break-even point above the 4M element threshold.
@@ -151,7 +151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.5.0] - 2026-03-01: OxTorch Rusted Edition
+## [2.5.0] - 2026-03-01: OxTorch Edition
 
 Initial Rust rewrite using PyO3 and maturin. Introduced:
 - `Tensor` class with Python operator overloading (`@`, `+`)

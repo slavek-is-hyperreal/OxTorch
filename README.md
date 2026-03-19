@@ -15,7 +15,7 @@ with no CUDA, no dedicated tensor cores, no Apple Silicon required.
 
 ## 🚀 Getting Started: From Zero to Inference
 
-If you are new to Rust or compilation, follow these steps to get VulkanNN Rusted running on your machine:
+If you are new to Rust or compilation, follow these steps to get OxTorch running on your machine:
 
 ### 1. Install the Rust Compiler
 VulkanNN is written in Rust for maximum speed. You need the Rust toolchain:
@@ -63,7 +63,7 @@ The CROOK operating system, developed at the Institute of Marine Technology at G
 Technology, paired with the MERA-400's architecture to create a system that could do more with less
 than almost anything built in the West at the time.
 
-The MSTS (MERA Style Task Scheduler) at the core of this library is a software reimplementation of
+The MSTS (Mera Style Tiling System) at the core of this library is a software reimplementation of
 those ideas in modern Rust: a ring buffer of atomic-state tiles that lets CPU and GPU workers race
 to claim work without locks, without a clock, and without static splits.
 
@@ -114,10 +114,10 @@ weights = Tensor.from_ssd("/pool/weights.bin", shape=(40000, 40000), dtype=DataT
 Hardware: Intel Core i5-3450 (Ivy Bridge, 4 cores, AVX + F16C, no AVX2) |
 AMD Radeon R7 200 Series (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
 
-| Test | PyTorch (Med) | VNN (Med) | Ratio (V/P) | Notes |
+| Test | PyTorch (Med) | OxTorch (Med) | Ratio (O/P) | Notes |
 |:---|---:|---:|:---:|:---|
-| MatMul f32 (cpu) | 0.2267s | 0.1929s | **0.82x** | VNN 18% faster! |
-| Softmax f32 (cpu) | 0.0081s | 0.0049s | **0.57x** | VNN 43% faster! |
+| MatMul f32 (cpu) | 0.2267s | 0.1929s | **0.82x** | OxTorch 18% faster! |
+| Softmax f32 (cpu) | 0.0081s | 0.0049s | **0.57x** | OxTorch 43% faster! |
 | ReLU f16 15M (cpu) | 0.0375s | 0.0251s | **0.66x** | SIMD Fast Path |
 | MatMul f16 (cpu) | 102.18s | 0.210s | **0.002x** | PT: scalar emulation |
 | MatMul bf16 (cpu) | 38.75s | 0.216s | **0.005x** | PT: scalar emulation |
@@ -125,7 +125,7 @@ AMD Radeon R7 200 Series (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
 | Monster ReLU 16GB (SSD) | N/A | 46.5s | SSD limit | io_uring O_DIRECT |
 
 > PyTorch F16/BF16 results reflect execution on the i5-3450 without native F16C acceleration in
-> PyTorch's dispatch path. VNN dispatches to hardware F16C intrinsics at runtime.
+> PyTorch's dispatch path. OxTorch dispatches to hardware F16C intrinsics at runtime.
 
 ## Architecture Support Matrix
 
@@ -232,7 +232,7 @@ Each development branch compiles to a distinctly named Python module for A/B ben
 
 ### The Vision
 
-The end goal of VulkanNN Rusted is simple to state, and hard to build:
+The end goal of OxTorch is simple to state, and hard to build:
 
 **Change one line of code. Everything else works.**
 

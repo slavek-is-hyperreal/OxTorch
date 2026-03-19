@@ -1,6 +1,6 @@
 # OxTorch Architecture: The MERA-400 Legacy
 
-OxTorch (formerly OxTorch Rusted) is built on the philosophy of **asynchronous, deterministic dataflow**. Inspired by the MERA-400 minicomputer, the engine treats hardware as a collection of asynchronous processing units that pull work from a unified stream.
+OxTorch (formerly VulkanNN Rusted) is built on the philosophy of **asynchronous, deterministic dataflow**. Inspired by the MERA-400 minicomputer, the engine treats hardware as a collection of asynchronous processing units that pull work from a unified stream.
 
 ## 🧱 Core Source Map (.rs file overview)
 
@@ -32,7 +32,7 @@ Marek requested a detailed breakdown of every source file in the engine:
 
 ### 💿 SSD & Streaming (MERA-System)
 - **`src/streaming.rs`**: Prefetching and budget management for out-of-core models.
-- **`src/tensor/msts.rs`**: "Memory Segmented Tensor Streaming". The logic that allows a tensor to reside on an SSD and be processed tile-by-tile.
+- **`src/tensor/msts.rs`**: "Mera Style Tiling System". The logic that allows a tensor to reside on an SSD and be processed tile-by-tile.
 - **`src/io_uring_engine.rs`**: High-performance Linux I/O using `io_uring` and `O_DIRECT`.
 
 ### ⛓ Scheduler & Utilities

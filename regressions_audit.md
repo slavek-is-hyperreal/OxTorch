@@ -9,7 +9,7 @@
 ## ❌ PARITY FAILURES (Numerical Artifacts)
 | Test Case | Mode | Max Diff | Status | Cause Analysis |
 |-----------|------|----------|--------|----------------|
-| `Sum_int8_cpu` | CPU | **1914.0** | **Expected** | PyTorch uses `float32` accumulation for 4M integers. VNN uses `i32`. The diff (~0.0004% of total sum) is the cumulative rounding error of 4.2M additions in single precision. |
+| `Sum_int8_cpu` | CPU | **1914.0** | **Expected** | PyTorch uses `float32` accumulation for 4M integers. OxTorch uses `i32`. The diff (~0.0004% of total sum) is the cumulative rounding error of 4.2M additions in single precision. |
 | `MatMul_f32_vulkan` | Vulkan | **250.0** | **Fail** | Ongoing investigation into FMA/Atomic precision. |
 
 ## ⚠️ PERFORMANCE WARNINGS (Ratio > 1.0)

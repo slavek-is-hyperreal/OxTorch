@@ -1,11 +1,12 @@
-# Roadmap - OxTorch Rusted
+# Roadmap - OxTorch v3.7.0
 
-## [3.6.0] Strategy: Hardware Acceleration & High-Precision Reductions (STABLE)
-- [x] **MSTS**: SSD-to-CPU-to-GPU streaming.
-- [x] **Int8 SWAR**: Bit-parallel logic for Int8 legacy CPUs.
-- [x] **Safe 64-bit Reductions**: `i64` exact summation for 4B+ elements (beats PyTorch).
-- [x] **SIMD Softmax**: Fully vectorized 3-pass kernels (AVX512, AVX2, AVX, SSE).
-- [x] **Dynamic Upcasting**: `Int8` ops output `F32` to prevent saturation at 127.
+## [3.7.0] The BitNet Leapfrog & Rebranding (LATEST)
+- [x] **OxTorch Rebranding**: Global project transition and documentation overhaul.
+- [x] **BitNet 1.58b**: Native `Ternary` types and dequantization-free kernels.
+- [x] **F16 CPU Parallelization**: Performance parity on legacy non-AVX512 hardware.
+- [x] **100% Bit-Perfect BitNet**: Parity verified between CPU and Vulkan backends.
+
+## [3.6.0] Strategy: Hardware Acceleration & High-Precision Reductions
 
 ---
 
@@ -13,16 +14,14 @@
 *Goal: Re-board the engine for 100% parity across all devices through modular isolation and PyTorch fallbacks.*
 
 ### 1. Architectural Re-boarding
-- [ ] **Modular Directory Structure**: Transition to `src/{cpu,vulkan}/ops/{op_name}/{target}/`.
-    - `target/` on CPU: `no-avx`, `avx1`, `avx2`, `arm-neon`, `arm32`.
-    - `target/` on Vulkan: `generic`, `subgroup`, `coop_matrix`.
-- [ ] **PyTorch Fallback Mechanism**: Implement `vnn.fallback` (PyO3) to ensure 100% API coverage during development.
-- [ ] **Strict Hybrid Validation**: `MSTS` strictly checks for dual-device support before allowing `Hybrid` mode.
+- [x] **Modular Directory Structure**: Transitioned to `src/{cpu,vulkan}/ops/`.
+- [x] **PyTorch Fallback Mechanism**: Implemented `fallback.rs` for 100% API coverage.
+- [ ] **Strict Hybrid Validation**: `MSTS` pre-flight checks for dual-device support.
 
 ### 2. Implementation & Migration
-- [ ] Migrate **MatMul** and **Softmax** to the new modular structure.
-- [ ] Implement parallel dispatchers for out-of-place activations (`relu_f32`, `gelu_f32`).
-- [ ] Add **Vulkan Elementwise** (`mul`, `sub`, `div`) using the new single-shader pattern.
+- [x] **Migrate MatMul and Softmax** to modular directory structure.
+- [x] **Parallel Dispatchers** for F16 scalar CPU fallbacks.
+- [x] **Vulkan BitLinear**: High-efficiency shader for ternary weights.
 
 ---
 

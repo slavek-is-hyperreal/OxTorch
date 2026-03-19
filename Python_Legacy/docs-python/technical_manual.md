@@ -1,6 +1,6 @@
-# 📖 VNN Technical Manual: Source Code Walkthrough
+# 📖 OxTorch Technical Manual: Source Code Walkthrough
 
-This document provides a comprehensive, block-by-block (and often line-by-line) explanation of the VNN Dual-Engine Architecture. It covers both the ultra-performant Native Rust Engine and the legacy Python computational engine.
+This document provides a comprehensive, block-by-block (and often line-by-line) explanation of the OxTorch Dual-Engine Architecture. It covers both the ultra-performant Native Rust Engine and the legacy Python computational engine.
 
 ---
 
@@ -29,7 +29,7 @@ The system enforcing the "VRAM is a Cache" ruleset.
 ## 🏗️ Legacy Engine (`vulkan_nn_lib/`)
 
 ### 1. [tensor.py](../vulkan_nn_lib/tensor.py) - The Universal Tensor
-This is the central object of VNN Legacy. It manages the state, device routing, and Autograd graph.
+This is the central object of OxTorch Legacy. It manages the state, device routing, and Autograd graph.
 
 *   **Lines 16-21**: `setup_ssd_storage` initializes the `TensorStore` globally.
 *   **Lines 34-191**: `__init__` constructor.
@@ -116,7 +116,7 @@ Provides the `torch.*` API.
 
 ### 7. [tensor_store.py](../vulkan_nn_lib/tensor_store.py) - SSD Persistence
 *   **Lines 21-44**: Uses **numpy memmap** with `mode='r+'`.
-    *   Allows VNN to treat the SSD as virtual memory, delegating caching to the Linux kernel / ZFS ARC.
+    *   Allows OxTorch to treat the SSD as virtual memory, delegating caching to the Linux kernel / ZFS ARC.
 
 ---
 
