@@ -2,7 +2,7 @@
 
 ## [3.7.0] - 2026-03-19 "The BitNet Leapfrog & OxTorch Rebranding"
 ### Added
-- **Project Rebranding**: Transitioned from `OxTorch` to **OxTorch**.
+- **Project Rebranding**: Transitioned from `VulkanNN` to **OxTorch**.
 - **BitNet (1.58-bit) Support**: Native `Ternary` (`{-1, 0, 1}`) quantization and `BitLinear` kernels.
 - **Vulkan BitLinear Shader**: Custom compatible compute shader with manual bit-unpacking for legacy GPUs (AMD Bonaire).
 - **Architecture Support Matrix**: Detailed CPU/GPU support tables in `README.md`.
@@ -54,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sprint 1 Performance Audit**: Comprehensive analysis of engine efficiency vs. optimization axioms.
 
 ### Changed
-- All project manuals synchronized to v3.5.0 with updated internal code line references.
+- All project manuals synchronized to v3.7.0 (The BitNet Leapfrog)
 - Documentation sweep: Added comprehensive Rustdoc comments to all public functions in `lib.rs`, `tensor.rs`, `backend.rs`, `avx_swar.rs`, `buf_pool.rs`, `io_uring_engine.rs`, `crook_scheduler.rs`, and `streaming.rs`.
 
 ---
@@ -67,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python-Side GC**: Added explicit `gc.collect()` and `del` in benchmark suites for processing massive 15M-element tensors within 24GB RAM limits.
 
 ### Changed
-- All project versions bumped from `v3.3.0` to `v3.4.0` to mark the stabilization of the "Iron Age" capabilities.
+- All project versions bumped from `v3.7.0` to `v3.7.0` to mark the stabilization of the "Iron Age" capabilities.
 - `vulkannn_rusted_dev` python module now natively uses the raw Vulkan bindings.
 
 ---
@@ -156,5 +156,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Initial Rust rewrite using PyO3 and maturin. Introduced:
 - `Tensor` class with Python operator overloading (`@`, `+`)
 - `from_ssd` / `new_ssd` for memory-mapped SSD tensors
-- WGPU backend (later replaced in v3.3.0 by raw ash Vulkan)
+- WGPU backend (later replaced in v3.7.0 (The BitNet Leapfrog))
 - memmap2 + madvise prefetching (later replaced by io_uring)

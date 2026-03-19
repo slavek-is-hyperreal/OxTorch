@@ -48,7 +48,7 @@ Marek requested a detailed breakdown of every source file in the engine:
 
 Source: `src/backend.rs`
 
-The GPU backend was rewritten in v3.4.0 from `wgpu` to `ash` (raw Vulkan 1.2 C bindings),
+The GPU backend was rewritten in v3.7.0 (The BitNet Leapfrog)),
 providing explicit control over every GPU resource.
 
 The `AshBackend` singleton (held in `OnceLock`) contains:

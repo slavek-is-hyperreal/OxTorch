@@ -1,6 +1,5 @@
-[package]
 name = "vulkannn_rusted"
-version = "3.6.0"
+version = "3.7.0"
 edition = "2021"
 
 [lib]

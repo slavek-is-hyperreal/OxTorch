@@ -1,4 +1,4 @@
-# OxTorch - API Reference (v3.6.0)
+# OxTorch - API Reference (v3.7.0)
 
 This document provides a technical overview of the `vulkannn_rusted_dev` library.
 

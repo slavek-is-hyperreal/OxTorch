@@ -65,6 +65,7 @@
 ### [Sprint 3.5] Ultra-Legacy & 32-bit Retrofits
 *Target: Execute on natively 32-bit constrained hardware (RPi1, Netbooks).*
 - [ ] `cfg(target_pointer_width = "32")` cleanups.
+- [ ] **Intel 80387 FPU Path**: Ternary-accumulation backends for non-SSE 32-bit processors.
 - [ ] `Xoshiro128++` fallback for 32-bit PRNG.
 - [ ] Strict `#UD` protection (Illegal Instruction) for non-SIMD processors.
 - [ ] Sub-256MB VRAM/RAM pooling constraints.

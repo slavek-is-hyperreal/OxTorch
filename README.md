@@ -1,4 +1,4 @@
-# OxTorch (v3.6.0 "Hardware Acceleration & BitNet 1.58b")
+# OxTorch (v3.7.0 (The BitNet Leapfrog))
 
 **A high-performance, Rust-powered tensor engine for constrained consumer hardware.**
 
@@ -109,7 +109,7 @@ weights = Tensor.from_ssd("/pool/weights.bin", shape=(40000, 40000), dtype=DataT
 
 ---
 
-## Benchmarks (v3.6.0, dev branch)
+## Benchmarks (v3.7.0, dev branch)
 
 Hardware: Intel Core i5-3450 (Ivy Bridge, 4 cores, AVX + F16C, no AVX2) |
 AMD Radeon R7 200 Series (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
@@ -153,7 +153,7 @@ OxTorch is designed to provide native, optimized kernels where PyTorch typically
 
 ## Technical Overview
 
-### Backend: Raw Ash Vulkan (v3.6.0+)
+### Backend: Raw Ash Vulkan (v3.7.0+)
 
 The GPU backend was completely rewritten from `wgpu`/WGSL to `ash` (raw Vulkan 1.2 bindings).
 This provides explicit control over:
@@ -218,10 +218,10 @@ Each development branch compiles to a distinctly named Python module for A/B ben
 
 | Branch | Module | Version |
 |:---|:---|:---|
-| `main` | `vulkannn_rusted_main` | v3.4.0 (Iron Age Complete) |
-| `test` | `vulkannn_rusted_test` | v3.4.0 |
-| `dev` | `vulkannn_rusted_dev` | v3.4.0 |
-| `dev_raw_vulkan` | `vulkannn_rusted_exp` | v3.4.0 (Merged into dev/main) |
+| `main` | `vulkannn_rusted_main` | v3.7.0 (The BitNet Leapfrog)) |
+| `test` | `vulkannn_rusted_test` | v3.7.0 (The BitNet Leapfrog)
+| `dev` | `vulkannn_rusted_dev` | v3.7.0 (The BitNet Leapfrog)
+| `dev_raw_vulkan` | `vulkannn_rusted_exp` | v3.7.0 (The BitNet Leapfrog)) |
 
 ---
 

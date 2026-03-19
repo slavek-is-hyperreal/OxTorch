@@ -1,4 +1,4 @@
-# Performance Guide (v3.5.0 "Sprint 1 — MLP Forward Pass")
+# Performance Guide (v3.7.0 (The BitNet Leapfrog))
 
 This guide explains how to interpret benchmark results and how to maximize throughput
 on the target hardware (i5-3450, AMD Bonaire R7 260X, 24GB DDR3, ZFS SSD pool).
@@ -11,7 +11,7 @@ The `unified_benchmark.py` harness reports:
 
 - **PT (Median)**: PyTorch execution time, median over N runs. The primary reference.
 - **OxTorch (Median)**: OxTorch execution time, median over N runs.
-- **OxTorch (Std)**: Standard deviation of OxTorch time. High### v3.6.0 Reference (Ivy Bridge i5-3450 / Radeon R7)
+- **OxTorch (Std)**: Standard deviation of OxTorch time. High### v3.7.0 (The BitNet Leapfrog))
 
 | Operation | DType | Mode | Ratio (OxTorch / PT) | Why? |
 | :--- | :--- | :--- | :--- | :--- |
