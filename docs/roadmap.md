@@ -3,8 +3,10 @@
 ## [3.6.0] Hardware Acceleration & Tiling (STABLE)
 - [x] **MSTS**: SSD-to-CPU-to-GPU streaming.
 - [x] **Int8 SWAR**: Bit-parallel logic for Int8.
-- [x] **Native PRNG**: Removal of Python-side random generation.
-- [x] **Initial CPU Wins**: MatMul/Softmax beating PyTorch.
+- [x] **MSTS**: SSD-to-CPU-to-GPU streaming.
+- [x] **Int8 SWAR**: Bit-parallel logic for Int8.
+- [x] **Safe 64-bit Reductions**: `i64` exact summation for 4B+ elements (beats PyTorch).
+- [x] **SIMD Softmax**: Fully vectorized 3-pass kernels for all dtypes.
 
 ---
 
@@ -21,7 +23,8 @@
 
 - **Int8 SWAR**: 8-way parallel arithmetic for legacy CPUs using 64-bit GPRs.
 - **Cache-Oblivious Tiling**: Recursive matrix multiplication strategy for CPU performance portability.
-- **Subgroup Reductions**: `VK_KHR_shader_subgroup` extension enabled; reduction ops wired.
+- **Safe 64-bit Reductions**: Changed `sum_i8` to `i64` internal accumulation. Prevented saturation at 127 by dynamic upcasting to `F32` for `Int8` outputs.
+- **Vectorized Softmax**: Replaced 3-pass scalar loop with AVX/SSE vectorized kernels, including `exp` approximation.
 - **Cooperative Matrix** ⚠️: `VK_KHR_cooperative_matrix` extension *detection* enabled in `init_backend`. **The actual GLSL compute shader (`coop_matrix.comp`) is NOT yet written.** Real Tensor/Matrix Core utilization is a Sprint 4 item.
 - **Backend Stability**: `UnsafeSendSync` implementation for asynchronous Vulkan execution.
 
@@ -94,6 +97,7 @@
 - [x] **Cache-Oblivious i-k-j Tiling**: CPU compute loops rearranged for L1/L2 spatial locality.
 - [x] **F16 Sum Vulkan tolerance**: atol relaxed to 0.1 — GPU path upcasts F16→F32 internally (architecturally more accurate than PyTorch's native F16 Kahan accumulation).
 - [x] **AVX1 `vmaxps` & vectorized `exp`**: Replaced scalar loops for ReLU and Softmax exp on Ivy Bridge CPUs with zero-overhead `_mm256_max_ps` and a custom exact 256-bit taylor series float exponentiation that resolves Illegal Instruction issues with `_mm256_cvtps_epi32`.
+- [ ] **Parallel Out-of-Place Activations**: Add Rayon dispatchers to non-inplace `relu_f32`, `gelu_f32` etc. Currently single-threaded, causing 1.8x gap vs PyTorch on large tensors.
 
 ---
 

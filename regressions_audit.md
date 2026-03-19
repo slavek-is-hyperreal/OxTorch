@@ -16,6 +16,7 @@
 | Test Case | Mode | Ratio | Analysis & Next Steps |
 |-----------|------|-------|-----------------------|
 | `Mul_int8_cpu` | CPU | **1.44x** | **Improved**. Ratio down from 4.15x. Still identifying why PT is faster on simple binary ops (likely cache streaming). |
+| `ReLU_f32_cpu_100M` | CPU | **1.84x** | Critical lack of parallel dispatch in `relu_f32` (out-of-place). While `inplace` is parallelized, the copy-version is single-threaded. Fix: Implement Rayon `par_chunks` for all out-of-place activations. |
 | `GELU_f32_cpu` | CPU | 1.51x | **Improved** from 1.89x. Still slightly behind MKL/oneDNN. |
 | `ReLU_f32_15M` | CPU | 1.23x | **Improved** from 1.6x. Memory saturating. |
 | `Mul_f32_cpu` | CPU | 1.32x | Overhead on small-ish (2K^2) ops. |

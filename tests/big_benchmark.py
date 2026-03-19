@@ -49,8 +49,13 @@ def check_parity(vnn_tensor, torch_tensor, name, atol=1e-2):
             atol = 100.0  # Increased for larger tensors
     elif "f16" in name_l and "sum" in name_l:
         atol = 0.5    # Increased for larger tensors
-    if "int8" in name_l and "matmul" in name_l:
-        atol = 500.0
+    if "int8" in name_l:
+        if "sum" in name_l:
+            # Int8 Sum: VNN is i64-exact, PT is fp32-approx. 
+            # On 67M elements, diff can be > 10,000.
+            atol = 20000.0
+        elif "matmul" in name_l:
+            atol = 500.0
     v_np = vnn_tensor.to_numpy()
     t_np = torch_tensor.detach().numpy() if hasattr(torch_tensor, 'detach') else torch_tensor
     v_np = v_np.flatten()
@@ -142,6 +147,9 @@ def run_bench(name, op, shape, mode="cpu", is_ssd=False, iterations=None, dtype=
                         res_torch = torch.matmul(a_torch.float(), b_torch.float()).to(torch.int8)
                     else:
                         res_torch = torch.matmul(a_torch, b_torch)
+                elif "Monster" in name:
+                    # Specific for overflow-triggering sum
+                    res_torch = torch.sum(a_torch.float())
                 elif op == "Add":
                     if dtype == "int8":
                          res_torch = (a_torch.short() + b_torch.short()).to(torch.int8)
@@ -312,6 +320,24 @@ if __name__ == "__main__":
                 # --- ReLU Large ---
                 pt, v_t, ok, temp = run_bench(f"ReLU_{dtype}_{mode}_100M", "ReLU", (100000000,), mode=mode, dtype=dtype)
                 run_results.append({"name": f"ReLU {dtype} 100M ({mode})", "pt": pt, "vnn": v_t, "ok": ok, "cpu_temp_c": temp})
+
+            if dtype == "int8":
+                # --- Specific Overflow Edge Case: Total Sum of 100M elements filled with 127 ---
+                # Expected Sum: 12.7 Billion (Exceeds i32 limit)
+                print(f"\n[EDGE CASE] Injecting constant large data for Int8 Sum...")
+                count_edge = 100_000_000
+                data_edge = np.full((count_edge,), 127, dtype=np.int8)
+                a_torch_edge = torch.from_numpy(data_edge).to(torch.int8)
+                # PT sum (will be approximate due to fp32)
+                t_pt_edge = 0.0 # Placeholder or measure
+                a_vnn_edge = Tensor(data=data_edge.astype(np.float32), dtype=vnn.DataType.Int8, device="cpu")
+                res_vnn_edge = a_vnn_edge.sum()
+                res_vnn_np = res_vnn_edge.to_numpy().flatten()[0]
+                expected_edge = float(count_edge) * 127.0
+                diff_edge = abs(res_vnn_np - expected_edge)
+                ok_edge = diff_edge < 1.0
+                print(f"    [VNN Edge] Sum: {res_vnn_np} | Expected: {expected_edge} | OK: {ok_edge}")
+                run_results.append({"name": "Int8 Sum Overflow Edge", "pt": 0, "vnn": 0, "ok": ok_edge, "cpu_temp_c": temp})
 
         all_runs_results.append(run_results)
 
