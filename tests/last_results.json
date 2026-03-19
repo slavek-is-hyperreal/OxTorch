@@ -36838,5 +36838,1023 @@
                 "failed": false
             }
         ]
+    },
+    {
+        "timestamp": "Thu Mar 19 17:23:03 2026",
+        "total_duration_seconds": 1319.761772885,
+        "runs": 1,
+        "torch_backend": "CPU\u00b7MKL\u00b7float32",
+        "results": [
+            {
+                "name": "MatMul f32 (cpu)",
+                "vnn_mean": 0.15111246635005954,
+                "vnn_med": 0.15111246635005954,
+                "vnn_std": 0.0,
+                "pt_mean": 0.23189634790005584,
+                "pt_med": 0.23189634790005584,
+                "cpu_temp_c_mean": 45.0,
+                "failed": false
+            },
+            {
+                "name": "Sum f32 (cpu)",
+                "vnn_mean": 0.0013020942999901308,
+                "vnn_med": 0.0013020942999901308,
+                "vnn_std": 0.0,
+                "pt_mean": 0.001618672649965447,
+                "pt_med": 0.001618672649965447,
+                "cpu_temp_c_mean": 47.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax f32 (cpu)",
+                "vnn_mean": 0.007763050450012088,
+                "vnn_med": 0.007763050450012088,
+                "vnn_std": 0.0,
+                "pt_mean": 0.009322219049954584,
+                "pt_med": 0.009322219049954584,
+                "cpu_temp_c_mean": 41.0,
+                "failed": false
+            },
+            {
+                "name": "Mul f32 (cpu)",
+                "vnn_mean": 0.0074927091500285314,
+                "vnn_med": 0.0074927091500285314,
+                "vnn_std": 0.0,
+                "pt_mean": 0.005000476750046801,
+                "pt_med": 0.005000476750046801,
+                "cpu_temp_c_mean": 40.0,
+                "failed": false
+            },
+            {
+                "name": "Sub f32 (cpu)",
+                "vnn_mean": 0.007334071700006462,
+                "vnn_med": 0.007334071700006462,
+                "vnn_std": 0.0,
+                "pt_mean": 0.005328935849956906,
+                "pt_med": 0.005328935849956906,
+                "cpu_temp_c_mean": 46.0,
+                "failed": false
+            },
+            {
+                "name": "GELU f32 (cpu)",
+                "vnn_mean": 0.008176142999946023,
+                "vnn_med": 0.008176142999946023,
+                "vnn_std": 0.0,
+                "pt_mean": 0.004724725550022413,
+                "pt_med": 0.004724725550022413,
+                "cpu_temp_c_mean": 44.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f32 1M alloc (cpu)",
+                "vnn_mean": 0.0010006642500229646,
+                "vnn_med": 0.0010006642500229646,
+                "vnn_std": 0.0,
+                "pt_mean": 0.001166949150047003,
+                "pt_med": 0.001166949150047003,
+                "cpu_temp_c_mean": 40.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f32 1M inplace (cpu)",
+                "vnn_mean": 0.0010568362000412889,
+                "vnn_med": 0.0010568362000412889,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0017703793500004395,
+                "pt_med": 0.0017703793500004395,
+                "cpu_temp_c_mean": 43.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f32 15M (cpu)",
+                "vnn_mean": 0.011717256799965981,
+                "vnn_med": 0.011717256799965981,
+                "vnn_std": 0.0,
+                "pt_mean": 0.022874903599949904,
+                "pt_med": 0.022874903599949904,
+                "cpu_temp_c_mean": 45.0,
+                "failed": false
+            },
+            {
+                "name": "MatMul f32 (vulkan)",
+                "vnn_mean": 0.15792691124997874,
+                "vnn_med": 0.15792691124997874,
+                "vnn_std": 0.0,
+                "pt_mean": 0.2614448455499769,
+                "pt_med": 0.2614448455499769,
+                "cpu_temp_c_mean": 42.0,
+                "failed": false
+            },
+            {
+                "name": "Sum f32 (vulkan)",
+                "vnn_mean": 0.005782073950013,
+                "vnn_med": 0.005782073950013,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0012814982999771018,
+                "pt_med": 0.0012814982999771018,
+                "cpu_temp_c_mean": 43.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax f32 (vulkan)",
+                "vnn_mean": 0.010454840750026052,
+                "vnn_med": 0.010454840750026052,
+                "vnn_std": 0.0,
+                "pt_mean": 0.008048038749984698,
+                "pt_med": 0.008048038749984698,
+                "cpu_temp_c_mean": 41.0,
+                "failed": false
+            },
+            {
+                "name": "Mul f32 (vulkan)",
+                "vnn_mean": 0.014258416749999014,
+                "vnn_med": 0.014258416749999014,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0044434229999751555,
+                "pt_med": 0.0044434229999751555,
+                "cpu_temp_c_mean": 44.0,
+                "failed": false
+            },
+            {
+                "name": "Sub f32 (vulkan)",
+                "vnn_mean": 0.01496589739999763,
+                "vnn_med": 0.01496589739999763,
+                "vnn_std": 0.0,
+                "pt_mean": 0.006738892600060354,
+                "pt_med": 0.006738892600060354,
+                "cpu_temp_c_mean": 42.0,
+                "failed": false
+            },
+            {
+                "name": "GELU f32 (vulkan)",
+                "vnn_mean": 0.010101179449975461,
+                "vnn_med": 0.010101179449975461,
+                "vnn_std": 0.0,
+                "pt_mean": 0.003893081999922288,
+                "pt_med": 0.003893081999922288,
+                "cpu_temp_c_mean": 39.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f32 1M alloc (vulkan)",
+                "vnn_mean": 0.0023259882999809634,
+                "vnn_med": 0.0023259882999809634,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0011775564499657775,
+                "pt_med": 0.0011775564499657775,
+                "cpu_temp_c_mean": 42.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f32 15M (vulkan)",
+                "vnn_mean": 0.057388355600051,
+                "vnn_med": 0.057388355600051,
+                "vnn_std": 0.0,
+                "pt_mean": 0.015321260799828451,
+                "pt_med": 0.015321260799828451,
+                "cpu_temp_c_mean": 44.0,
+                "failed": false
+            },
+            {
+                "name": "MatMul f32 (hybrid)",
+                "vnn_mean": 0.15815151360002347,
+                "vnn_med": 0.15815151360002347,
+                "vnn_std": 0.0,
+                "pt_mean": 0.2109032619499885,
+                "pt_med": 0.2109032619499885,
+                "cpu_temp_c_mean": 45.0,
+                "failed": false
+            },
+            {
+                "name": "Sum f32 (hybrid)",
+                "vnn_mean": 0.005848487399998703,
+                "vnn_med": 0.005848487399998703,
+                "vnn_std": 0.0,
+                "pt_mean": 0.001242393499978789,
+                "pt_med": 0.001242393499978789,
+                "cpu_temp_c_mean": 45.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax f32 (hybrid)",
+                "vnn_mean": 0.01051793924998492,
+                "vnn_med": 0.01051793924998492,
+                "vnn_std": 0.0,
+                "pt_mean": 0.008547674249984993,
+                "pt_med": 0.008547674249984993,
+                "cpu_temp_c_mean": 41.0,
+                "failed": false
+            },
+            {
+                "name": "Mul f32 (hybrid)",
+                "vnn_mean": 0.014042941449952195,
+                "vnn_med": 0.014042941449952195,
+                "vnn_std": 0.0,
+                "pt_mean": 0.004167211650019454,
+                "pt_med": 0.004167211650019454,
+                "cpu_temp_c_mean": 39.0,
+                "failed": false
+            },
+            {
+                "name": "Sub f32 (hybrid)",
+                "vnn_mean": 0.014069663700047386,
+                "vnn_med": 0.014069663700047386,
+                "vnn_std": 0.0,
+                "pt_mean": 0.005908117049966677,
+                "pt_med": 0.005908117049966677,
+                "cpu_temp_c_mean": 47.0,
+                "failed": false
+            },
+            {
+                "name": "GELU f32 (hybrid)",
+                "vnn_mean": 0.009956321050049155,
+                "vnn_med": 0.009956321050049155,
+                "vnn_std": 0.0,
+                "pt_mean": 0.003937062600016361,
+                "pt_med": 0.003937062600016361,
+                "cpu_temp_c_mean": 43.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f32 1M alloc (hybrid)",
+                "vnn_mean": 0.002389172650055116,
+                "vnn_med": 0.002389172650055116,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0007485180500225397,
+                "pt_med": 0.0007485180500225397,
+                "cpu_temp_c_mean": 39.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f32 15M (hybrid)",
+                "vnn_mean": 0.054991521400006606,
+                "vnn_med": 0.054991521400006606,
+                "vnn_std": 0.0,
+                "pt_mean": 0.014181862399709644,
+                "pt_med": 0.014181862399709644,
+                "cpu_temp_c_mean": 39.0,
+                "failed": false
+            },
+            {
+                "name": "MatMul f16 (cpu)",
+                "vnn_mean": 68.76809989399953,
+                "vnn_med": 68.76809989399953,
+                "vnn_std": 0.0,
+                "pt_mean": 105.02161061900006,
+                "pt_med": 105.02161061900006,
+                "cpu_temp_c_mean": 40.0,
+                "failed": true
+            },
+            {
+                "name": "Sum f16 (cpu)",
+                "vnn_mean": 0.00040010220000112894,
+                "vnn_med": 0.00040010220000112894,
+                "vnn_std": 0.0,
+                "pt_mean": 0.002195712600223487,
+                "pt_med": 0.002195712600223487,
+                "cpu_temp_c_mean": 44.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax f16 (cpu)",
+                "vnn_mean": 0.004298325600029784,
+                "vnn_med": 0.004298325600029784,
+                "vnn_std": 0.0,
+                "pt_mean": 0.012430215299900738,
+                "pt_med": 0.012430215299900738,
+                "cpu_temp_c_mean": 44.0,
+                "failed": false
+            },
+            {
+                "name": "Mul f16 (cpu)",
+                "vnn_mean": 0.0026673673000914278,
+                "vnn_med": 0.0026673673000914278,
+                "vnn_std": 0.0,
+                "pt_mean": 0.003108713500114391,
+                "pt_med": 0.003108713500114391,
+                "cpu_temp_c_mean": 42.0,
+                "failed": false
+            },
+            {
+                "name": "Sub f16 (cpu)",
+                "vnn_mean": 0.00277560659997107,
+                "vnn_med": 0.00277560659997107,
+                "vnn_std": 0.0,
+                "pt_mean": 0.006796349499927601,
+                "pt_med": 0.006796349499927601,
+                "cpu_temp_c_mean": 44.0,
+                "failed": false
+            },
+            {
+                "name": "GELU f16 (cpu)",
+                "vnn_mean": 0.033743553699969196,
+                "vnn_med": 0.033743553699969196,
+                "vnn_std": 0.0,
+                "pt_mean": 0.019314443300027052,
+                "pt_med": 0.019314443300027052,
+                "cpu_temp_c_mean": 40.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f16 1M alloc (cpu)",
+                "vnn_mean": 0.006615781299842638,
+                "vnn_med": 0.006615781299842638,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0031562543001200536,
+                "pt_med": 0.0031562543001200536,
+                "cpu_temp_c_mean": 47.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f16 1M inplace (cpu)",
+                "vnn_mean": 0.0068034411000553515,
+                "vnn_med": 0.0068034411000553515,
+                "vnn_std": 0.0,
+                "pt_mean": 0.006041036800161237,
+                "pt_med": 0.006041036800161237,
+                "cpu_temp_c_mean": 40.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f16 15M (cpu)",
+                "vnn_mean": 0.114749392199883,
+                "vnn_med": 0.114749392199883,
+                "vnn_std": 0.0,
+                "pt_mean": 0.039822126399667465,
+                "pt_med": 0.039822126399667465,
+                "cpu_temp_c_mean": 45.0,
+                "failed": false
+            },
+            {
+                "name": "MatMul f16 (vulkan)",
+                "vnn_mean": 0.1540222879993962,
+                "vnn_med": 0.1540222879993962,
+                "vnn_std": 0.0,
+                "pt_mean": 101.46412788050111,
+                "pt_med": 101.46412788050111,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "Sum f16 (vulkan)",
+                "vnn_mean": 0.005292969199945219,
+                "vnn_med": 0.005292969199945219,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0008730186997127021,
+                "pt_med": 0.0008730186997127021,
+                "cpu_temp_c_mean": 38.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax f16 (vulkan)",
+                "vnn_mean": 0.00829166189978423,
+                "vnn_med": 0.00829166189978423,
+                "vnn_std": 0.0,
+                "pt_mean": 0.011733684199862182,
+                "pt_med": 0.011733684199862182,
+                "cpu_temp_c_mean": 42.0,
+                "failed": false
+            },
+            {
+                "name": "Mul f16 (vulkan)",
+                "vnn_mean": 0.011990447800053516,
+                "vnn_med": 0.011990447800053516,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0030489015000057405,
+                "pt_med": 0.0030489015000057405,
+                "cpu_temp_c_mean": 42.0,
+                "failed": false
+            },
+            {
+                "name": "Sub f16 (vulkan)",
+                "vnn_mean": 0.012100504800037016,
+                "vnn_med": 0.012100504800037016,
+                "vnn_std": 0.0,
+                "pt_mean": 0.010634531100004096,
+                "pt_med": 0.010634531100004096,
+                "cpu_temp_c_mean": 45.0,
+                "failed": false
+            },
+            {
+                "name": "GELU f16 (vulkan)",
+                "vnn_mean": 0.008277378599814256,
+                "vnn_med": 0.008277378599814256,
+                "vnn_std": 0.0,
+                "pt_mean": 0.01626761389998137,
+                "pt_med": 0.01626761389998137,
+                "cpu_temp_c_mean": 42.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f16 1M alloc (vulkan)",
+                "vnn_mean": 0.002175929100121721,
+                "vnn_med": 0.002175929100121721,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0023437269002897663,
+                "pt_med": 0.0023437269002897663,
+                "cpu_temp_c_mean": 44.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f16 15M (vulkan)",
+                "vnn_mean": 0.028505960199981927,
+                "vnn_med": 0.028505960199981927,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0463128269999288,
+                "pt_med": 0.0463128269999288,
+                "cpu_temp_c_mean": 46.0,
+                "failed": false
+            },
+            {
+                "name": "MatMul f16 (hybrid)",
+                "vnn_mean": 0.15438885299954563,
+                "vnn_med": 0.15438885299954563,
+                "vnn_std": 0.0,
+                "pt_mean": 106.83785821249876,
+                "pt_med": 106.83785821249876,
+                "cpu_temp_c_mean": 51.0,
+                "failed": false
+            },
+            {
+                "name": "Sum f16 (hybrid)",
+                "vnn_mean": 0.005568630999914603,
+                "vnn_med": 0.005568630999914603,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0013499769000191008,
+                "pt_med": 0.0013499769000191008,
+                "cpu_temp_c_mean": 47.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax f16 (hybrid)",
+                "vnn_mean": 0.009686926300128107,
+                "vnn_med": 0.009686926300128107,
+                "vnn_std": 0.0,
+                "pt_mean": 0.01570482510032889,
+                "pt_med": 0.01570482510032889,
+                "cpu_temp_c_mean": 47.0,
+                "failed": false
+            },
+            {
+                "name": "Mul f16 (hybrid)",
+                "vnn_mean": 0.01231273909979791,
+                "vnn_med": 0.01231273909979791,
+                "vnn_std": 0.0,
+                "pt_mean": 0.004966277600033209,
+                "pt_med": 0.004966277600033209,
+                "cpu_temp_c_mean": 49.0,
+                "failed": false
+            },
+            {
+                "name": "Sub f16 (hybrid)",
+                "vnn_mean": 0.01241241479983728,
+                "vnn_med": 0.01241241479983728,
+                "vnn_std": 0.0,
+                "pt_mean": 0.007828344399968046,
+                "pt_med": 0.007828344399968046,
+                "cpu_temp_c_mean": 47.0,
+                "failed": false
+            },
+            {
+                "name": "GELU f16 (hybrid)",
+                "vnn_mean": 0.011736282700076118,
+                "vnn_med": 0.011736282700076118,
+                "vnn_std": 0.0,
+                "pt_mean": 0.022915417100011836,
+                "pt_med": 0.022915417100011836,
+                "cpu_temp_c_mean": 44.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f16 1M alloc (hybrid)",
+                "vnn_mean": 0.002808527199886157,
+                "vnn_med": 0.002808527199886157,
+                "vnn_std": 0.0,
+                "pt_mean": 0.006640264499947079,
+                "pt_med": 0.006640264499947079,
+                "cpu_temp_c_mean": 52.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU f16 15M (hybrid)",
+                "vnn_mean": 0.030605164999724366,
+                "vnn_med": 0.030605164999724366,
+                "vnn_std": 0.0,
+                "pt_mean": 0.04754171520035015,
+                "pt_med": 0.04754171520035015,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "MatMul bf16 (cpu)",
+                "vnn_mean": 0.32708092699976987,
+                "vnn_med": 0.32708092699976987,
+                "vnn_std": 0.0,
+                "pt_mean": 42.321992994999164,
+                "pt_med": 42.321992994999164,
+                "cpu_temp_c_mean": 51.0,
+                "failed": false
+            },
+            {
+                "name": "Sum bf16 (cpu)",
+                "vnn_mean": 0.0006787275000533554,
+                "vnn_med": 0.0006787275000533554,
+                "vnn_std": 0.0,
+                "pt_mean": 0.001992133800013107,
+                "pt_med": 0.001992133800013107,
+                "cpu_temp_c_mean": 53.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax bf16 (cpu)",
+                "vnn_mean": 0.027992655600246507,
+                "vnn_med": 0.027992655600246507,
+                "vnn_std": 0.0,
+                "pt_mean": 0.013227249199917423,
+                "pt_med": 0.013227249199917423,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "Mul bf16 (cpu)",
+                "vnn_mean": 0.004288534399893251,
+                "vnn_med": 0.004288534399893251,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0029681113999686206,
+                "pt_med": 0.0029681113999686206,
+                "cpu_temp_c_mean": 46.0,
+                "failed": false
+            },
+            {
+                "name": "Sub bf16 (cpu)",
+                "vnn_mean": 0.004152327200063155,
+                "vnn_med": 0.004152327200063155,
+                "vnn_std": 0.0,
+                "pt_mean": 0.004690776500137872,
+                "pt_med": 0.004690776500137872,
+                "cpu_temp_c_mean": 43.0,
+                "failed": false
+            },
+            {
+                "name": "GELU bf16 (cpu)",
+                "vnn_mean": 0.015223977200002991,
+                "vnn_med": 0.015223977200002991,
+                "vnn_std": 0.0,
+                "pt_mean": 0.016459412299809628,
+                "pt_med": 0.016459412299809628,
+                "cpu_temp_c_mean": 42.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU bf16 1M alloc (cpu)",
+                "vnn_mean": 0.0003562734000297496,
+                "vnn_med": 0.0003562734000297496,
+                "vnn_std": 0.0,
+                "pt_mean": 0.00476243439989048,
+                "pt_med": 0.00476243439989048,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU bf16 1M inplace (cpu)",
+                "vnn_mean": 0.0002343800002563512,
+                "vnn_med": 0.0002343800002563512,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0027619514999969396,
+                "pt_med": 0.0027619514999969396,
+                "cpu_temp_c_mean": 41.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU bf16 15M (cpu)",
+                "vnn_mean": 0.018941927199921337,
+                "vnn_med": 0.018941927199921337,
+                "vnn_std": 0.0,
+                "pt_mean": 0.02285971460005385,
+                "pt_med": 0.02285971460005385,
+                "cpu_temp_c_mean": 40.0,
+                "failed": false
+            },
+            {
+                "name": "MatMul bf16 (vulkan)",
+                "vnn_mean": 0.1561454259990569,
+                "vnn_med": 0.1561454259990569,
+                "vnn_std": 0.0,
+                "pt_mean": 41.85378356000001,
+                "pt_med": 41.85378356000001,
+                "cpu_temp_c_mean": 43.0,
+                "failed": false
+            },
+            {
+                "name": "Sum bf16 (vulkan)",
+                "vnn_mean": 0.005725874199924874,
+                "vnn_med": 0.005725874199924874,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0004281494999304414,
+                "pt_med": 0.0004281494999304414,
+                "cpu_temp_c_mean": 42.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax bf16 (vulkan)",
+                "vnn_mean": 0.009359496099932585,
+                "vnn_med": 0.009359496099932585,
+                "vnn_std": 0.0,
+                "pt_mean": 0.018269676400086608,
+                "pt_med": 0.018269676400086608,
+                "cpu_temp_c_mean": 49.0,
+                "failed": false
+            },
+            {
+                "name": "Mul bf16 (vulkan)",
+                "vnn_mean": 0.014546537100250135,
+                "vnn_med": 0.014546537100250135,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0075136575000215085,
+                "pt_med": 0.0075136575000215085,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "Sub bf16 (vulkan)",
+                "vnn_mean": 0.021461883499796386,
+                "vnn_med": 0.021461883499796386,
+                "vnn_std": 0.0,
+                "pt_mean": 0.012698753500080784,
+                "pt_med": 0.012698753500080784,
+                "cpu_temp_c_mean": 51.0,
+                "failed": false
+            },
+            {
+                "name": "GELU bf16 (vulkan)",
+                "vnn_mean": 0.015185712099992088,
+                "vnn_med": 0.015185712099992088,
+                "vnn_std": 0.0,
+                "pt_mean": 0.04963620740018086,
+                "pt_med": 0.04963620740018086,
+                "cpu_temp_c_mean": 52.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU bf16 1M alloc (vulkan)",
+                "vnn_mean": 0.004012144999796874,
+                "vnn_med": 0.004012144999796874,
+                "vnn_std": 0.0,
+                "pt_mean": 0.004987412499758648,
+                "pt_med": 0.004987412499758648,
+                "cpu_temp_c_mean": 54.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU bf16 15M (vulkan)",
+                "vnn_mean": 0.031164396800159012,
+                "vnn_med": 0.031164396800159012,
+                "vnn_std": 0.0,
+                "pt_mean": 0.022360835199651773,
+                "pt_med": 0.022360835199651773,
+                "cpu_temp_c_mean": 50.0,
+                "failed": false
+            },
+            {
+                "name": "MatMul bf16 (hybrid)",
+                "vnn_mean": 0.15443814899845165,
+                "vnn_med": 0.15443814899845165,
+                "vnn_std": 0.0,
+                "pt_mean": 43.588003846500214,
+                "pt_med": 43.588003846500214,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "Sum bf16 (hybrid)",
+                "vnn_mean": 0.0072867692997533595,
+                "vnn_med": 0.0072867692997533595,
+                "vnn_std": 0.0,
+                "pt_mean": 0.00041346219986735375,
+                "pt_med": 0.00041346219986735375,
+                "cpu_temp_c_mean": 39.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax bf16 (hybrid)",
+                "vnn_mean": 0.008655909200024325,
+                "vnn_med": 0.008655909200024325,
+                "vnn_std": 0.0,
+                "pt_mean": 0.011685534700154676,
+                "pt_med": 0.011685534700154676,
+                "cpu_temp_c_mean": 43.0,
+                "failed": false
+            },
+            {
+                "name": "Mul bf16 (hybrid)",
+                "vnn_mean": 0.012171178299831808,
+                "vnn_med": 0.012171178299831808,
+                "vnn_std": 0.0,
+                "pt_mean": 0.003355363000082434,
+                "pt_med": 0.003355363000082434,
+                "cpu_temp_c_mean": 41.0,
+                "failed": false
+            },
+            {
+                "name": "Sub bf16 (hybrid)",
+                "vnn_mean": 0.013163166899903444,
+                "vnn_med": 0.013163166899903444,
+                "vnn_std": 0.0,
+                "pt_mean": 0.005017231300007552,
+                "pt_med": 0.005017231300007552,
+                "cpu_temp_c_mean": 47.0,
+                "failed": false
+            },
+            {
+                "name": "GELU bf16 (hybrid)",
+                "vnn_mean": 0.008292136499949265,
+                "vnn_med": 0.008292136499949265,
+                "vnn_std": 0.0,
+                "pt_mean": 0.01701311840006383,
+                "pt_med": 0.01701311840006383,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU bf16 1M alloc (hybrid)",
+                "vnn_mean": 0.002423138100130018,
+                "vnn_med": 0.002423138100130018,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0012885747000837,
+                "pt_med": 0.0012885747000837,
+                "cpu_temp_c_mean": 44.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU bf16 15M (hybrid)",
+                "vnn_mean": 0.031130389000463766,
+                "vnn_med": 0.031130389000463766,
+                "vnn_std": 0.0,
+                "pt_mean": 0.01857328719997895,
+                "pt_med": 0.01857328719997895,
+                "cpu_temp_c_mean": 46.0,
+                "failed": false
+            },
+            {
+                "name": "MatMul int8 (cpu)",
+                "vnn_mean": 0.14689955805006322,
+                "vnn_med": 0.14689955805006322,
+                "vnn_std": 0.0,
+                "pt_mean": 0.2204481423499601,
+                "pt_med": 0.2204481423499601,
+                "cpu_temp_c_mean": 46.0,
+                "failed": false
+            },
+            {
+                "name": "Sum int8 (cpu)",
+                "vnn_mean": 0.0001898086498840712,
+                "vnn_med": 0.0001898086498840712,
+                "vnn_std": 0.0,
+                "pt_mean": 0.003689531850068306,
+                "pt_med": 0.003689531850068306,
+                "cpu_temp_c_mean": 49.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax int8 (cpu)",
+                "vnn_mean": 0.0057108682500256695,
+                "vnn_med": 0.0057108682500256695,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0,
+                "pt_med": 0.0,
+                "cpu_temp_c_mean": 47.0,
+                "failed": false
+            },
+            {
+                "name": "Mul int8 (cpu)",
+                "vnn_mean": 0.005180694750015391,
+                "vnn_med": 0.005180694750015391,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0008603330499681761,
+                "pt_med": 0.0008603330499681761,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "Sub int8 (cpu)",
+                "vnn_mean": 0.00137559640006657,
+                "vnn_med": 0.00137559640006657,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0020383594501254265,
+                "pt_med": 0.0020383594501254265,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "GELU int8 (cpu)",
+                "vnn_mean": 0.002798904449991824,
+                "vnn_med": 0.002798904449991824,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0,
+                "pt_med": 0.0,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU int8 1M alloc (cpu)",
+                "vnn_mean": 0.000159663049998926,
+                "vnn_med": 0.000159663049998926,
+                "vnn_std": 0.0,
+                "pt_mean": 7.683574986003805e-05,
+                "pt_med": 7.683574986003805e-05,
+                "cpu_temp_c_mean": 49.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU int8 1M inplace (cpu)",
+                "vnn_mean": 0.00011672484997689025,
+                "vnn_med": 0.00011672484997689025,
+                "vnn_std": 0.0,
+                "pt_mean": 9.543710002617445e-05,
+                "pt_med": 9.543710002617445e-05,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU int8 15M (cpu)",
+                "vnn_mean": 0.004650897600367898,
+                "vnn_med": 0.004650897600367898,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0046587732002080886,
+                "pt_med": 0.0046587732002080886,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "MatMul int8 (vulkan)",
+                "vnn_mean": 0.15985937064997416,
+                "vnn_med": 0.15985937064997416,
+                "vnn_std": 0.0,
+                "pt_mean": 0.31467189619997954,
+                "pt_med": 0.31467189619997954,
+                "cpu_temp_c_mean": 49.0,
+                "failed": false
+            },
+            {
+                "name": "Sum int8 (vulkan)",
+                "vnn_mean": 0.005298398299964901,
+                "vnn_med": 0.005298398299964901,
+                "vnn_std": 0.0,
+                "pt_mean": 0.004174019649872207,
+                "pt_med": 0.004174019649872207,
+                "cpu_temp_c_mean": 43.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax int8 (vulkan)",
+                "vnn_mean": 0.010667767800077855,
+                "vnn_med": 0.010667767800077855,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0,
+                "pt_med": 0.0,
+                "cpu_temp_c_mean": 46.0,
+                "failed": false
+            },
+            {
+                "name": "Mul int8 (vulkan)",
+                "vnn_mean": 0.013877301899992745,
+                "vnn_med": 0.013877301899992745,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0010457942000357435,
+                "pt_med": 0.0010457942000357435,
+                "cpu_temp_c_mean": 46.0,
+                "failed": false
+            },
+            {
+                "name": "Sub int8 (vulkan)",
+                "vnn_mean": 0.014067087399962475,
+                "vnn_med": 0.014067087399962475,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0009907502500936971,
+                "pt_med": 0.0009907502500936971,
+                "cpu_temp_c_mean": 47.0,
+                "failed": false
+            },
+            {
+                "name": "GELU int8 (vulkan)",
+                "vnn_mean": 0.010266585899989878,
+                "vnn_med": 0.010266585899989878,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0,
+                "pt_med": 0.0,
+                "cpu_temp_c_mean": 43.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU int8 1M alloc (vulkan)",
+                "vnn_mean": 0.0025863488001050426,
+                "vnn_med": 0.0025863488001050426,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0007950666000397178,
+                "pt_med": 0.0007950666000397178,
+                "cpu_temp_c_mean": 47.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU int8 15M (vulkan)",
+                "vnn_mean": 0.03828120200050762,
+                "vnn_med": 0.03828120200050762,
+                "vnn_std": 0.0,
+                "pt_mean": 0.004054660799738485,
+                "pt_med": 0.004054660799738485,
+                "cpu_temp_c_mean": 46.0,
+                "failed": false
+            },
+            {
+                "name": "MatMul int8 (hybrid)",
+                "vnn_mean": 0.15955106304991204,
+                "vnn_med": 0.15955106304991204,
+                "vnn_std": 0.0,
+                "pt_mean": 0.2454786267500822,
+                "pt_med": 0.2454786267500822,
+                "cpu_temp_c_mean": 42.0,
+                "failed": false
+            },
+            {
+                "name": "Sum int8 (hybrid)",
+                "vnn_mean": 0.005376806599997508,
+                "vnn_med": 0.005376806599997508,
+                "vnn_std": 0.0,
+                "pt_mean": 0.00395658209999965,
+                "pt_med": 0.00395658209999965,
+                "cpu_temp_c_mean": 44.0,
+                "failed": false
+            },
+            {
+                "name": "Softmax int8 (hybrid)",
+                "vnn_mean": 0.010516083299989987,
+                "vnn_med": 0.010516083299989987,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0,
+                "pt_med": 0.0,
+                "cpu_temp_c_mean": 42.0,
+                "failed": false
+            },
+            {
+                "name": "Mul int8 (hybrid)",
+                "vnn_mean": 0.013815104300010716,
+                "vnn_med": 0.013815104300010716,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0018663629500224488,
+                "pt_med": 0.0018663629500224488,
+                "cpu_temp_c_mean": 44.0,
+                "failed": false
+            },
+            {
+                "name": "Sub int8 (hybrid)",
+                "vnn_mean": 0.01388036429998465,
+                "vnn_med": 0.01388036429998465,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0010309683500963728,
+                "pt_med": 0.0010309683500963728,
+                "cpu_temp_c_mean": 46.0,
+                "failed": false
+            },
+            {
+                "name": "GELU int8 (hybrid)",
+                "vnn_mean": 0.010884592349975719,
+                "vnn_med": 0.010884592349975719,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0,
+                "pt_med": 0.0,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU int8 1M alloc (hybrid)",
+                "vnn_mean": 0.002573244999985036,
+                "vnn_med": 0.002573244999985036,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0001410336000844836,
+                "pt_med": 0.0001410336000844836,
+                "cpu_temp_c_mean": 48.0,
+                "failed": false
+            },
+            {
+                "name": "ReLU int8 15M (hybrid)",
+                "vnn_mean": 0.036953291200188684,
+                "vnn_med": 0.036953291200188684,
+                "vnn_std": 0.0,
+                "pt_mean": 0.005150136199517874,
+                "pt_med": 0.005150136199517874,
+                "cpu_temp_c_mean": 47.0,
+                "failed": false
+            },
+            {
+                "name": "Monster ReLU 16GB SSD",
+                "vnn_mean": 52.34202069800085,
+                "vnn_med": 52.34202069800085,
+                "vnn_std": 0.0,
+                "pt_mean": 0.0,
+                "pt_med": 0.0,
+                "cpu_temp_c_mean": 46.0,
+                "failed": false
+            }
+        ]
     }
 ]
