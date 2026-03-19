@@ -97,8 +97,13 @@ impl Tensor {
             None
         };
 
+        let out_dtype = match self.dtype {
+            DataType::Int8 => DataType::F32,
+            _ => self.dtype,
+        };
+
         let (in_raw, _) = self.get_slice_raw_bytes();
-        let mut out_t = Tensor::new_zeros(out_shape, self.dtype, "cpu")?;
+        let mut out_t = Tensor::new_zeros(out_shape, out_dtype, "cpu")?;
         let (out_raw, _) = out_t.get_slice_raw_mut_bytes();
 
         match d_usize {
@@ -138,11 +143,11 @@ impl Tensor {
                         }
                     },
                 };
-                match self.dtype {
+                match out_dtype {
                     DataType::F32 => unsafe { *(out_raw.as_ptr() as *mut f32) = val; },
                     DataType::F16 => unsafe { *(out_raw.as_ptr() as *mut half::f16) = half::f16::from_f32(val); },
                     DataType::BF16 => unsafe { *(out_raw.as_ptr() as *mut half::bf16) = half::bf16::from_f32(val); },
-                    DataType::Int8 => unsafe { *(out_raw.as_ptr() as *mut i8) = val as i8; },
+                    _ => unreachable!(),
                 }
             },
             Some(d) => {
@@ -169,11 +174,11 @@ impl Tensor {
                             "mean" => row.iter().sum::<f32>() / (dim_size as f32),
                             _ => 0.0,
                         };
-                        match self.dtype {
+                        match out_dtype {
                             DataType::F32 => unsafe { *(out_raw.as_ptr().add((i * inner + k) * 4) as *mut f32) = acc; },
                             DataType::F16 => unsafe { *(out_raw.as_ptr().add((i * inner + k) * 2) as *mut half::f16) = half::f16::from_f32(acc); },
                             DataType::BF16 => unsafe { *(out_raw.as_ptr().add((i * inner + k) * 2) as *mut half::bf16) = half::bf16::from_f32(acc); },
-                            DataType::Int8 => unsafe { *(out_raw.as_ptr().add(i * inner + k) as *mut i8) = acc as i8; },
+                            _ => unreachable!(),
                         }
                     }
                 }
