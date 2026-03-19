@@ -95,6 +95,15 @@ impl Tensor {
         self.execute_reduce(op, dim)
     }
 
+    #[pyo3(signature = (dim=None))]
+    pub fn sum(&self, dim: Option<i64>) -> PyResult<Tensor> {
+        self.reduce("sum", dim)
+    }
+
+    #[pyo3(signature = (dim=None))]
+    pub fn mean(&self, dim: Option<i64>) -> PyResult<Tensor> {
+        self.reduce("mean", dim)
+    }
     pub fn reshape(&self, new_shape: Vec<usize>) -> PyResult<Tensor> {
         self.execute_reshape(new_shape)
     }

@@ -53,12 +53,12 @@ impl Tensor {
                 DataType::F16 => {
                     let slice = bytemuck::cast_slice::<u8, half::f16>(&payload[..bytes_in_tile]);
                     let start_idx = (offset / 2) as usize;
-                    for (i, val) in slice.iter().enumerate() { out[start_idx + i] = val.to_f32(); }
+                    crate::cpu::convert_f16_to_f32(slice, &mut out[start_idx..start_idx + slice.len()]);
                 },
                 DataType::BF16 => {
                     let slice = bytemuck::cast_slice::<u8, half::bf16>(&payload[..bytes_in_tile]);
                     let start_idx = (offset / 2) as usize;
-                    for (i, val) in slice.iter().enumerate() { out[start_idx + i] = val.to_f32(); }
+                    crate::cpu::convert_bf16_to_f32(slice, &mut out[start_idx..start_idx + slice.len()]);
                 },
                 DataType::Int8 => {
                     let slice = bytemuck::cast_slice::<u8, i8>(&payload[..bytes_in_tile]);

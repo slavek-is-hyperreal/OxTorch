@@ -16,3 +16,13 @@ pub enum DataType {
     BF16,
     Int8,
 }
+
+impl DataType {
+    pub fn size(&self) -> usize {
+        match self {
+            DataType::F32 => 4,
+            DataType::F16 | DataType::BF16 => 2,
+            DataType::Int8 => 1,
+        }
+    }
+}

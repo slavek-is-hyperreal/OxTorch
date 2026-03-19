@@ -1,4 +1,4 @@
-use half::{f16, bf16};
+use half;
 use rayon::prelude::*;
 
 #[cfg(target_arch = "x86_64")]
@@ -7,7 +7,7 @@ use std::arch::x86_64::*;
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::*;
 
-pub fn convert_f32_to_f16(src: &[f32], dst: &mut [f16]) {
+pub fn convert_f32_to_f16(src: &[f32], dst: &mut [half::f16]) {
     assert_eq!(src.len(), dst.len());
     #[cfg(target_arch = "x86_64")]
     {
@@ -22,12 +22,12 @@ pub fn convert_f32_to_f16(src: &[f32], dst: &mut [f16]) {
     {
         unsafe { convert_f32_to_f16_neon(src, dst); return; }
     }
-    dst.par_iter_mut().zip(src.par_iter()).for_each(|(d, s)| *d = f16::from_f32(*s));
+    dst.par_iter_mut().zip(src.par_iter()).for_each(|(d, s)| *d = half::f16::from_f32(*s));
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx,f16c")]
-unsafe fn convert_f32_to_f16_f16c(src: &[f32], dst: &mut [f16]) {
+unsafe fn convert_f32_to_f16_f16c(src: &[f32], dst: &mut [half::f16]) {
     src.par_chunks_exact(8)
         .zip(dst.par_chunks_exact_mut(8))
         .for_each(|(s, d)| unsafe {
@@ -36,12 +36,12 @@ unsafe fn convert_f32_to_f16_f16c(src: &[f32], dst: &mut [f16]) {
             _mm_storeu_si128(d.as_mut_ptr() as *mut __m128i, half_vec);
         });
     let rem = (src.len() / 8) * 8;
-    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = f16::from_f32(*s); }
+    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = half::f16::from_f32(*s); }
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
-unsafe fn convert_f32_to_f16_sse2_swar(src: &[f32], dst: &mut [f16]) {
+unsafe fn convert_f32_to_f16_sse2_swar(src: &[f32], dst: &mut [half::f16]) {
     src.chunks_exact(4).zip(dst.chunks_exact_mut(4)).for_each(|(s, d)| unsafe {
         let v = _mm_loadu_ps(s.as_ptr());
         let vi = _mm_castps_si128(v);
@@ -58,15 +58,15 @@ unsafe fn convert_f32_to_f16_sse2_swar(src: &[f32], dst: &mut [f16]) {
         let mut out = [0u16; 4];
         let ptr = &result as *const __m128i as *const u32;
         for i in 0..4 { out[i] = *ptr.add(i) as u16; }
-        for i in 0..4 { d[i] = f16::from_bits(out[i]); }
+        for i in 0..4 { d[i] = half::f16::from_bits(out[i]); }
     });
     let rem = (src.len() / 4) * 4;
-    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = f16::from_f32(*s); }
+    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = half::f16::from_f32(*s); }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn convert_f32_to_f16_neon(src: &[f32], dst: &mut [f16]) {
+unsafe fn convert_f32_to_f16_neon(src: &[f32], dst: &mut [half::f16]) {
     src.chunks_exact(4).zip(dst.chunks_exact_mut(4)).for_each(|(s, d)| unsafe {
         let v = vld1q_f32(s.as_ptr());
         let h = vcvt_f16_f32(v);
@@ -74,10 +74,10 @@ unsafe fn convert_f32_to_f16_neon(src: &[f32], dst: &mut [f16]) {
         vst1_u16(bits_ptr, vreinterpret_u16_f16(h));
     });
     let rem = (src.len() / 4) * 4;
-    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = f16::from_f32(*s); }
+    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = half::f16::from_f32(*s); }
 }
 
-pub fn convert_f16_to_f32(src: &[f16], dst: &mut [f32]) {
+pub fn convert_f16_to_f32(src: &[half::f16], dst: &mut [f32]) {
     assert_eq!(src.len(), dst.len());
     #[cfg(target_arch = "x86_64")]
     {
@@ -97,7 +97,7 @@ pub fn convert_f16_to_f32(src: &[f16], dst: &mut [f32]) {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx,f16c")]
-unsafe fn convert_f16_to_f32_f16c(src: &[f16], dst: &mut [f32]) {
+unsafe fn convert_f16_to_f32_f16c(src: &[half::f16], dst: &mut [f32]) {
     src.par_chunks_exact(8).zip(dst.par_chunks_exact_mut(8)).for_each(|(s, d)| unsafe {
         let vec = _mm_loadu_si128(s.as_ptr() as *const __m128i);
         let f32_vec = _mm256_cvtph_ps(vec);
@@ -109,7 +109,7 @@ unsafe fn convert_f16_to_f32_f16c(src: &[f16], dst: &mut [f32]) {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
-unsafe fn convert_f16_to_f32_sse2_swar(src: &[f16], dst: &mut [f32]) {
+unsafe fn convert_f16_to_f32_sse2_swar(src: &[half::f16], dst: &mut [f32]) {
     src.chunks_exact(4).zip(dst.chunks_exact_mut(4)).for_each(|(s, d)| unsafe {
         let mut h = [0u32; 4];
         for i in 0..4 { h[i] = s[i].to_bits() as u32; }
@@ -135,7 +135,7 @@ unsafe fn convert_f16_to_f32_sse2_swar(src: &[f16], dst: &mut [f32]) {
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn convert_f16_to_f32_neon(src: &[f16], dst: &mut [f32]) {
+unsafe fn convert_f16_to_f32_neon(src: &[half::f16], dst: &mut [f32]) {
     src.chunks_exact(4).zip(dst.chunks_exact_mut(4)).for_each(|(s, d)| unsafe {
         let h_bits = vld1_u16(s.as_ptr() as *const u16);
         let h = vreinterpret_f16_u16(h_bits);
@@ -145,7 +145,7 @@ unsafe fn convert_f16_to_f32_neon(src: &[f16], dst: &mut [f32]) {
     for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = s.to_f32(); }
 }
 
-pub fn convert_f32_to_bf16(src: &[f32], dst: &mut [bf16]) {
+pub fn convert_f32_to_bf16(src: &[f32], dst: &mut [half::bf16]) {
     assert_eq!(src.len(), dst.len());
     #[cfg(target_arch = "x86_64")]
     {
@@ -153,12 +153,12 @@ pub fn convert_f32_to_bf16(src: &[f32], dst: &mut [bf16]) {
         if is_x86_feature_detected!("sse2") { unsafe { convert_f32_to_bf16_sse2(src, dst); return; } }
     }
     #[cfg(target_arch = "aarch64")] { unsafe { convert_f32_to_bf16_neon(src, dst); return; } }
-    dst.par_iter_mut().zip(src.par_iter()).for_each(|(d, s)| *d = bf16::from_f32(*s));
+    dst.par_iter_mut().zip(src.par_iter()).for_each(|(d, s)| *d = half::bf16::from_f32(*s));
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn convert_f32_to_bf16_avx2(src: &[f32], dst: &mut [bf16]) {
+unsafe fn convert_f32_to_bf16_avx2(src: &[f32], dst: &mut [half::bf16]) {
     let bias_const = _mm256_set1_epi32(0x7FFF);
     let one_const = _mm256_set1_epi32(1);
     src.par_chunks_exact(8).zip(dst.par_chunks_exact_mut(8)).for_each(|(s, d)| unsafe {
@@ -177,15 +177,15 @@ unsafe fn convert_f32_to_bf16_avx2(src: &[f32], dst: &mut [bf16]) {
         let mut res = [0u16; 8];
         _mm_storeu_si64(res.as_mut_ptr() as *mut u8, p_lo);
         _mm_storeu_si64(res[4..].as_mut_ptr() as *mut u8, p_hi);
-        for i in 0..8 { d[i] = bf16::from_bits(res[i]); }
+        for i in 0..8 { d[i] = half::bf16::from_bits(res[i]); }
     });
     let rem = (src.len() / 8) * 8;
-    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = bf16::from_f32(*s); }
+    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = half::bf16::from_f32(*s); }
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
-unsafe fn convert_f32_to_bf16_sse2(src: &[f32], dst: &mut [bf16]) {
+unsafe fn convert_f32_to_bf16_sse2(src: &[f32], dst: &mut [half::bf16]) {
     let bias_const = _mm_set1_epi32(0x7FFF);
     let one_const = _mm_set1_epi32(1);
     src.chunks_exact(4).zip(dst.chunks_exact_mut(4)).for_each(|(s, d)| unsafe {
@@ -197,15 +197,15 @@ unsafe fn convert_f32_to_bf16_sse2(src: &[f32], dst: &mut [bf16]) {
         let rounded = _mm_add_epi32(vec_i, bias);
         let result = _mm_srli_epi32(rounded, 16);
         let ptr = &result as *const __m128i as *const u32;
-        for i in 0..4 { d[i] = bf16::from_bits(*ptr.add(i) as u16); }
+        for i in 0..4 { d[i] = half::bf16::from_bits(*ptr.add(i) as u16); }
     });
     let rem = (src.len() / 4) * 4;
-    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = bf16::from_f32(*s); }
+    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = half::bf16::from_f32(*s); }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn convert_f32_to_bf16_neon(src: &[f32], dst: &mut [bf16]) {
+unsafe fn convert_f32_to_bf16_neon(src: &[f32], dst: &mut [half::bf16]) {
     src.chunks_exact(4).zip(dst.chunks_exact_mut(4)).for_each(|(s, d)| unsafe {
         let v = vld1q_f32(s.as_ptr());
         let vi = vreinterpretq_u32_f32(v);
@@ -214,13 +214,13 @@ unsafe fn convert_f32_to_bf16_neon(src: &[f32], dst: &mut [bf16]) {
         let result = vshrn_n_u32(biased, 16);
         let ptr = d.as_mut_ptr() as *mut u16;
         vst1_u16(ptr, result);
-        for i in 0..4 { d[i] = bf16::from_bits(*(ptr.add(i))); }
+        for i in 0..4 { d[i] = half::bf16::from_bits(*(ptr.add(i))); }
     });
     let rem = (src.len() / 4) * 4;
-    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = bf16::from_f32(*s); }
+    for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = half::bf16::from_f32(*s); }
 }
 
-pub fn convert_bf16_to_f32(src: &[bf16], dst: &mut [f32]) {
+pub fn convert_bf16_to_f32(src: &[half::bf16], dst: &mut [f32]) {
     assert_eq!(src.len(), dst.len());
     #[cfg(target_arch = "x86_64")]
     {
@@ -232,7 +232,7 @@ pub fn convert_bf16_to_f32(src: &[bf16], dst: &mut [f32]) {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
-unsafe fn convert_bf16_to_f32_sse2(src: &[bf16], dst: &mut [f32]) {
+unsafe fn convert_bf16_to_f32_sse2(src: &[half::bf16], dst: &mut [f32]) {
     src.par_chunks_exact(4).zip(dst.par_chunks_exact_mut(4)).for_each(|(s, d)| unsafe {
         let mut tmp = [0u32; 4];
         for i in 0..4 { tmp[i] = (s[i].to_bits() as u32) << 16; }
@@ -244,7 +244,7 @@ unsafe fn convert_bf16_to_f32_sse2(src: &[bf16], dst: &mut [f32]) {
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn convert_bf16_to_f32_neon(src: &[bf16], dst: &mut [f32]) {
+unsafe fn convert_bf16_to_f32_neon(src: &[half::bf16], dst: &mut [f32]) {
     src.chunks_exact(4).zip(dst.chunks_exact_mut(4)).for_each(|(s, d)| unsafe {
         let mut tmp = [0u32; 4];
         for i in 0..4 { tmp[i] = (s[i].to_bits() as u32) << 16; }
