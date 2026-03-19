@@ -33,7 +33,7 @@
 ### [Sprint 1] Foundation Ops (MLP Ready)
 *Target: Refactor existing CPU/Vulkan ops into the Sprint 1.6 modular structure.*
 - [x] `mul` / `sub` / `div` elementwise arithmetic.
-- [/] `scalar_mul` / `scalar_add` broadcast — `tensor * 2.0`, `tensor + 1.0` (in progress).
+- [x] `scalar_mul` / `scalar_add` broadcast — `tensor * 2.0`, `tensor + 1.0` (Native SIMD).
 - [x] `reshape`, `view`, `squeeze`, `unsqueeze`, `flatten`.
 - [x] `gelu`, `leaky_relu`, `elu`, `tanh`, `clamp`.
 - [x] `sum`, `mean`, `max`, `min` (reduce ops).
