@@ -6,81 +6,7 @@ use std::arch::aarch64::*;
 
 use rayon::prelude::*;
 
-pub fn relu_f32(src: &[f32], dst: &mut [f32]) {
-    assert_eq!(src.len(), dst.len());
-    #[cfg(target_arch = "x86_64")] {
-        if is_x86_feature_detected!("avx512f") { unsafe { relu_f32_avx512(src, dst); } return; }
-        if is_x86_feature_detected!("avx") { unsafe { relu_f32_avx(src, dst); } return; }
-        if is_x86_feature_detected!("sse2") { unsafe { relu_f32_sse2(src, dst); } return; }
-    }
-    #[cfg(target_arch = "aarch64")] { unsafe { relu_f32_neon(src, dst); } return; }
-    for (o, &i) in dst.iter_mut().zip(src.iter()) { *o = if i > 0.0 { i } else { 0.0 }; }
-}
-
-pub fn relu_f32_inplace(buf: &mut [f32]) {
-    const PAR_THRESHOLD: usize = 128_000;
-    if buf.len() > PAR_THRESHOLD {
-        buf.par_chunks_mut(PAR_THRESHOLD).for_each(|chunk| {
-            relu_f32_inplace_serial(chunk);
-        });
-        return;
-    }
-    relu_f32_inplace_serial(buf);
-}
-
-fn relu_f32_inplace_serial(buf: &mut [f32]) {
-    #[cfg(target_arch = "x86_64")] {
-        if is_x86_feature_detected!("avx512f") {
-            unsafe {
-                let zero = _mm512_setzero_ps(); let n16 = (buf.len() / 16) * 16;
-                for i in (0..n16).step_by(16) { let p = buf.as_mut_ptr().add(i); _mm512_storeu_ps(p, _mm512_max_ps(_mm512_loadu_ps(p), zero)); }
-                for x in buf[n16..].iter_mut() { if *x < 0.0 { *x = 0.0; } }
-            }
-            return;
-        }
-        if is_x86_feature_detected!("avx") {
-            unsafe {
-                let zero = _mm256_setzero_ps(); let n8 = (buf.len() / 8) * 8;
-                for i in (0..n8).step_by(8) { let p = buf.as_mut_ptr().add(i); _mm256_storeu_ps(p, _mm256_max_ps(_mm256_loadu_ps(p), zero)); }
-                for x in buf[n8..].iter_mut() { if *x < 0.0 { *x = 0.0; } }
-            }
-            return;
-        }
-    }
-    for x in buf.iter_mut() { if *x < 0.0 { *x = 0.0; } }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f")]
-unsafe fn relu_f32_avx512(src: &[f32], dst: &mut [f32]) {
-    let zero = _mm512_setzero_ps(); let n16 = (src.len() / 16) * 16;
-    for i in (0..n16).step_by(16) { _mm512_storeu_ps(dst.as_mut_ptr().add(i), _mm512_max_ps(_mm512_loadu_ps(src.as_ptr().add(i)), zero)); }
-    for j in n16..src.len() { dst[j] = if src[j] > 0.0 { src[j] } else { 0.0 }; }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx")]
-unsafe fn relu_f32_avx(src: &[f32], dst: &mut [f32]) {
-    let zero = _mm256_setzero_ps(); let n8 = (src.len() / 8) * 8;
-    for i in (0..n8).step_by(8) { _mm256_storeu_ps(dst.as_mut_ptr().add(i), _mm256_max_ps(_mm256_loadu_ps(src.as_ptr().add(i)), zero)); }
-    for j in n8..src.len() { dst[j] = if src[j] > 0.0 { src[j] } else { 0.0 }; }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "sse2")]
-unsafe fn relu_f32_sse2(src: &[f32], dst: &mut [f32]) {
-    let zero = _mm_setzero_ps(); let n4 = (src.len() / 4) * 4;
-    for i in (0..n4).step_by(4) { _mm_storeu_ps(dst.as_mut_ptr().add(i), _mm_max_ps(_mm_loadu_ps(src.as_ptr().add(i)), zero)); }
-    for j in n4..src.len() { dst[j] = if src[j] > 0.0 { src[j] } else { 0.0 }; }
-}
-
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-unsafe fn relu_f32_neon(src: &[f32], dst: &mut [f32]) {
-    let zero = vdupq_n_f32(0.0); let n4 = (src.len() / 4) * 4;
-    for i in (0..n4).step_by(4) { vst1q_f32(dst.as_mut_ptr().add(i), vmaxq_f32(vld1q_f32(src.as_ptr().add(i)), zero)); }
-    for j in n4..src.len() { dst[j] = if src[j] > 0.0 { src[j] } else { 0.0 }; }
-}
+// ReLU has been moved to src/cpu/ops/relu/
 
 pub fn gelu_f32_inplace(buf: &mut [f32]) {
     const PAR_THRESHOLD: usize = 64_000;
@@ -163,87 +89,7 @@ unsafe fn gelu_f32_sse2_inplace(buf: &mut [f32]) {
     gelu_f32_scalar(&mut buf[n4..]);
 }
 
-pub fn relu_f16(src: &[half::f16], dst: &mut [half::f16]) {
-    assert_eq!(src.len(), dst.len());
-    #[cfg(target_arch = "x86_64")] {
-        if is_x86_feature_detected!("f16c") && is_x86_feature_detected!("avx") {
-            unsafe { relu_f16_f16c(src, dst); } return;
-        }
-    }
-    for (o, &i) in dst.iter_mut().zip(src.iter()) { *o = if i.to_f32() > 0.0 { i } else { half::f16::ZERO }; }
-}
-
-pub fn relu_f16_inplace(buf: &mut [half::f16]) {
-    #[cfg(target_arch = "x86_64")] {
-        if is_x86_feature_detected!("f16c") && is_x86_feature_detected!("avx") {
-            unsafe { relu_f16_f16c_inplace(buf); } return;
-        }
-    }
-    for x in buf.iter_mut() { if x.to_f32() < 0.0 { *x = half::f16::ZERO; } }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx,f16c")]
-unsafe fn relu_f16_f16c(src: &[half::f16], dst: &mut [half::f16]) {
-    let zero = _mm256_setzero_ps(); let n8 = (src.len() / 8) * 8;
-    for i in (0..n8).step_by(8) {
-        let h_vec = _mm_loadu_si128(src.as_ptr().add(i) as *const __m128i);
-        let f_vec = _mm256_cvtph_ps(h_vec);
-        let res_f = _mm256_max_ps(f_vec, zero);
-        let res_h = _mm256_cvtps_ph(res_f, _MM_FROUND_TO_NEAREST_INT);
-        _mm_storeu_si128(dst.as_mut_ptr().add(i) as *mut __m128i, res_h);
-    }
-    for j in n8..src.len() { dst[j] = if src[j].to_f32() > 0.0 { src[j] } else { half::f16::ZERO }; }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx,f16c")]
-unsafe fn relu_f16_f16c_inplace(buf: &mut [half::f16]) {
-    let zero = _mm256_setzero_ps(); let n8 = (buf.len() / 8) * 8;
-    for i in (0..n8).step_by(8) {
-        let ptr = buf.as_mut_ptr().add(i) as *mut __m128i;
-        let h_vec = _mm_loadu_si128(ptr);
-        let f_vec = _mm256_cvtph_ps(h_vec);
-        let res_f = _mm256_max_ps(f_vec, zero);
-        let res_h = _mm256_cvtps_ph(res_f, _MM_FROUND_TO_NEAREST_INT);
-        _mm_storeu_si128(ptr, res_h);
-    }
-    for x in buf[n8..].iter_mut() { if x.to_f32() < 0.0 { *x = half::f16::ZERO; } }
-}
-
-pub fn relu_bf16(src: &[half::bf16], dst: &mut [half::bf16]) {
-    assert_eq!(src.len(), dst.len());
-    #[cfg(target_arch = "x86_64")] {
-        if is_x86_feature_detected!("avx") {
-            unsafe {
-                let n8 = (src.len() / 8) * 8; let zero = _mm256_setzero_ps();
-                let zero128 = _mm_setzero_si128();
-                for i in (0..n8).step_by(8) {
-                    let b_raw = _mm_loadu_si128(src.as_ptr().add(i) as *const __m128i);
-                    let f_vec = _mm256_castsi256_ps(_mm256_insertf128_si256::<1>(
-                        _mm256_castsi128_si256(_mm_unpacklo_epi16(zero128, b_raw)),
-                        _mm_unpackhi_epi16(zero128, b_raw)
-                    ));
-                    let res_f = _mm256_max_ps(f_vec, zero);
-                    let res_si = _mm256_castps_si256(res_f);
-                    let h_lo = _mm_srli_epi32(_mm256_castsi256_si128(res_si), 16);
-                    let h_hi = _mm_srli_epi32(_mm256_extractf128_si256(res_si, 1), 16);
-                    _mm_storeu_si128(dst.as_mut_ptr().add(i) as *mut __m128i, _mm_packus_epi32(h_lo, h_hi));
-                }
-                for j in n8..src.len() { dst[j] = if src[j].to_f32() > 0.0 { src[j] } else { half::bf16::ZERO }; }
-                return;
-            }
-        }
-    }
-    for (o, &i) in dst.iter_mut().zip(src.iter()) { *o = if i.to_f32() > 0.0 { i } else { half::bf16::ZERO }; }
-}
-
-pub fn relu_bf16_inplace(buf: &mut [half::bf16]) {
-    let len = buf.len(); let ptr = buf.as_mut_ptr();
-    let src = unsafe { std::slice::from_raw_parts(ptr, len) };
-    let dst = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
-    relu_bf16(src, dst);
-}
+// ReLU variants moved to src/cpu/ops/relu/
 
 pub fn gelu_f16_inplace(buf: &mut [half::f16]) {
     const CHUNK_SIZE: usize = 1024; let mut tmp = [0.0f32; CHUNK_SIZE];
@@ -262,7 +108,6 @@ pub fn gelu_bf16_inplace(buf: &mut [half::bf16]) {
         for (i, x) in chunk.iter_mut().enumerate() { *x = half::bf16::from_f32(tmp[i]); }
     }
 }
-pub fn relu_i8_inplace(buf: &mut [i8]) { relu_i8_swar(buf); }
 
 pub fn gelu_i8_dispatch(buf: &mut [i8]) {
     static mut GELU_LUT: [i8; 256] = [0; 256];
@@ -279,31 +124,6 @@ pub fn gelu_i8_dispatch(buf: &mut [i8]) {
     }
 }
 
-pub fn relu_i8_swar(buf: &mut [i8]) {
-    #[cfg(target_arch = "x86_64")] {
-        if is_x86_feature_detected!("avx2") { unsafe { relu_i8_avx2(buf); return; } }
-    }
-    let mut chunks = buf.chunks_exact_mut(8);
-    for chunk in chunks.by_ref() {
-        let word: u64 = unsafe { std::ptr::read_unaligned(chunk.as_ptr() as *const u64) };
-        let is_neg = word & 0x8080808080808080;
-        let mask = (is_neg >> 7).wrapping_mul(0xFF);
-        unsafe { std::ptr::write_unaligned(chunk.as_mut_ptr() as *mut u64, word & !mask); }
-    }
-    for b in chunks.into_remainder() { if *b < 0 { *b = 0; } }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn relu_i8_avx2(buf: &mut [i8]) {
-    let zero = _mm256_setzero_si256();
-    let n32 = (buf.len() / 32) * 32;
-    for i in (0..n32).step_by(32) {
-        let v = _mm256_loadu_si256(buf.as_ptr().add(i) as *const __m256i);
-        _mm256_storeu_si256(buf.as_mut_ptr().add(i) as *mut __m256i, _mm256_max_epi8(v, zero));
-    }
-    for b in &mut buf[n32..] { if *b < 0 { *b = 0; } }
-}
 
 pub fn softmax_f32_dispatch(buf: &mut [f32], is_log: bool) {
     const PAR_THRESHOLD: usize = 65536;
