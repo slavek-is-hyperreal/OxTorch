@@ -157,8 +157,7 @@ impl Tensor {
                     let (v_out, _) = target.get_slice_raw_mut_i8();
                     v_out.copy_from_slice(v_in);
                     match op {
-                        "relu" => crate::cpu::relu_i8_inplace(v_out),
-                        "gelu" => crate::cpu::gelu_i8_dispatch(v_out),
+                        "relu" => crate::cpu::relu_i8_swar(v_out),
                         _ => {},
                     }
                 },
@@ -170,6 +169,7 @@ impl Tensor {
         }
         Ok(())
     }
+
     pub fn act_into_raw_parallel_f32(slice: &mut [f32], op: &str, _param1: f32, _param2: f32) {
         match op {
             "relu" => crate::cpu::relu_f32_inplace(slice),

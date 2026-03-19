@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use numpy::{ToPyArray, PyArrayMethods};
+use numpy::ToPyArray;
 use super::{Tensor, DataType, Storage};
 
 impl Tensor {

@@ -11,7 +11,7 @@ pub use types::{DataType, IoEngineType};
 pub use storage::Storage;
 
 use pyo3::prelude::*;
-use pyo3::exceptions::PyValueError;
+use numpy::{PyArrayMethods, PyUntypedArrayMethods};
 
 #[pyclass]
 #[derive(Clone)]
@@ -32,9 +32,24 @@ pub struct Tensor {
 #[pymethods]
 impl Tensor {
     #[new]
-    #[pyo3(signature = (shape, dtype=DataType::F32, device="cpu", name="tensor"))]
-    pub fn py_new(shape: Vec<usize>, dtype: DataType, device: &str, name: &str) -> PyResult<Self> {
-        Self::new(shape, dtype, device, name)
+    #[pyo3(signature = (shape=None, data=None, dtype=DataType::F32, device="cpu", name="tensor"))]
+    pub fn py_new(
+        shape: Option<Vec<usize>>,
+        data: Option<Bound<'_, numpy::PyArrayDyn<f32>>>,
+        dtype: DataType,
+        device: &str,
+        name: &str,
+    ) -> PyResult<Self> {
+        if let Some(d) = data {
+            let shape = d.shape().to_vec();
+            // Use readonly() to get an array view, then convert to vec
+            let vec = d.readonly().to_owned_array().into_raw_vec();
+            Self::new_from_vec(vec, shape, dtype, device, name)
+        } else if let Some(s) = shape {
+            Self::new(s, dtype, device, name)
+        } else {
+            Err(pyo3::exceptions::PyValueError::new_err("Either shape or data must be provided"))
+        }
     }
 
     #[staticmethod]
@@ -82,15 +97,22 @@ impl Tensor {
     pub fn py_div(&self, other: &Tensor) -> PyResult<Tensor> { self.elementwise_op(other, "div") }
 
     pub fn relu(&self) -> PyResult<Tensor> { self.unary_op("relu", 0.0, 0.0) }
+    pub fn relu_into(&self, target: &mut Tensor) -> PyResult<()> { self.unary_op_into(target, "relu", 0.0, 0.0) }
     pub fn sigmoid(&self) -> PyResult<Tensor> { self.unary_op("sigmoid", 0.0, 0.0) }
     pub fn silu(&self) -> PyResult<Tensor> { self.unary_op("silu", 0.0, 0.0) }
     pub fn gelu(&self) -> PyResult<Tensor> { self.unary_op("gelu", 0.0, 0.0) }
+    pub fn gelu_into(&self, target: &mut Tensor) -> PyResult<()> { self.unary_op_into(target, "gelu", 0.0, 0.0) }
     pub fn tanh(&self) -> PyResult<Tensor> { self.unary_op("tanh", 0.0, 0.0) }
 
     pub fn apply_softmax(&self, dim: i64, is_log: bool) -> PyResult<Tensor> {
         self.execute_softmax(dim, is_log)
     }
 
+    pub fn softmax(&self, dim: i64) -> PyResult<Tensor> {
+        self.apply_softmax(dim, false)
+    }
+
+    #[pyo3(signature = (op, dim=None))]
     pub fn reduce(&self, op: &str, dim: Option<i64>) -> PyResult<Tensor> {
         self.execute_reduce(op, dim)
     }
@@ -104,6 +126,7 @@ impl Tensor {
     pub fn mean(&self, dim: Option<i64>) -> PyResult<Tensor> {
         self.reduce("mean", dim)
     }
+
     pub fn reshape(&self, new_shape: Vec<usize>) -> PyResult<Tensor> {
         self.execute_reshape(new_shape)
     }

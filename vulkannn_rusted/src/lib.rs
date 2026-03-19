@@ -18,9 +18,9 @@ fn rust_greeting(name: &str) -> PyResult<String> {
     Ok(format!("Hello from VulkanNN-Rusted, {}! The Iron Age has begun.", name))
 }
 
-/// The main entry point mapped directly to the `vulkannn_rusted_main` Python module.
+/// The main entry point mapped directly to the `vulkannn_rusted_test` Python module.
 #[pymodule]
-fn vulkannn_rusted_dev(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn vulkannn_rusted(m: &Bound<'_, PyModule>) -> PyResult<()> {
     backend::init_backend();
     streaming::init_budgets();
     streaming::init_prefetcher();

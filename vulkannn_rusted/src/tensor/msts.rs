@@ -1,7 +1,5 @@
 use rayon::prelude::*;
-use std::sync::Arc;
 use pyo3::prelude::*;
-use crate::io_uring_engine::DirectIoEngine;
 use super::{Tensor, DataType, IoEngineType};
 
 impl Tensor {

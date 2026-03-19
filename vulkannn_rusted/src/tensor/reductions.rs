@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use rayon::prelude::*;
 use super::{Tensor, DataType};
 
 impl Tensor {
@@ -17,14 +18,13 @@ impl Tensor {
              crate::backend::execute_softmax_into(a_raw, out_raw, dim_size as u32, (outer * inner) as u32, is_log, self.dtype);
              Ok(out_t)
         } else {
-            let d_usize_val = if dim < 0 { (self.shape.len() as i64 + dim) as usize } else { dim as usize };
             let mut out_t = Tensor::new_zeros(self.shape.clone(), self.dtype, "cpu")?;
             let (in_raw, _) = self.get_slice_raw_bytes();
             let (out_raw, _) = out_t.get_slice_raw_mut_bytes();
             
-            let stride = self.shape[d_usize_val..].iter().product::<usize>();
-            let outer = self.shape[..d_usize_val].iter().product::<usize>();
-            let dim_size = self.shape[d_usize_val];
+            let stride = self.shape[d_usize..].iter().product::<usize>();
+            let outer = self.shape[..d_usize].iter().product::<usize>();
+            let dim_size = self.shape[d_usize];
             let inner = stride / dim_size;
 
             let compute_row = |i: usize, k: usize, in_ptr: *const u8, out_ptr: *mut u8| {
@@ -59,7 +59,6 @@ impl Tensor {
 
             const CPU_PARALLEL_THRESHOLD: usize = 32768;
             if self.shape.iter().product::<usize>() > CPU_PARALLEL_THRESHOLD {
-                use rayon::prelude::*;
                 (0..outer).into_par_iter().for_each(|i| {
                     let in_p = in_raw.as_ptr();
                     let out_p = out_raw.as_ptr() as *mut u8;
@@ -90,9 +89,9 @@ impl Tensor {
 
         let mut out_shape = self.shape.clone();
         let d_usize = if let Some(d) = dim {
-            let d_val = if d < 0 { (self.shape.len() as i64 + d) as usize } else { d as usize };
-            out_shape[d_val] = 1;
-            Some(d_val)
+            let idx = if d < 0 { (self.shape.len() as i64 + d) as usize } else { d as usize };
+            out_shape[idx] = 1;
+            Some(idx)
         } else {
             out_shape = vec![1];
             None
