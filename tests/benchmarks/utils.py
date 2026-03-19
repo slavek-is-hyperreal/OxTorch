@@ -1,0 +1,84 @@
+import time
+import numpy as np
+import torch
+import os
+import sys
+import json
+import importlib
+
+# Force line-buffered output
+sys.stdout.reconfigure(line_buffering=True)
+
+_VNN_CANDIDATES = [
+    "vulkannn_rusted_exp",
+    "vulkannn_rusted_dev",
+    "vulkannn_rusted_test",
+    "vulkannn_rusted_main",
+    "vulkannn_rusted",
+]
+
+def load_vnn():
+    for _mod_name in _VNN_CANDIDATES:
+        try:
+            vnn = importlib.import_module(_mod_name)
+            return vnn, _mod_name
+        except ImportError:
+            continue
+    raise ImportError("No vulkannn_rusted module found.")
+
+def get_system_metrics():
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+            cpu_temp = float(f.read().strip()) / 1000.0
+    except:
+        cpu_temp = -1.0
+    try:
+        load1, _, _ = os.getloadavg()
+    except:
+        load1 = -1.0
+    return cpu_temp, load1
+
+def get_torch_backend_label(dtype_str):
+    parts = ["CPU"]
+    if torch.backends.mkl.is_available():
+        parts.append("MKL")
+    elif hasattr(torch, 'backends') and hasattr(torch.backends, 'openmp') and torch.backends.openmp.is_available():
+        parts.append("OpenMP")
+    dtype_map = {"f32": "float32", "f16": "float16", "bf16": "bfloat16", "int8": "int8"}
+    parts.append(dtype_map.get(dtype_str, dtype_str))
+    return "·".join(parts)
+
+def check_parity(vnn_tensor, torch_tensor, name, atol=1e-2):
+    rtol = 1e-3
+    name_l = name.lower()
+    if "bf16" in name_l:
+        atol = 1.0
+        if "sum" in name_l: atol = 50.0
+    elif "f16" in name_l and "sum" in name_l:
+        atol = 0.1
+    if "int8" in name_l:
+        if "sum" in name_l: atol = 5000.0
+        elif "matmul" in name_l: atol = 300.0
+    
+    v_np = vnn_tensor.to_numpy().flatten()
+    if hasattr(torch_tensor, 'detach'):
+        t_np = torch_tensor.detach().cpu().to(torch.float32).numpy().flatten()
+    else:
+        t_np = torch_tensor.flatten()
+    
+    try:
+        np.testing.assert_allclose(v_np, t_np, atol=atol, rtol=rtol)
+        return True, 0.0
+    except AssertionError:
+        diff = np.abs(v_np - t_np)
+        return False, np.max(diff)
+
+def save_benchmark_result(name, result_data):
+    results_dir = "/my_data/gaussian_room/tests/results"
+    os.makedirs(results_dir, exist_ok=True)
+    file_path = os.path.join(results_dir, f"{name.replace(' ', '_').lower()}.json")
+    
+    # Save the individual result
+    with open(file_path, 'w') as f:
+        json.dump(result_data, f, indent=4)
+    print(f"[benchmark] Result saved to {file_path}")

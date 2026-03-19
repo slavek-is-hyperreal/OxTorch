@@ -1,0 +1,12 @@
+{
+    "name": "GELU_bf16_hybrid",
+    "op": "GELU",
+    "dtype": "bf16",
+    "mode": "hybrid",
+    "pt_time": 0.04217451349977637,
+    "vnn_time": 0.02920364259989583,
+    "ratio": 0.6924476461370606,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 53.0
+}

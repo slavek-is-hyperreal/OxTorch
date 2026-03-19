@@ -1,0 +1,12 @@
+{
+    "name": "Ext_Cosh_f32_cpu",
+    "op": "cosh",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.046773261000089404,
+    "vnn_time": 0.0621387864001008,
+    "ratio": 1.3285108857383714,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 47.0
+}

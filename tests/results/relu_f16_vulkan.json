@@ -1,0 +1,12 @@
+{
+    "name": "ReLU_f16_vulkan",
+    "op": "ReLU",
+    "dtype": "f16",
+    "mode": "vulkan",
+    "pt_time": 0.0067210592998890204,
+    "vnn_time": 0.004599556399989524,
+    "ratio": 0.6843499208622474,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 50.0
+}

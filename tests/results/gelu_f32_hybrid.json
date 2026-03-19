@@ -1,0 +1,12 @@
+{
+    "name": "GELU_f32_hybrid",
+    "op": "GELU",
+    "dtype": "f32",
+    "mode": "hybrid",
+    "pt_time": 0.018530764299976,
+    "vnn_time": 0.0181691605501328,
+    "ratio": 0.9804863013748619,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 53.0
+}

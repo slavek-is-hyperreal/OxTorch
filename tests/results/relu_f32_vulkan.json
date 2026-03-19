@@ -1,0 +1,12 @@
+{
+    "name": "ReLU_f32_vulkan",
+    "op": "ReLU",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.0036756953999429244,
+    "vnn_time": 0.004094182349945186,
+    "ratio": 1.1138524563294225,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 49.0
+}

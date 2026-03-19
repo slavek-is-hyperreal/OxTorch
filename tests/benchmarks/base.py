@@ -1,0 +1,146 @@
+import time
+import numpy as np
+import torch
+import gc
+import os
+import sys
+from .utils import load_vnn, get_system_metrics, get_torch_backend_label, check_parity, save_benchmark_result
+
+# Ensure oxtorch is importable (it lives inside vulkannn_rusted/)
+_OXTORCH_PATH = "/my_data/gaussian_room/vulkannn_rusted"
+if _OXTORCH_PATH not in sys.path:
+    sys.path.insert(0, _OXTORCH_PATH)
+
+# Map dtype string -> DataType enum attribute name (pyo3 Rust enums are mixed-case)
+_DTYPE_ATTR_MAP = {
+    "f32": "F32",
+    "f16": "F16",
+    "bf16": "BF16",
+    "int8": "Int8",
+    "ternary": "Ternary",
+}
+
+class BenchmarkBase:
+    def __init__(self, name, op, shape, mode="cpu", dtype="f32", iterations=None, is_ssd=False, inplace=False):
+        self.name = name
+        self.op = op
+        self.shape = shape
+        self.mode = mode
+        self.dtype = dtype
+        self.iterations = iterations
+        self.is_ssd = is_ssd
+        self.inplace = inplace
+        self.vnn, self.vnn_mod_name = load_vnn()
+
+    def run(self):
+        _attr = _DTYPE_ATTR_MAP.get(self.dtype.lower(), self.dtype.upper())
+        vnn_dtype = getattr(self.vnn.DataType, _attr)
+        dtype_map = {"f32": "float32", "f16": "float16", "bf16": "bfloat16", "int8": "int8"}
+        torch_dtype = getattr(torch, dtype_map.get(self.dtype, self.dtype))
+
+        if self.iterations is None:
+            size_elements = np.prod(self.shape)
+            if self.op == "MatMul":
+                if size_elements >= 4e6: self.iterations = 2 # 2048x2048
+                elif size_elements >= 1e6: self.iterations = 5 # 1024x1024
+                else: self.iterations = 10
+            elif self.is_ssd or size_elements > 5e7: self.iterations = 1
+            elif size_elements > 5e6: self.iterations = 5
+            else: self.iterations = 10 if self.dtype in ["f16", "bf16"] else 20
+
+        cpu_temp, load = get_system_metrics()
+        print(f"\n>>> TEST: {self.name} ({self.mode.upper()}, {self.dtype.upper()}) | Shape: {self.shape} | Iter: {self.iterations}")
+
+        # Data Setup
+        if not self.is_ssd:
+            a_np = np.random.randn(*self.shape).astype(np.float32)
+            if self.op == "MatMul":
+                b_np = np.random.randn(self.shape[-1], self.shape[-1]).astype(np.float32)
+            else:
+                b_np = np.random.randn(*self.shape).astype(np.float32)
+
+            # PyTorch Setup
+            a_torch = torch.from_numpy(a_np).to(torch_dtype)
+            b_torch = torch.from_numpy(b_np).to(torch_dtype) if self.op not in ["ReLU", "GELU", "Sum", "Softmax", "trunc", "cosh", "erf"] else None
+            
+            # OxTorch Setup
+            a_vnn = self.vnn.Tensor(data=a_np, dtype=vnn_dtype, device=self.mode)
+            b_vnn = self.vnn.Tensor(data=b_np, dtype=vnn_dtype, device=self.mode) if b_torch is not None else None
+            
+            del a_np, b_np
+            gc.collect()
+
+            # PyTorch Benchmark
+            t0 = time.perf_counter()
+            for _ in range(self.iterations):
+                if self.op == "MatMul":
+                    res_torch = torch.matmul(a_torch, b_torch)
+                elif hasattr(torch, self.op):
+                    op_func = getattr(torch, self.op)
+                    if b_torch is not None:
+                        res_torch = op_func(a_torch, b_torch)
+                    else:
+                        res_torch = op_func(a_torch)
+                elif hasattr(torch.nn.functional, self.op.lower()):
+                    op_func = getattr(torch.nn.functional, self.op.lower())
+                    res_torch = op_func(a_torch)
+                else:
+                    raise AttributeError(f"Op {self.op} not found in torch")
+            t_pt = (time.perf_counter() - t0) / self.iterations
+        else:
+            # SSD Mapped setup (special case for Monster tests)
+            # Placeholder for now
+            t_pt = 0.0
+            res_torch = None
+            a_vnn = self.vnn.Tensor.from_ssd(f"/my_data/gaussian_room/ssd_temp_{np.prod(self.shape)}.bin", self.shape, vnn_dtype)
+            b_vnn = None
+
+        # OxTorch Benchmark
+        # When torch is oxtorch (via our dispatcher), we just use 'torch' if we want to test the dispatcher 
+        # OR we use the native 'vnn' directly. 
+        # Here we want to test our 'oxtorch' proxy if possible, but base.py currently uses native 'vnn'.
+        # Let's import oxtorch as torch_ox
+        import oxtorch as torch_ox
+        a_ox = torch_ox.Tensor(a_vnn)
+        b_ox = torch_ox.Tensor(b_vnn) if b_vnn is not None else None
+
+        t0 = time.perf_counter()
+        for _ in range(self.iterations):
+            if self.op == "MatMul":
+                res_vnn = a_ox @ b_ox
+            elif hasattr(torch_ox, self.op):
+                op_func = getattr(torch_ox, self.op)
+                if b_ox is not None:
+                    res_vnn = op_func(a_ox, b_ox)
+                else:
+                    res_vnn = op_func(a_ox)
+            elif hasattr(torch_ox, self.op.lower()):
+                 op_func = getattr(torch_ox, self.op.lower())
+                 res_vnn = op_func(a_ox)
+            else:
+                 # Fallback to direct native calls if not in oxtorch globals
+                 if self.op == "Add": res_vnn = a_ox + b_ox
+                 elif self.op == "Sub": res_vnn = a_ox - b_ox
+                 elif self.op == "Mul": res_vnn = a_ox * b_ox
+                 else:
+                    raise AttributeError(f"Op {self.op} not found in oxtorch")
+        t_vnn = (time.perf_counter() - t0) / self.iterations
+
+        # Parity
+        parity_ok, max_diff = check_parity(res_vnn, res_torch, self.name)
+        
+        result = {
+            "name": self.name,
+            "op": self.op,
+            "dtype": self.dtype,
+            "mode": self.mode,
+            "pt_time": t_pt,
+            "vnn_time": t_vnn,
+            "ratio": t_vnn / t_pt if t_pt > 0 else 0,
+            "parity": parity_ok,
+            "max_diff": max_diff,
+            "cpu_temp": cpu_temp
+        }
+        
+        save_benchmark_result(self.name, result)
+        return result
