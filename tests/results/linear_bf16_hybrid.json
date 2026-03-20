@@ -3,10 +3,10 @@
     "op": "Linear",
     "dtype": "bf16",
     "mode": "hybrid",
-    "pt_time": 1.1203632538999955,
-    "vnn_time": 0.07459746910008107,
-    "ratio": 0.06658328791167199,
-    "parity": false,
-    "max_diff": 275.0,
-    "cpu_temp": 43.0
+    "pt_time": 1.7657242901001156,
+    "vnn_time": 0.6462597088000621,
+    "ratio": 0.36600261571041737,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 53.0
 }
