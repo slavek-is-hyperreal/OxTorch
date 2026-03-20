@@ -29,6 +29,8 @@ _OP_NAME_MAP = {
     "ReLU": "relu",
     "GELU": "gelu",
     "Linear": "linear",
+    "LayerNorm": "layer_norm",
+    "RMSNorm": "rms_norm",
 }
 
 # Ops that require keyword args when calling torch.nn.functional
@@ -79,6 +81,8 @@ class BenchmarkBase:
             a_np = np.random.randn(*self.shape).astype(np.float32)
             if self.op in ["MatMul", "Linear"]:
                 b_np = np.random.randn(self.shape[-1], self.shape[-1]).astype(np.float32)
+            elif self.op in ["LayerNorm", "RMSNorm"]:
+                b_np = np.random.randn(self.shape[-1]).astype(np.float32)
             else:
                 b_np = np.random.randn(*self.shape).astype(np.float32)
 
@@ -106,6 +110,10 @@ class BenchmarkBase:
                     res_torch = a_torch + b_torch
                 elif self.op == "ScalarMul":
                     res_torch = a_torch * b_torch
+                elif self.op == "LayerNorm":
+                    res_torch = torch.layer_norm(a_torch, [self.shape[-1]], weight=b_torch, bias=None, eps=1e-5)
+                elif self.op == "RMSNorm":
+                    res_torch = a_torch * torch.rsqrt(a_torch.pow(2).mean(-1, keepdim=True) + 1e-5) * b_torch
                 elif hasattr(torch.nn.functional, _resolved_op):
                     op_func = getattr(torch.nn.functional, _resolved_op)
                     # Hack for INT8: PyTorch doesn't support it for these ops on CPU
@@ -148,6 +156,10 @@ class BenchmarkBase:
                 res_vnn = a_ox + b_ox
             elif self.op == "Mul" or self.op == "ScalarMul":
                 res_vnn = a_ox * b_ox
+            elif self.op == "LayerNorm":
+                res_vnn = a_ox.layer_norm([self.shape[-1]], weight=b_ox, bias=None, eps=1e-5)
+            elif self.op == "RMSNorm":
+                res_vnn = a_ox.rms_norm([self.shape[-1]], weight=b_ox, eps=1e-5)
             elif self.op == "Sum":
                 res_vnn = a_ox.sum()
             elif hasattr(torch_ox, _resolved_op):
