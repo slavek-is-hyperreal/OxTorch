@@ -3,10 +3,10 @@
     "op": "Linear",
     "dtype": "int8",
     "mode": "vulkan",
-    "pt_time": 1.5237988240496634,
-    "vnn_time": 0.6421753945498494,
-    "ratio": 0.42143056183965116,
+    "pt_time": 1.530485979199875,
+    "vnn_time": 0.6421938301500631,
+    "ratio": 0.41960125011128596,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 50.0
+    "cpu_temp": 41.0
 }

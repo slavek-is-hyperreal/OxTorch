@@ -4,9 +4,9 @@
     "dtype": "f32",
     "mode": "cpu",
     "pt_time": 0.0,
-    "vnn_time": 8.057894081000995,
+    "vnn_time": 7.999643660994479,
     "ratio": 0,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 46.0
+    "cpu_temp": 45.0
 }
