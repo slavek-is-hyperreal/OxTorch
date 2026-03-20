@@ -52,6 +52,13 @@
 - [ ] **Decoding**: `argmax`, `topk`.
 - [/] **MSTS PyTorch Fallback** — generalize tile-pulling to arbitrary `Callable[[np.ndarray], np.ndarray]`. Enables: (1) SSD streaming for any op without a native Vulkan shader (e.g. `layer_norm`, `erf`, `embedding`), (2) memory-efficient processing of tensors larger than RAM by materializing only 256K-element tiles at a time.
 
+### [Sprint 2.5] CPU Architecture Retrofits (SIMD Expansion)
+*Target: Systemic hardware optimization for non-AVX desktop environments.*
+- [ ] **ARM64 NEON**: Manual wektoryzacja `vaddq_f32`, `vmulq_f32` dla `layer_norm` i `rms_norm`.
+- [ ] **AVX-512**: Obsługa 512-bitowych rejestrów `zmm` dla najnowszych procesorów Intel/AMD.
+- [ ] **SSE2 Fallback**: Dedykowane pętle 128-bitowe dla starszych jednostek x86_64.
+- [ ] **F16C Hardware Acceleration**: Wykorzystanie `_mm256_cvtps_ph` do szybkiej konwersji typów na CPU.
+
 ### [Sprint 2.1] BitNet (1.58b) - The LLM Leapfrog
 *Target: native support for 1.58-bit ternary models (Bielik, BitNet-7B).*
 - [x] **BitLinear Layer**: Custom CPU (parallel) and Vulkan kernels.
