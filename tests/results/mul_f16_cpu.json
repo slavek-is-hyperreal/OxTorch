@@ -1,0 +1,12 @@
+{
+    "name": "Mul_f16_cpu",
+    "op": "Mul",
+    "dtype": "f16",
+    "mode": "cpu",
+    "pt_time": 0.0035719449995667675,
+    "vnn_time": 0.005473633299698122,
+    "ratio": 1.5323957396774042,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 49.0
+}

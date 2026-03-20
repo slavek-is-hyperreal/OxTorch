@@ -1,0 +1,12 @@
+{
+    "name": "Sum_int8_cpu",
+    "op": "Sum",
+    "dtype": "int8",
+    "mode": "cpu",
+    "pt_time": 0.009844138850166929,
+    "vnn_time": 0.0002744669000094291,
+    "ratio": 0.027881250375168663,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

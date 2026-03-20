@@ -1,0 +1,12 @@
+{
+    "name": "Linear_int8_cpu",
+    "op": "Linear",
+    "dtype": "int8",
+    "mode": "cpu",
+    "pt_time": 1.5284519399501733,
+    "vnn_time": 0.14523806354991392,
+    "ratio": 0.095022983552004,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 47.0
+}

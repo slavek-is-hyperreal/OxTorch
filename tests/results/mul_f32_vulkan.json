@@ -1,0 +1,12 @@
+{
+    "name": "Mul_f32_vulkan",
+    "op": "Mul",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.0049084996000601675,
+    "vnn_time": 0.01865790575029678,
+    "ratio": 3.801142359279824,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 41.0
+}

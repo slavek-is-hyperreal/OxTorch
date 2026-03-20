@@ -1,0 +1,12 @@
+{
+    "name": "Softmax_f16_cpu",
+    "op": "Softmax",
+    "dtype": "f16",
+    "mode": "cpu",
+    "pt_time": 0.011470921499858377,
+    "vnn_time": 0.02974374999976135,
+    "ratio": 2.5929695360680984,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 40.0
+}

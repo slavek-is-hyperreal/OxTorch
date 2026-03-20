@@ -1,0 +1,12 @@
+{
+    "name": "Mul_int8_cpu",
+    "op": "Mul",
+    "dtype": "int8",
+    "mode": "cpu",
+    "pt_time": 0.0012177461499959462,
+    "vnn_time": 0.0064610059998813085,
+    "ratio": 5.305708418706819,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 40.0
+}

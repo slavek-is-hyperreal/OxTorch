@@ -1,0 +1,12 @@
+{
+    "name": "ReLU_15M_f32_hybrid",
+    "op": "ReLU",
+    "dtype": "f32",
+    "mode": "hybrid",
+    "pt_time": 0.04196482879924588,
+    "vnn_time": 0.061575238600198645,
+    "ratio": 1.4673058454442014,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

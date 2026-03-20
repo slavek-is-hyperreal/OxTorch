@@ -7,7 +7,8 @@
 - **F32 MATMUL**: ✅ **STABLE**. Vulkan ~0.06x (16x faster), CPU ~0.5x.
 - **VULKAN SIMPLE OPS**: ⚠️ **STILL BOTTLENECKED**. ReLU/GELU/Sum Vulkan are 1.1x–6.5x slower than PT for small tensors (Vulkan submit latency dominates).
 - **SSD STREAMING**: ✅ **VERIFIED**. Monster 16GB ReLU test passed via SSD-as-RAM.
-- **Phase 6 Result**: **OxTorch faster in 34/53 tests (64%)**.
+- **Phase 6 Result**: **OxTorch faster in 35/54 tests (65%)**.
+- **Linear F32 (Vulkan)**: ⚠️ **REGRESSION**. `Linear_f32_vulkan`: **1.29x**. Slow due to sync overhead on small tensors.
 
 ## ❌ PARITY FAILURES (Numerical Artifacts)
 | Test Case | Mode | Max Diff | Status | Cause |
@@ -26,6 +27,7 @@ These ops fail on the **PyTorch side** — OxTorch supports them natively:
 ## ⚠️ PERFORMANCE WARNINGS (Ratio > 1.0) - v3.7.0 Bottlenecks
 | Test Case | Ratio | Analysis & Next Steps |
 |-----------|-------|-----------------------|
+| `Linear_f32_vulkan` | **1.29x** | Synchronous semaphore wait and buffer pool overhead. Fix: internal async pipelining. |
 | `ReLU_15M_int8_hybrid` | **15.8x** | PCI-E overhead kills perf for simple element-wise on small INT8 tensors. |
 | `ReLU_15M_int8_vulkan` | **6.5x** | Vulkan submit latency > compute time for lightweight INT8 kernel. |
 | `Sum_f32_vulkan` | **5.17x** | Command buffer overhead. Fix: batch ops into single dispatch. |

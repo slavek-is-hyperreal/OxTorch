@@ -1,0 +1,12 @@
+{
+    "name": "ScalarAdd_int8_vulkan",
+    "op": "ScalarAdd",
+    "dtype": "int8",
+    "mode": "vulkan",
+    "pt_time": 0.007250363700222806,
+    "vnn_time": 0.0009519545499642845,
+    "ratio": 0.1312974892466471,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 40.0
+}

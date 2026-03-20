@@ -1,0 +1,12 @@
+{
+    "name": "MatMul_f32_vulkan",
+    "op": "MatMul",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.19038963349885307,
+    "vnn_time": 0.17584993049968034,
+    "ratio": 0.9236318557267441,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 42.0
+}

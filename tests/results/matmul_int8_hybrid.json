@@ -1,0 +1,12 @@
+{
+    "name": "MatMul_int8_hybrid",
+    "op": "MatMul",
+    "dtype": "int8",
+    "mode": "hybrid",
+    "pt_time": 1.058003671001643,
+    "vnn_time": 0.17004729050313472,
+    "ratio": 0.16072466964329715,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 41.0
+}

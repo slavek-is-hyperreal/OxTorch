@@ -1,0 +1,12 @@
+{
+    "name": "ReLU_f16_cpu_inplace",
+    "op": "ReLU",
+    "dtype": "f16",
+    "mode": "cpu",
+    "pt_time": 0.0023453802001313306,
+    "vnn_time": 0.0005594406997261103,
+    "ratio": 0.23852878935994437,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 41.0
+}

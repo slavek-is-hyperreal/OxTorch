@@ -1,0 +1,12 @@
+{
+    "name": "GELU_int8_cpu",
+    "op": "GELU",
+    "dtype": "int8",
+    "mode": "cpu",
+    "pt_time": 0.0101703626998642,
+    "vnn_time": 0.0029702484996960267,
+    "ratio": 0.2920494172479893,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 40.0
+}
