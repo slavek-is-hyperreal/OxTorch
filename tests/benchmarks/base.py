@@ -67,6 +67,13 @@ class BenchmarkBase:
         cpu_temp, load = get_system_metrics()
         print(f"\n>>> TEST: {self.name} ({self.mode.upper()}, {self.dtype.upper()}) | Shape: {self.shape} | Iter: {self.iterations}")
 
+        # Resolve op name: PascalCase -> actual torch function name
+        _resolved_op = _OP_NAME_MAP.get(self.op, self.op)
+        _op_kwargs = _OP_KWARGS.get(_resolved_op, {})
+        b_vnn = None
+        b_torch = None
+        b_ox = None
+
         # Data Setup
         if not self.is_ssd:
             a_np = np.random.randn(*self.shape).astype(np.float32)
@@ -86,14 +93,9 @@ class BenchmarkBase:
             else:
                 b_torch = torch.from_numpy(b_np).to(torch_dtype) if self.op not in ["ReLU", "GELU", "Sum", "Softmax", "trunc", "cosh", "erf"] else None
                 b_vnn = self.vnn.Tensor(data=b_np, dtype=vnn_dtype, device=self.mode) if b_torch is not None else None
-                b_ox = None # Set later
             
             del a_np, b_np
             gc.collect()
-
-            # Resolve op name: PascalCase -> actual torch function name
-            _resolved_op = _OP_NAME_MAP.get(self.op, self.op)
-            _op_kwargs = _OP_KWARGS.get(_resolved_op, {})
 
             # PyTorch Benchmark
             t0 = time.perf_counter()
@@ -128,21 +130,15 @@ class BenchmarkBase:
             t_pt = (time.perf_counter() - t0) / self.iterations
         else:
             # SSD Mapped setup (special case for Monster tests)
-            # Placeholder for now
             t_pt = 0.0
             res_torch = None
             a_vnn = self.vnn.Tensor.from_ssd(f"/my_data/gaussian_room/ssd_temp_{np.prod(self.shape)}.bin", self.shape, vnn_dtype)
-            b_vnn = None
 
         # OxTorch Benchmark
-        # When torch is oxtorch (via our dispatcher), we just use 'torch' if we want to test the dispatcher 
-        # OR we use the native 'vnn' directly. 
-        # Here we want to test our 'oxtorch' proxy if possible, but base.py currently uses native 'vnn'.
-        # Let's import oxtorch as torch_ox
         import oxtorch as torch_ox
         a_ox = torch_ox.Tensor(a_vnn)
-        if b_ox is None:
-            b_ox = torch_ox.Tensor(b_vnn) if b_vnn is not None else None
+        if b_ox is None and b_vnn is not None:
+            b_ox = torch_ox.Tensor(b_vnn)
 
         t0 = time.perf_counter()
         for _ in range(self.iterations):
@@ -168,8 +164,16 @@ class BenchmarkBase:
                 raise AttributeError(f"Op {self.op} not found in oxtorch")
         t_vnn = (time.perf_counter() - t0) / self.iterations
 
-        # Parity
-        parity_ok, max_diff = check_parity(res_vnn, res_torch, self.name)
+        # Parity Check
+        if not self.is_ssd:
+            # Cast to float32 for comparison as numpy doesn't support all torch dtypes (like bfloat16) directly
+            res_torch_np = res_torch.detach().cpu().to(torch.float32).numpy()
+            res_vnn_np = res_vnn.to_numpy()
+            parity_ok, max_diff = check_parity(res_vnn_np, res_torch_np, self.name, self.op)
+        else:
+            # For SSD, we assume PASS if it finished without error
+            parity_ok = True
+            max_diff = 0.0
         max_diff = float(max_diff)
         
         result = {

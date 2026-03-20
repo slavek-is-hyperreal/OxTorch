@@ -48,8 +48,12 @@ def get_torch_backend_label(dtype_str):
     parts.append(dtype_map.get(dtype_str, dtype_str))
     return "·".join(parts)
 
-def check_parity(vnn_tensor, torch_tensor, name, atol=1e-2):
+def check_parity(vnn_tensor, torch_tensor, name, op=""):
+    import torch
+    import numpy as np
+    
     rtol = 1e-3
+    atol = 1e-2
     name_l = name.lower()
     if "bf16" in name_l:
         atol = 1.0
@@ -58,13 +62,19 @@ def check_parity(vnn_tensor, torch_tensor, name, atol=1e-2):
         atol = 0.5
     if "int8" in name_l:
         if "sum" in name_l: atol = 5000.0
-        elif "matmul" in name_l: atol = 300.0
+        elif "matmul" in name_l or op == "MatMul": atol = 300.0
     
-    v_np = vnn_tensor.to_numpy().flatten()
-    if hasattr(torch_tensor, 'detach'):
-        t_np = torch_tensor.detach().cpu().to(torch.float32).numpy().flatten()
+    # Extract numpy arrays from whatever we got (VNN tensor, Torch tensor, or already Numpy)
+    if isinstance(vnn_tensor, np.ndarray):
+        v_np = vnn_tensor.flatten()
     else:
+        v_np = vnn_tensor.to_numpy().flatten()
+
+    if isinstance(torch_tensor, np.ndarray):
         t_np = torch_tensor.flatten()
+    else:
+        # Pytorch doesn't support bfloat16 -> numpy directly, so we cast to f32
+        t_np = torch_tensor.detach().cpu().to(torch.float32).numpy().flatten()
     
     try:
         np.testing.assert_allclose(v_np, t_np, atol=atol, rtol=rtol)

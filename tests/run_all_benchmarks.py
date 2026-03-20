@@ -55,7 +55,7 @@ def aggregate_results(results_dir, baseline_dir):
                 all_data.append(res)
     return all_data
 
-def print_summary(data):
+def print_summary(data, total_found):
     if not data:
         print("No results found.")
         return
@@ -65,11 +65,24 @@ def print_summary(data):
     print("="*115)
     headers = ["Test Case", "PT Time", "VNN Time", "Ratio", "Baseline", "CPU°C", "Status"]
     rows = []
+    
+    faster_count = 0
+    slower_count = 0
+    passed_count = 0
+    
     for res in data:
         ratio = res["ratio"]
         ratio_str = f"{ratio:.2f}x" if ratio > 0.1 else f"{ratio:.4f}x"
         
-        status = "✅ PASS" if res["parity"] else "❌ FAIL"
+        is_pass = res["parity"]
+        status = "✅ PASS" if is_pass else "❌ FAIL"
+        if is_pass: passed_count += 1
+        
+        if ratio < 0.95: # 5% margin for noise
+            faster_count += 1
+        elif ratio > 1.05:
+            slower_count += 1
+            
         baseline = res.get("baseline")
         b_str = f"{baseline:.4f}s" if baseline else "-"
         
@@ -86,10 +99,20 @@ def print_summary(data):
             status
         ])
     
+    # Sort by performance ratio (FASTER first)
+    rows.sort(key=lambda x: float(x[3].replace("x", "")))
+    
     print(f"{headers[0]:<35} | {headers[1]:<10} | {headers[2]:<10} | {headers[3]:<8} | {headers[4]:<10} | {headers[5]:<6} | {headers[6]}")
     print("-" * 115)
     for row in rows:
         print(f"{row[0]:<35} | {row[1]:>10} | {row[2]:>10} | {row[3]:>8} | {row[4]:>10} | {row[5]:>5} | {row[6]}")
+    print("="*115)
+    
+    print(f"Benchmarks Found:    {total_found}")
+    print(f"Benchmarks Executed: {len(data)}")
+    print(f"Parity Passed:       {passed_count}/{len(data)}")
+    print(f"OxTorch FASTER:      {faster_count}")
+    print(f"PyTorch FASTER:      {slower_count}")
     print("="*115)
 
 if __name__ == "__main__":
@@ -131,7 +154,7 @@ if __name__ == "__main__":
         run_benchmark(m)
 
     all_results = aggregate_results(results_dir, baseline_dir)
-    print_summary(all_results)
+    print_summary(all_results, len(mods))
     
     if args.save_baseline:
         os.makedirs(baseline_dir, exist_ok=True)

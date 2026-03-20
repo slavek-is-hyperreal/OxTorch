@@ -40,7 +40,7 @@
 - [x] `softmax`, `log_softmax`.
 - [x] `zeros`, `ones`, `full`, `rand`, `randn` (creators).
 
-### [Sprint 2] Transformers Ops (LLM Ready)
+### [Sprint 2] Transformers Ops (LLM Ready) [/]
 *Target: run LLaMA/Mistral/Phi mini inference (quantized, SSD-resident).*
 - [ ] **Matrix**: `bmm` (Batch MatMul), `outer` (RoPE).
 - [ ] **Fused Linear**: `F.linear(x, W, b)` - mm + bias + relu in one Vulkan dispatch.
@@ -50,7 +50,7 @@
 - [ ] **Embeddings**: `embedding(input, weight)` lookup table.
 - [ ] **Attention**: `scaled_dot_product_attention` (fused Vulkan mega-kernel).
 - [ ] **Decoding**: `argmax`, `topk`.
-- [ ] **MSTS Generic CPU Tile Runner** — generalize tile-pulling to arbitrary `Callable[[np.ndarray], np.ndarray]`. Enables: (1) SSD streaming for any op without a native Vulkan shader (e.g. `layer_norm`, `erf`, `embedding`), (2) memory-efficient processing of tensors larger than RAM by materializing only 256K-element tiles at a time. GPU path stays native-only — CPU fallaback tile runner fills the gap.
+- [/] **MSTS PyTorch Fallback** — generalize tile-pulling to arbitrary `Callable[[np.ndarray], np.ndarray]`. Enables: (1) SSD streaming for any op without a native Vulkan shader (e.g. `layer_norm`, `erf`, `embedding`), (2) memory-efficient processing of tensors larger than RAM by materializing only 256K-element tiles at a time.
 
 ### [Sprint 2.1] BitNet (1.58b) - The LLM Leapfrog
 *Target: native support for 1.58-bit ternary models (Bielik, BitNet-7B).*

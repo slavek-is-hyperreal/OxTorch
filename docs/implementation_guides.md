@@ -109,3 +109,44 @@ C[row*N+col] = acc;
 Add `fn matmul_bias_relu(x, weight, bias) -> Tensor`.
 
 **Step 3: Expose to Python as `vnn.functional.linear`**.
+
+---
+
+## 🟡 PRIORITY 4 — MSTS PyTorch Fallback (Tile-based SSD Execution)
+*Goal: Execute any PyTorch operation on massive SSD tensors without OOM.*
+
+**Step 1: Add `unary_op_msts_pytorch` to `src/tensor/msts.rs`**
+```rust
+pub fn unary_op_msts_pytorch(&self, py: Python, callback: PyObject) -> PyResult<Tensor> {
+    let res_tensor = Self::new_ssd(&format!("{}_pt.ssd", self.name), self.shape.clone(), self.dtype)?;
+    let total_bytes = (self.shape.iter().product::<usize>() * self.dtype.bytes_per_elem()) as u64;
+    let scheduler = crate::crook_scheduler::CrookScheduler::new(8);
+    
+    let r_handle = crate::crook_scheduler::CrookScheduler::start_read_worker(scheduler.clone(), engine_in, total_bytes);
+    let w_handle = crate::crook_scheduler::CrookScheduler::start_write_worker(scheduler.clone(), engine_out, total_bytes);
+
+    for i in 0..(total_bytes / 1048576) {
+        let tile = &scheduler.ring[tile_idx];
+        // Wait for TILE_READY_FOR_COMPUTE...
+        // 1. Create NumPy view of tile.payload
+        // 2. call callback.call1(py, (np_array,))
+        // 3. Mark TILE_READY_FOR_WRITE
+    }
+    Ok(res_tensor)
+}
+```
+
+**Step 2: Update `oxtorch/tensor.py`**
+Implement `msts_pytorch_apply` which wraps the PyTorch op:
+```python
+def msts_pytorch_apply(self, func):
+    def tile_callback(np_tile):
+        with torch.no_grad():
+            tt = torch.from_numpy(np_tile)
+            res = func(tt)
+            np_tile[:] = res.numpy()[:]
+    return self._vnn.unary_op_msts_pytorch(tile_callback)
+```
+
+**Step 3: Auto-dispatch in `__getattr__`**
+If `self.device == "ssd"` and op is missing in VNN, automatically trigger `msts_pytorch_apply`.
