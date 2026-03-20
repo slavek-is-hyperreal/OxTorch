@@ -167,6 +167,13 @@ impl Tensor {
                 },
                 DataType::Ternary => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for Ternary")); }
             }
+        } else if self.dtype == DataType::Int8 && op == "gelu" {
+            // INT8 GELU has no Vulkan kernel — the shader lacks the dequant step.
+            // Always use the CPU LUT regardless of device (matches softmax_i8 behaviour).
+            let (v_in, _) = self.get_slice_raw_i8();
+            let (v_out, _) = out.get_slice_raw_mut_i8();
+            v_out.copy_from_slice(v_in);
+            crate::cpu::gelu_i8(v_out);
         } else {
             let (input_raw, _) = self.get_slice_raw_bytes();
             let (out_raw, _) = out.get_slice_raw_mut_bytes();

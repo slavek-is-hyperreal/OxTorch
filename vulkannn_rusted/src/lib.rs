@@ -13,10 +13,10 @@ use pyo3::prelude::*;
 /// A simple dummy function to verify that Python can talk to our compiled Rust library.
 #[pyfunction]
 fn rust_greeting(name: &str) -> PyResult<String> {
-    Ok(format!("Hello from VulkanNN-Rusted, {}! The Iron Age has begun.", name))
+    Ok(format!("Hello from OxTorch, {}! The Iron Age has begun.", name))
 }
 
-/// The main entry point mapped directly to the `vulkannn_rusted_test` Python module.
+/// The main entry point for the `vulkannn_rusted` Python extension module.
 #[pymodule]
 fn vulkannn_rusted(m: &Bound<'_, PyModule>) -> PyResult<()> {
     backend::init_backend();
