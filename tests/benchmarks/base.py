@@ -106,16 +106,23 @@ class BenchmarkBase:
                     res_torch = a_torch * b_torch
                 elif hasattr(torch.nn.functional, _resolved_op):
                     op_func = getattr(torch.nn.functional, _resolved_op)
+                    # Hack for INT8: PyTorch doesn't support it for these ops on CPU
+                    a_torch_in = a_torch.to(torch.float32) if self.dtype == "int8" and self.op in ["GELU", "Softmax"] else a_torch
                     if b_torch is not None:
-                        res_torch = op_func(a_torch, b_torch, **_op_kwargs)
+                        res_torch = op_func(a_torch_in, b_torch, **_op_kwargs)
                     else:
-                        res_torch = op_func(a_torch, **_op_kwargs)
+                        res_torch = op_func(a_torch_in, **_op_kwargs)
+                    if self.dtype == "int8" and self.op in ["GELU", "Softmax"]:
+                        res_torch = res_torch.to(torch.int8)
                 elif hasattr(torch, _resolved_op):
                     op_func = getattr(torch, _resolved_op)
+                    a_torch_in = a_torch.to(torch.float32) if self.dtype == "int8" and self.op in ["GELU", "Softmax"] else a_torch
                     if b_torch is not None:
-                        res_torch = op_func(a_torch, b_torch, **_op_kwargs)
+                        res_torch = op_func(a_torch_in, b_torch, **_op_kwargs)
                     else:
-                        res_torch = op_func(a_torch, **_op_kwargs)
+                        res_torch = op_func(a_torch_in, **_op_kwargs)
+                    if self.dtype == "int8" and self.op in ["GELU", "Softmax"]:
+                        res_torch = res_torch.to(torch.int8)
                 else:
                     raise AttributeError(f"Op {self.op} (resolved: {_resolved_op}) not found in torch or torch.nn.functional")
             t_pt = (time.perf_counter() - t0) / self.iterations
