@@ -1,5 +1,5 @@
 #version 450
-layout(local_size_x = 16, local_size_y = 16) in;
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) buffer A { float data[]; } a;
 layout(set = 0, binding = 1) buffer B { float data[]; } b;
@@ -18,18 +18,24 @@ layout(push_constant) uniform PushConsts {
 void main() {
     uint row = gl_GlobalInvocationID.y;
     uint col = gl_GlobalInvocationID.x;
+    uint b_idx = gl_GlobalInvocationID.z;
 
     if (row < params.M && col < params.N) {
         float sum = 0.0;
+        
+        uint offset_a = b_idx * params.M * params.K;
+        uint offset_b = b_idx * params.K * params.N;
+        uint offset_c = b_idx * params.M * params.N;
+
         for (uint k = 0; k < params.K; k++) {
-            float val_a = a.data[row * params.K + k];
+            float val_a = a.data[offset_a + row * params.K + k];
             float val_b;
             if (params.transpose_b == 1) {
                 // b is (N, K). index for [col, k] is col * K + k
-                val_b = b.data[col * params.K + k];
+                val_b = b.data[offset_b + col * params.K + k];
             } else {
                 // b is (K, N). index for [k, col] is k * N + col
-                val_b = b.data[k * params.N + col];
+                val_b = b.data[offset_b + k * params.N + col];
             }
             sum += val_a * val_b;
         }
@@ -46,6 +52,6 @@ void main() {
             case 5: sum = tanh(sum); break;
         }
 
-        c.data[row * params.N + col] = sum;
+        c.data[offset_c + row * params.N + col] = sum;
     }
 }

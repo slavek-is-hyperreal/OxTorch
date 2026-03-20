@@ -102,7 +102,7 @@ impl Tensor {
         Ok(Tensor { shape, device: "ssd".to_string(), name: "SSDMapped".to_string(), is_transposed: false, dtype, storage: Storage::None, mmap_data: Some(crate::tensor::IoEngineType::ReadOnly(std::sync::Arc::new(engine))) })
     }
 
-    pub fn new_ssd(path: &str, shape: Vec<usize>, dtype: DataType) -> PyResult<Self> {
+    pub fn new_ssd_raw(path: &str, shape: Vec<usize>, dtype: DataType) -> PyResult<Self> {
         let size = shape.iter().product::<usize>();
         let bytes_per_elem = match dtype {
             DataType::F32 => 4,

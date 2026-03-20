@@ -73,6 +73,11 @@ impl Tensor {
         Self::new_from_ssd(path, shape, dtype)
     }
 
+    #[staticmethod]
+    pub fn new_ssd(path: &str, shape: Vec<usize>, dtype: DataType) -> PyResult<Self> {
+        Self::new_ssd_raw(path, shape, dtype)
+    }
+
     #[pyo3(signature = (weight, bias=None, activation="none"))]
     pub fn linear(&self, weight: &Tensor, bias: Option<&Tensor>, activation: &str) -> PyResult<Tensor> {
         Self::execute_linear(self, weight, bias, activation)
@@ -86,6 +91,11 @@ impl Tensor {
     #[pyo3(name = "__matmul__")]
     pub fn py_matmul(&self, other: &Tensor) -> PyResult<Tensor> {
          self.__matmul__(other)
+    }
+    
+    #[pyo3(name = "bmm")]
+    pub fn py_bmm(&self, other: &Tensor) -> PyResult<Tensor> {
+         self.bmm(other)
     }
 
     pub fn transpose(&self) -> PyResult<Tensor> {
@@ -154,6 +164,10 @@ impl Tensor {
 
     pub fn reshape(&self, new_shape: Vec<usize>) -> PyResult<Tensor> {
         self.execute_reshape(new_shape)
+    }
+
+    pub fn msts_pytorch_apply(&self, py: Python, callback: PyObject) -> PyResult<Tensor> {
+        self.unary_op_msts_pytorch(py, callback)
     }
     
     pub fn to_numpy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, numpy::PyArrayDyn<f32>>> {

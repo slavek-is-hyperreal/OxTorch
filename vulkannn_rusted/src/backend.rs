@@ -1341,11 +1341,11 @@ pub fn execute_linear_into(a_raw: &[u8], b_raw: &[u8], bias_raw: &[u8], res_raw:
     poll_async_ops();
 }
 
-pub fn execute_matmul_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], m: u32, k: u32, n: u32, dtype: DataType) {
+pub fn execute_matmul_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], batch: u32, m: u32, k: u32, n: u32, dtype: DataType) {
     let backend = BACKEND.get().unwrap();
-    let num_bytes_f32_a = (m * k * 4) as vk::DeviceSize;
-    let num_bytes_f32_b = (k * n * 4) as vk::DeviceSize;
-    let num_bytes_f32_c = (m * n * 4) as vk::DeviceSize;
+    let num_bytes_f32_a = (batch * m * k * 4) as vk::DeviceSize;
+    let num_bytes_f32_b = (batch * k * n * 4) as vk::DeviceSize;
+    let num_bytes_f32_c = (batch * m * n * 4) as vk::DeviceSize;
 
     let buf_a = get_buffer(num_bytes_f32_a, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("MatMul_A"), false);
     let buf_b = get_buffer(num_bytes_f32_b, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("MatMul_B"), false);
@@ -1389,7 +1389,7 @@ pub fn execute_matmul_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], m: u3
         let pc_data = [m, k, n, 0, 0, 0]; // act_type=0, has_bias=0, transpose_b=0
         backend.device.cmd_push_constants(cmd, backend.pipe_layout_matmul, vk::ShaderStageFlags::COMPUTE, 0, bytemuck::cast_slice(&pc_data));
 
-        backend.device.cmd_dispatch(cmd, (n + 15) / 16, (m + 15) / 16, 1);
+        backend.device.cmd_dispatch(cmd, (n + 15) / 16, (m + 15) / 16, batch);
 
         let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_c.buffer).offset(buf_c.pool_offset.unwrap_or(0)).size(buf_c.size).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);

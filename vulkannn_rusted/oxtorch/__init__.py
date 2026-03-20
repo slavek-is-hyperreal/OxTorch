@@ -86,6 +86,9 @@ def as_tensor(data, *args, **kwargs):
 def from_numpy(data):
     return Tensor(data=data)
 
+def bmm(input, mat2):
+    return input.bmm(mat2)
+
 def zeros(*args, **kwargs):
     # Try native vnn.Tensor.zeros first
     try:

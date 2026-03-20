@@ -50,6 +50,14 @@ class Tensor:
         np_data = torch_tensor.detach().cpu().numpy()
         return Tensor(data=np_data)
 
+    @staticmethod
+    def from_ssd(path, shape, dtype=vnn.DataType.F32):
+        return Tensor(vnn.Tensor.from_ssd(path, shape, dtype))
+
+    @staticmethod
+    def new_ssd(path, shape, dtype=vnn.DataType.F32):
+        return Tensor(vnn.Tensor.new_ssd(path, shape, dtype))
+
     def __repr__(self):
         return f"OxTorch.Tensor({self.shape}, dtype={self.dtype}, device={self.device})"
 
@@ -74,6 +82,42 @@ class Tensor:
     def numpy(self):
         return self.to_numpy()
 
+    def msts_pytorch_apply(self, func):
+        """
+        Executes a PyTorch function tile-by-tile on an SSD tensor.
+        Prevents OOM for massive tensors by streaming through a 1MB ring buffer.
+        """
+        if self.device != "ssd":
+            # For non-SSD tensors, just use regular torch fallback
+            return Tensor.from_torch(func(self.to_torch()))
+            
+        def tile_callback(np_tile):
+            with torch.no_grad():
+                tt = torch.from_numpy(np_tile)
+                # Handle F16/BF16 views
+                if self.dtype == vnn.DataType.F16:
+                    tt = tt.view(torch.float16)
+                elif self.dtype == vnn.DataType.BF16:
+                    tt = tt.view(torch.bfloat16)
+                
+                # Execute the PyTorch function
+                res = func(tt)
+                
+                # Ensure same dtype and device
+                if res.dtype != tt.dtype:
+                    res = res.to(tt.dtype)
+                
+                out_np = res.numpy().flatten()
+                
+                # Convert back to uint16 representation for F16/BF16
+                if self.dtype in [vnn.DataType.F16, vnn.DataType.BF16]:
+                    out_np = out_np.view(np.uint16)
+                    
+                return out_np
+
+        # Call the Rust engine with our callback
+        return Tensor(self._vnn.msts_pytorch_apply(tile_callback))
+
     def item(self):
         np_data = self.to_numpy()
         return np_data.flatten()[0] if np_data.size == 1 else np_data.item()
@@ -93,8 +137,20 @@ class Tensor:
                 return wrapper
             return attr
 
-        # 2. Fallback to PyTorch
+        # 2. SSD Fallback: Auto-apply PyTorch for missing ops on SSD device
+        if self.device == "ssd" and HAS_TORCH:
+            import torch.nn.functional as F
+            # Check F then torch
+            op = getattr(F, name, None) or getattr(torch, name, None)
+            if op and callable(op):
+                return lambda *args, **kwargs: self.msts_pytorch_apply(lambda x: op(x, *args, **kwargs))
+
+        # 3. Standard Fallback to PyTorch (PULLS TO RAM!)
         if HAS_TORCH:
+            if self.device == "ssd":
+                # LOG A WARNING: pulling SSD to RAM
+                print(f"WARNING: OxTorch is pulling SSD tensor '{self.name}' ({self.shape}) into RAM for fallback op '{name}'. This may OOM.")
+            
             pt_tensor = self.to_torch()
             if hasattr(pt_tensor, name):
                 pt_attr = getattr(pt_tensor, name)
@@ -155,6 +211,10 @@ class Tensor:
     def __matmul__(self, other):
         other_vnn = other._vnn if isinstance(other, Tensor) else other
         return Tensor(self._vnn.__matmul__(other_vnn))
+
+    def bmm(self, other):
+        other_vnn = other._vnn if isinstance(other, Tensor) else other
+        return Tensor(self._vnn.bmm(other_vnn))
 
     def __getitem__(self, key):
         # Indexing is complex; fallback to PyTorch
