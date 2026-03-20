@@ -3,10 +3,10 @@
     "op": "ScalarMul",
     "dtype": "f32",
     "mode": "vulkan",
-    "pt_time": 0.008015885799977696,
-    "vnn_time": 0.008205283849929402,
-    "ratio": 1.023627837855703,
+    "pt_time": 0.006599447299959138,
+    "vnn_time": 0.0068197622000298,
+    "ratio": 1.0333838411092435,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 52.0
+    "cpu_temp": 47.0
 }

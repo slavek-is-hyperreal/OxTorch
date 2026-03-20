@@ -3,10 +3,10 @@
     "op": "Sum",
     "dtype": "f16",
     "mode": "vulkan",
-    "pt_time": 0.005018170599942096,
-    "vnn_time": 0.011098128199955681,
-    "ratio": 2.211588462154663,
-    "parity": false,
-    "max_diff": 0.375,
-    "cpu_temp": 55.0
+    "pt_time": 0.013427973800571636,
+    "vnn_time": 0.010296558499976526,
+    "ratio": 0.7667991204702973,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 46.0
 }
