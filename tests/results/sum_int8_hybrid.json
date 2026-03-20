@@ -1,0 +1,12 @@
+{
+    "name": "Sum_int8_hybrid",
+    "op": "Sum",
+    "dtype": "int8",
+    "mode": "hybrid",
+    "pt_time": 0.010016451150022476,
+    "vnn_time": 0.006343882999954076,
+    "ratio": 0.6333463723765917,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 50.0
+}

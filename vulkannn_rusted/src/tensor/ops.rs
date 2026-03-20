@@ -27,10 +27,10 @@ impl Tensor {
                     let (b, _) = other.get_slice_raw_f32();
                     let (res, _) = out.get_slice_raw_mut_f32();
                     match op {
-                        "add" => crate::cpu::elementwise_add_f32(a, b, res),
-                        "sub" => crate::cpu::elementwise_sub_f32(a, b, res),
-                        "mul" => crate::cpu::elementwise_mul_f32(a, b, res),
-                        "div" => crate::cpu::elementwise_div_f32(a, b, res),
+                        "add" => crate::cpu::add_f32(a, b, res),
+                        "sub" => crate::cpu::sub_f32(a, b, res),
+                        "mul" => crate::cpu::mul_f32(a, b, res),
+                        "div" => crate::cpu::div_f32(a, b, res),
                         _ => {},
                     }
                 },
@@ -38,19 +38,37 @@ impl Tensor {
                     let (a, _) = self.get_slice_raw_f16();
                     let (b, _) = other.get_slice_raw_f16();
                     let (res, _) = out.get_slice_raw_mut_f16();
-                    crate::cpu::elementwise_op_f16(a, b, res, op);
+                    match op {
+                        "add" => crate::cpu::add_f16(a, b, res),
+                        "sub" => crate::cpu::sub_f16(a, b, res),
+                        "mul" => crate::cpu::mul_f16(a, b, res),
+                        "div" => crate::cpu::div_f16(a, b, res),
+                        _ => {},
+                    }
                 },
                 DataType::BF16 => {
                     let (a, _) = self.get_slice_raw_bf16();
                     let (b, _) = other.get_slice_raw_bf16();
                     let (res, _) = out.get_slice_raw_mut_bf16();
-                    crate::cpu::elementwise_op_bf16(a, b, res, op);
+                    match op {
+                        "add" => crate::cpu::add_bf16(a, b, res),
+                        "sub" => crate::cpu::sub_bf16(a, b, res),
+                        "mul" => crate::cpu::mul_bf16(a, b, res),
+                        "div" => crate::cpu::div_bf16(a, b, res),
+                        _ => {},
+                    }
                 },
                 DataType::Int8 => {
                     let (a, _) = self.get_slice_raw_i8();
                     let (b, _) = other.get_slice_raw_i8();
                     let (res, _) = out.get_slice_raw_mut_i8();
-                    crate::cpu::elementwise_op_i8(a, b, res, op);
+                    match op {
+                        "add" => crate::cpu::add_i8(a, b, res),
+                        "sub" => crate::cpu::sub_i8(a, b, res),
+                        "mul" => crate::cpu::mul_i8(a, b, res),
+                        "div" => crate::cpu::div_i8(a, b, res),
+                        _ => {},
+                    }
                 },
                 DataType::Ternary => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for Ternary")); }
             }
@@ -70,6 +88,37 @@ impl Tensor {
         Ok(out)
     }
 
+    /// Broadcast a scalar f64 across the entire tensor.
+    pub fn scalar_elementwise_op(&self, scalar: f64, op: &str) -> PyResult<Tensor> {
+        let mut out = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
+        match self.dtype {
+            DataType::F32 => {
+                let (v_in, _) = self.get_slice_raw_f32();
+                let (v_out, _) = out.get_slice_raw_mut_f32();
+                crate::cpu::scalar_op_f32(v_in, scalar as f32, v_out, op);
+            },
+            DataType::F16 => {
+                let (v_in, _) = self.get_slice_raw_f16();
+                let (v_out, _) = out.get_slice_raw_mut_f16();
+                crate::cpu::scalar_op_f16(v_in, scalar as f32, v_out, op);
+            },
+            DataType::BF16 => {
+                let (v_in, _) = self.get_slice_raw_bf16();
+                let (v_out, _) = out.get_slice_raw_mut_bf16();
+                crate::cpu::scalar_op_bf16(v_in, scalar as f32, v_out, op);
+            },
+            DataType::Int8 => {
+                let (v_in, _) = self.get_slice_raw_i8();
+                let (v_out, _) = out.get_slice_raw_mut_i8();
+                crate::cpu::scalar_op_i8(v_in, scalar as i8, v_out, op);
+            },
+            DataType::Ternary => {
+                return Err(pyo3::exceptions::PyValueError::new_err("Scalar ops not supported for Ternary"));
+            }
+        }
+        Ok(out)
+    }
+
     pub fn unary_op(&self, op: &str, param1: f32, param2: f32) -> PyResult<Tensor> {
         if self.is_ssd() { return self.unary_op_ssd(op, param1, param2); }
         let mut out = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
@@ -79,8 +128,12 @@ impl Tensor {
                     let (v_in, _) = self.get_slice_raw_f32();
                     let (v_out, _) = out.get_slice_raw_mut_f32();
                     match op {
-                        "relu" => crate::cpu::relu_f32(v_in, v_out),
-                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_f32_inplace(v_out); },
+                        "relu" => crate::cpu::relu_f32_inplace(&mut *v_out),
+                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_f32(v_out); },
+                        "sigmoid" => { v_out.copy_from_slice(v_in); crate::cpu::sigmoid_f32(v_out); },
+                        "silu" => { v_out.copy_from_slice(v_in); crate::cpu::silu_f32(v_out); },
+                        "tanh" => { v_out.copy_from_slice(v_in); crate::cpu::tanh_f32(v_out); },
+                        "exp" => { v_out.copy_from_slice(v_in); crate::cpu::exp_f32(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
                 },
@@ -88,8 +141,8 @@ impl Tensor {
                     let (v_in, _) = self.get_slice_raw_f16();
                     let (v_out, _) = out.get_slice_raw_mut_f16();
                     match op {
-                        "relu" => crate::cpu::relu_f16(v_in, v_out),
-                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_f16_inplace(v_out); },
+                        "relu" => crate::cpu::relu_f16_inplace(v_out),
+                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_f16(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
                 },
@@ -97,8 +150,8 @@ impl Tensor {
                     let (v_in, _) = self.get_slice_raw_bf16();
                     let (v_out, _) = out.get_slice_raw_mut_bf16();
                     match op {
-                        "relu" => crate::cpu::relu_bf16(v_in, v_out),
-                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_bf16_inplace(v_out); },
+                        "relu" => crate::cpu::relu_bf16_inplace(v_out),
+                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_bf16(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
                 },
@@ -108,7 +161,7 @@ impl Tensor {
                     v_out.copy_from_slice(v_in);
                     match op {
                         "relu" => crate::cpu::relu_i8_inplace(v_out),
-                        "gelu" => crate::cpu::gelu_i8_dispatch(v_out),
+                        "gelu" => crate::cpu::gelu_i8(v_out),
                         _ => {},
                     }
                 },
@@ -132,7 +185,11 @@ impl Tensor {
                     let (v_out, _) = target.get_slice_raw_mut_f32();
                     match op {
                         "relu" => crate::cpu::relu_f32(v_in, v_out),
-                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_f32_inplace(v_out); },
+                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_f32(v_out); },
+                        "sigmoid" => { v_out.copy_from_slice(v_in); crate::cpu::sigmoid_f32(v_out); },
+                        "silu" => { v_out.copy_from_slice(v_in); crate::cpu::silu_f32(v_out); },
+                        "tanh" => { v_out.copy_from_slice(v_in); crate::cpu::tanh_f32(v_out); },
+                        "exp" => { v_out.copy_from_slice(v_in); crate::cpu::exp_f32(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
                 },
@@ -140,8 +197,8 @@ impl Tensor {
                     let (v_in, _) = self.get_slice_raw_f16();
                     let (v_out, _) = target.get_slice_raw_mut_f16();
                     match op {
-                        "relu" => crate::cpu::relu_f16(v_in, v_out),
-                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_f16_inplace(v_out); },
+                        "relu" => crate::cpu::relu_f16_inplace(v_out),
+                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_f16(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
                 },
@@ -149,8 +206,8 @@ impl Tensor {
                     let (v_in, _) = self.get_slice_raw_bf16();
                     let (v_out, _) = target.get_slice_raw_mut_bf16();
                     match op {
-                        "relu" => crate::cpu::relu_bf16(v_in, v_out),
-                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_bf16_inplace(v_out); },
+                        "relu" => crate::cpu::relu_bf16_inplace(v_out),
+                        "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_bf16(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
                 },
@@ -159,7 +216,7 @@ impl Tensor {
                     let (v_out, _) = target.get_slice_raw_mut_i8();
                     v_out.copy_from_slice(v_in);
                     match op {
-                        "relu" => crate::cpu::relu_i8_swar(v_out),
+                        "relu" => crate::cpu::relu_i8_inplace(v_out),
                         _ => {},
                     }
                 },
@@ -176,7 +233,7 @@ impl Tensor {
     pub fn act_into_raw_parallel_f32(slice: &mut [f32], op: &str, _param1: f32, _param2: f32) {
         match op {
             "relu" => crate::cpu::relu_f32_inplace(slice),
-            "gelu" => crate::cpu::gelu_f32_inplace(slice),
+            "gelu" => crate::cpu::gelu_f32(slice),
             _ => {},
         }
     }

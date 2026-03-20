@@ -1,0 +1,12 @@
+{
+    "name": "ScalarAdd_f32_hybrid",
+    "op": "ScalarAdd",
+    "dtype": "f32",
+    "mode": "hybrid",
+    "pt_time": 0.0035524183000234188,
+    "vnn_time": 0.006291632450029283,
+    "ratio": 1.7710843483684922,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

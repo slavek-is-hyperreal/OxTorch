@@ -73,16 +73,14 @@ impl Tensor {
         Self::new_from_ssd(path, shape, dtype)
     }
 
-    #[staticmethod]
-    #[pyo3(signature = (input, weight, bias=None, activation="none"))]
-    pub fn linear(input: &Tensor, weight: &Tensor, bias: Option<&Tensor>, activation: &str) -> PyResult<Tensor> {
-        Self::execute_linear(input, weight, bias, activation)
+    #[pyo3(signature = (weight, bias=None, activation="none"))]
+    pub fn linear(&self, weight: &Tensor, bias: Option<&Tensor>, activation: &str) -> PyResult<Tensor> {
+        Self::execute_linear(self, weight, bias, activation)
     }
 
-    #[staticmethod]
-    #[pyo3(signature = (input, weight, scale, bias=None))]
-    pub fn bit_linear(input: &Tensor, weight: &Tensor, scale: &Tensor, bias: Option<&Tensor>) -> PyResult<Tensor> {
-        Self::execute_bit_linear(input, weight, scale, bias)
+    #[pyo3(signature = (weight, scale, bias=None))]
+    pub fn bit_linear(&self, weight: &Tensor, scale: &Tensor, bias: Option<&Tensor>) -> PyResult<Tensor> {
+        Self::execute_bit_linear(self, weight, scale, bias)
     }
 
     #[pyo3(name = "__matmul__")]
@@ -95,13 +93,33 @@ impl Tensor {
     }
 
     #[pyo3(name = "__add__")]
-    pub fn py_add(&self, other: &Tensor) -> PyResult<Tensor> { self.elementwise_op(other, "add") }
+    pub fn py_add(&self, other: &Bound<'_, PyAny>) -> PyResult<Tensor> {
+        if let Ok(t) = other.extract::<Tensor>() { self.elementwise_op(&t, "add") }
+        else if let Ok(s) = other.extract::<f64>() { self.scalar_elementwise_op(s, "add") }
+        else { Err(pyo3::exceptions::PyTypeError::new_err("Expected Tensor or float")) }
+    }
     #[pyo3(name = "__sub__")]
-    pub fn py_sub(&self, other: &Tensor) -> PyResult<Tensor> { self.elementwise_op(other, "sub") }
+    pub fn py_sub(&self, other: &Bound<'_, PyAny>) -> PyResult<Tensor> {
+        if let Ok(t) = other.extract::<Tensor>() { self.elementwise_op(&t, "sub") }
+        else if let Ok(s) = other.extract::<f64>() { self.scalar_elementwise_op(s, "sub") }
+        else { Err(pyo3::exceptions::PyTypeError::new_err("Expected Tensor or float")) }
+    }
     #[pyo3(name = "__mul__")]
-    pub fn py_mul(&self, other: &Tensor) -> PyResult<Tensor> { self.elementwise_op(other, "mul") }
+    pub fn py_mul(&self, other: &Bound<'_, PyAny>) -> PyResult<Tensor> {
+        if let Ok(t) = other.extract::<Tensor>() { self.elementwise_op(&t, "mul") }
+        else if let Ok(s) = other.extract::<f64>() { self.scalar_elementwise_op(s, "mul") }
+        else { Err(pyo3::exceptions::PyTypeError::new_err("Expected Tensor or float")) }
+    }
     #[pyo3(name = "__truediv__")]
-    pub fn py_div(&self, other: &Tensor) -> PyResult<Tensor> { self.elementwise_op(other, "div") }
+    pub fn py_div(&self, other: &Bound<'_, PyAny>) -> PyResult<Tensor> {
+        if let Ok(t) = other.extract::<Tensor>() { self.elementwise_op(&t, "div") }
+        else if let Ok(s) = other.extract::<f64>() { self.scalar_elementwise_op(s, "div") }
+        else { Err(pyo3::exceptions::PyTypeError::new_err("Expected Tensor or float")) }
+    }
+    #[pyo3(name = "__rmul__")]
+    pub fn py_rmul(&self, other: f64) -> PyResult<Tensor> { self.scalar_elementwise_op(other, "mul") }
+    #[pyo3(name = "__radd__")]
+    pub fn py_radd(&self, other: f64) -> PyResult<Tensor> { self.scalar_elementwise_op(other, "add") }
 
     pub fn relu(&self) -> PyResult<Tensor> { self.unary_op("relu", 0.0, 0.0) }
     pub fn relu_into(&self, target: &mut Tensor) -> PyResult<()> { self.unary_op_into(target, "relu", 0.0, 0.0) }

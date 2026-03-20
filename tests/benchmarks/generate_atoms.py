@@ -20,6 +20,7 @@ dtypes = ["f32", "f16", "bf16", "int8"]
 modes = ["cpu", "vulkan", "hybrid"]
 ops = [
     ("MatMul", (2048, 2048)),
+    ("Linear", (2048, 2048)),
     ("Sum", (2048, 2048)),
     ("Softmax", (2048, 2048)),
     ("Mul", (2048, 2048)),

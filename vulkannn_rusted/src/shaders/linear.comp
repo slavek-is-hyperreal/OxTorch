@@ -10,7 +10,8 @@ layout(push_constant) uniform PushConsts {
     uint M;
     uint K;
     uint N;
-    uint act_type; 
+    uint act_type;
+    uint transpose_b;
 } params;
 
 void main() {
@@ -20,7 +21,8 @@ void main() {
     if (row < params.M && col < params.N) {
         float sum = 0.0;
         for (uint k = 0; k < params.K; k++) {
-            sum = fma(a.data[row * params.K + k], b.data[k * params.N + col], sum);
+            float b_val = (params.transpose_b == 1) ? b.data[col * params.K + k] : b.data[k * params.N + col];
+            sum = fma(a.data[row * params.K + k], b_val, sum);
         }
         
         float val = sum + bias.data[col];

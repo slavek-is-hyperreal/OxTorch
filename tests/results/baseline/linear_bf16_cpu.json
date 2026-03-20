@@ -1,0 +1,1 @@
+{"name": "Linear_bf16_cpu", "op": "Linear", "dtype": "bf16", "mode": "cpu", "pt_time": 1.7039411997000116, "vnn_time": 0.3523872992000179, "ratio": 0.20680719455698215, "parity": true, "max_diff": 0.0, "cpu_temp": 44.0, "baseline": null}

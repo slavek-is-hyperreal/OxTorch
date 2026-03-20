@@ -3,10 +3,10 @@
     "op": "ReLU",
     "dtype": "int8",
     "mode": "hybrid",
-    "pt_time": 7.383124993793899e-05,
-    "vnn_time": 0.0031165712500296648,
-    "ratio": 42.21208841309594,
+    "pt_time": 8.297450003738049e-05,
+    "vnn_time": 0.003311900000062451,
+    "ratio": 39.914672562900904,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 42.0
+    "cpu_temp": 45.0
 }

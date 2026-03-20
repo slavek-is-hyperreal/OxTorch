@@ -1,0 +1,1 @@
+{"name": "Linear_f32_hybrid", "op": "Linear", "dtype": "f32", "mode": "hybrid", "pt_time": 0.23819437045001451, "vnn_time": 0.16160923585000547, "ratio": 0.6784763029650167, "parity": false, "max_diff": 328.09912109375, "cpu_temp": 56.0, "baseline": null}

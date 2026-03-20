@@ -1,0 +1,12 @@
+{
+    "name": "ScalarMul_int8_hybrid",
+    "op": "ScalarMul",
+    "dtype": "int8",
+    "mode": "hybrid",
+    "pt_time": 0.010585641699981352,
+    "vnn_time": 0.0028113178000239714,
+    "ratio": 0.2655784013574655,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

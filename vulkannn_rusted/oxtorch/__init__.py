@@ -111,6 +111,15 @@ def randn(*args, **kwargs):
     # No native RandN in VNN yet (we have Rand Uniform)
     raise NotImplementedError("randn requires PyTorch fallback.")
 
+# DType aliases for PyTorch compatibility
+f32 = DataType.F32
+float32 = DataType.F32
+f16 = DataType.F16
+float16 = DataType.F16
+bf16 = DataType.BF16
+bfloat16 = DataType.BF16
+int8 = DataType.Int8
+
 # Branding
 __version__ = "3.7.0"
 __name__ = "oxtorch"

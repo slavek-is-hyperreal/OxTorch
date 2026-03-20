@@ -28,6 +28,7 @@ _OP_NAME_MAP = {
     "Softmax": "softmax",
     "ReLU": "relu",
     "GELU": "gelu",
+    "Linear": "linear",
 }
 
 # Ops that require keyword args when calling torch.nn.functional
@@ -69,7 +70,7 @@ class BenchmarkBase:
         # Data Setup
         if not self.is_ssd:
             a_np = np.random.randn(*self.shape).astype(np.float32)
-            if self.op == "MatMul":
+            if self.op in ["MatMul", "Linear"]:
                 b_np = np.random.randn(self.shape[-1], self.shape[-1]).astype(np.float32)
             else:
                 b_np = np.random.randn(*self.shape).astype(np.float32)
@@ -103,6 +104,12 @@ class BenchmarkBase:
                     res_torch = a_torch + b_torch
                 elif self.op == "ScalarMul":
                     res_torch = a_torch * b_torch
+                elif hasattr(torch.nn.functional, _resolved_op):
+                    op_func = getattr(torch.nn.functional, _resolved_op)
+                    if b_torch is not None:
+                        res_torch = op_func(a_torch, b_torch, **_op_kwargs)
+                    else:
+                        res_torch = op_func(a_torch, **_op_kwargs)
                 elif hasattr(torch, _resolved_op):
                     op_func = getattr(torch, _resolved_op)
                     if b_torch is not None:
@@ -110,7 +117,7 @@ class BenchmarkBase:
                     else:
                         res_torch = op_func(a_torch, **_op_kwargs)
                 else:
-                    raise AttributeError(f"Op {self.op} (resolved: {_resolved_op}) not found in torch")
+                    raise AttributeError(f"Op {self.op} (resolved: {_resolved_op}) not found in torch or torch.nn.functional")
             t_pt = (time.perf_counter() - t0) / self.iterations
         else:
             # SSD Mapped setup (special case for Monster tests)
@@ -156,6 +163,7 @@ class BenchmarkBase:
 
         # Parity
         parity_ok, max_diff = check_parity(res_vnn, res_torch, self.name)
+        max_diff = float(max_diff)
         
         result = {
             "name": self.name,

@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 
-pub fn bit_linear_f32(m: usize, k: usize, n: usize, a: &[i8], b: &[i8], s: &[f32], c: &mut [f32]) {
+pub fn bit_linear_f32(_m: usize, k: usize, n: usize, a: &[i8], b: &[i8], s: &[f32], c: &mut [f32]) {
     // a: [m, k] (signed i8 activations)
     // b: [n, k] (ternary weights {-1, 0, 1})
     // s: [n] (scales for each output channel)

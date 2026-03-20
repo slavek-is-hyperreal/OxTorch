@@ -24,6 +24,12 @@ impl Tensor {
                     let (c, _) = res.get_slice_raw_mut_f16();
                     crate::cpu::linear_f16(m, k, n, a, b, c);
                 },
+                DataType::BF16 => {
+                    let (a, _) = input.get_slice_raw_bf16();
+                    let (b, _) = weight.get_slice_raw_bf16();
+                    let (c, _) = res.get_slice_raw_mut_bf16();
+                    crate::cpu::linear_bf16(m, k, n, a, b, c);
+                },
                 _ => {
                     // Fallback for BF16/Int8
                     let a_f32 = input.to_numpy_f32_vec();
@@ -50,7 +56,7 @@ impl Tensor {
             }
             if activation == "relu" { 
                 let (c, _) = res.get_slice_raw_mut_f32();
-                crate::cpu::relu_f32_inplace(c); 
+                crate::cpu::relu_f32_inplace(c);
             }
         } else {
              let (a_raw, _) = input.get_slice_raw_bytes();

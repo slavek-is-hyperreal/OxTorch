@@ -34,25 +34,25 @@ impl Tensor {
                     DataType::F32 => {
                         let mut row = vec![0.0f32; dim_size];
                         for j in 0..dim_size { row[j] = unsafe { *(in_ptr.add(row_offset + j * inner * 4) as *const f32) }; }
-                        crate::cpu::softmax_f32_dispatch(&mut row, is_log);
+                        crate::cpu::softmax_f32(&mut row, is_log);
                         for j in 0..dim_size { unsafe { *(out_ptr.add(row_offset + j * inner * 4) as *mut f32) = row[j]; } }
                     },
                     DataType::F16 => {
                         let mut row = vec![half::f16::ZERO; dim_size];
                         for j in 0..dim_size { row[j] = unsafe { *(in_ptr.add(row_offset + j * inner * 2) as *const half::f16) }; }
-                        crate::cpu::softmax_f16_dispatch(&mut row, is_log);
+                        crate::cpu::softmax_f16(&mut row, is_log);
                         for j in 0..dim_size { unsafe { *(out_ptr.add(row_offset + j * inner * 2) as *mut half::f16) = row[j]; } }
                     },
                     DataType::BF16 => {
                         let mut row = vec![half::bf16::ZERO; dim_size];
                         for j in 0..dim_size { row[j] = unsafe { *(in_ptr.add(row_offset + j * inner * 2) as *const half::bf16) }; }
-                        crate::cpu::softmax_bf16_dispatch(&mut row, is_log);
+                        crate::cpu::softmax_bf16(&mut row, is_log);
                         for j in 0..dim_size { unsafe { *(out_ptr.add(row_offset + j * inner * 2) as *mut half::bf16) = row[j]; } }
                     },
                     DataType::Int8 => {
                         let mut row = vec![0i8; dim_size];
                         for j in 0..dim_size { row[j] = unsafe { *(in_ptr.add(row_offset + j * inner) as *const i8) }; }
-                        crate::cpu::softmax_i8_dispatch(&mut row, is_log);
+                        crate::cpu::softmax_i8(&mut row, is_log);
                         for j in 0..dim_size { unsafe { *(out_ptr.add(row_offset + j * inner) as *mut i8) = row[j]; } }
                     },
                     _ => unreachable!(),
@@ -115,33 +115,33 @@ impl Tensor {
                     DataType::F32 => {
                         let slice = bytemuck::cast_slice::<u8, f32>(in_raw);
                         match op {
-                            "sum" => crate::cpu::sum_f32_dispatch(slice),
-                            "mean" => crate::cpu::sum_f32_dispatch(slice) / (slice.len() as f32),
-                            "max" => slice.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
+                            "sum" => crate::cpu::sum_f32(slice),
+                            "mean" => crate::cpu::sum_f32(slice) / (slice.len() as f32),
+                            "max" => crate::cpu::max_f32(slice, f32::NEG_INFINITY),
                             _ => 0.0,
                         }
                     },
                     DataType::F16 => {
                         let slice = bytemuck::cast_slice::<u8, half::f16>(in_raw);
                         match op {
-                            "sum" => crate::cpu::sum_f16_dispatch(slice),
-                            "max" => crate::cpu::max_f16_dispatch(slice, f32::NEG_INFINITY),
+                            "sum" => crate::cpu::sum_f16(slice),
+                            "max" => crate::cpu::max_f16(slice, f32::NEG_INFINITY),
                             _ => 0.0,
                         }
                     },
                     DataType::BF16 => {
                         let slice = bytemuck::cast_slice::<u8, half::bf16>(in_raw);
                         match op {
-                            "sum" => crate::cpu::sum_bf16_dispatch(slice),
-                            "max" => crate::cpu::max_bf16_dispatch(slice, f32::NEG_INFINITY),
+                            "sum" => crate::cpu::sum_bf16(slice),
+                            "max" => crate::cpu::max_bf16(slice, f32::NEG_INFINITY),
                             _ => 0.0,
                         }
                     },
                     DataType::Int8 => {
                         let slice = bytemuck::cast_slice::<u8, i8>(in_raw);
                         match op {
-                            "sum" => crate::cpu::sum_i8_dispatch(slice) as f32,
-                            "max" => crate::cpu::max_i8_dispatch(slice, i8::MIN) as f32,
+                            "sum" => crate::cpu::sum_i8(slice) as f32,
+                            "max" => crate::cpu::max_i8(slice, i8::MIN) as f32,
                             _ => 0.0,
                         }
                     },

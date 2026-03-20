@@ -1,0 +1,1 @@
+{"name": "Linear_int8_vulkan", "op": "Linear", "dtype": "int8", "mode": "vulkan", "pt_time": 1.706805345549992, "vnn_time": 0.16630262955000036, "ratio": 0.09743502970833025, "parity": false, "max_diff": 163.0, "cpu_temp": 47.0, "baseline": null}

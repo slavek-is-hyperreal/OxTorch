@@ -16,23 +16,43 @@ def discover_benchmarks(base_dir):
                 benchmarks.append(mod_name)
     return sorted(benchmarks)
 
-def run_benchmark(mod_name):
-    print(f"Running {mod_name}...")
+def run_benchmark(mod_name, baseline_time=None):
+    print(f"Running {mod_name}...", end=" ", flush=True)
     env = os.environ.copy()
-    env["PYTHONPATH"] = "/my_data/gaussian_room"
+    env["PYTHONPATH"] = "/my_data/gaussian_room/vulkannn_rusted"
+    
+    # 2x slowdown threshold (+ some grace for noise)
+    timeout = baseline_time * 3.0 if baseline_time else 300.0
+    
     try:
-        subprocess.run([sys.executable, "-m", mod_name], env=env, check=True)
+        t0 = time.perf_counter()
+        subprocess.run([sys.executable, "-m", mod_name], env=env, check=True, timeout=timeout)
+        print("DONE")
         return True
+    except subprocess.TimeoutExpired:
+        print(f"TIMEOUT (exceeded {timeout:.1f}s)")
+        return False
     except subprocess.CalledProcessError:
-        print(f"FAILED: {mod_name}")
+        print(f"FAILED (error)")
         return False
 
-def aggregate_results(results_dir):
+def aggregate_results(results_dir, baseline_dir):
     all_data = []
+    # Load baselines
+    baselines = {}
+    if os.path.exists(baseline_dir):
+        for f in os.listdir(baseline_dir):
+            if f.endswith(".json"):
+                with open(os.path.join(baseline_dir, f), 'r') as b:
+                    data = json.load(b)
+                    baselines[data["name"]] = data["vnn_time"]
+
     for file in os.listdir(results_dir):
         if file.endswith(".json"):
             with open(os.path.join(results_dir, file), 'r') as f:
-                all_data.append(json.load(f))
+                res = json.load(f)
+                res["baseline"] = baselines.get(res["name"])
+                all_data.append(res)
     return all_data
 
 def print_summary(data):
@@ -40,43 +60,83 @@ def print_summary(data):
         print("No results found.")
         return
 
-    print("\n" + "="*105)
-    print(f"{'OxTorch ATOMIZED BENCHMARK SUMMARY':^105}")
-    print("="*105)
-    headers = ["Test Case", "PT Time", "VNN Time", "Ratio", "CPU°C", "Parity"]
+    print("\n" + "="*115)
+    print(f"{'OxTorch ATOMIZED BENCHMARK SUMMARY':^115}")
+    print("="*115)
+    headers = ["Test Case", "PT Time", "VNN Time", "Ratio", "Baseline", "CPU°C", "Status"]
     rows = []
     for res in data:
         ratio = res["ratio"]
         ratio_str = f"{ratio:.2f}x" if ratio > 0.1 else f"{ratio:.4f}x"
-        parity = "✅ PASS" if res["parity"] else "❌ FAIL"
+        
+        status = "✅ PASS" if res["parity"] else "❌ FAIL"
+        baseline = res.get("baseline")
+        b_str = f"{baseline:.4f}s" if baseline else "-"
+        
+        if baseline and res["vnn_time"] > baseline * 2.0:
+            status = "⚠️ SLOW"
+        
         rows.append([
             res["name"],
             f"{res['pt_time']:.4f}s",
             f"{res['vnn_time']:.4f}s",
             ratio_str,
+            b_str,
             f"{res['cpu_temp']:.0f}°",
-            parity
+            status
         ])
     
-    # Simple table printing if tabulate is missing
-    print(f"{headers[0]:<35} | {headers[1]:<10} | {headers[2]:<10} | {headers[3]:<8} | {headers[4]:<6} | {headers[5]}")
-    print("-" * 105)
+    print(f"{headers[0]:<35} | {headers[1]:<10} | {headers[2]:<10} | {headers[3]:<8} | {headers[4]:<10} | {headers[5]:<6} | {headers[6]}")
+    print("-" * 115)
     for row in rows:
-        print(f"{row[0]:<35} | {row[1]:>10} | {row[2]:>10} | {row[3]:>8} | {row[4]:>5} | {row[5]}")
-    print("="*105)
+        print(f"{row[0]:<35} | {row[1]:>10} | {row[2]:>10} | {row[3]:>8} | {row[4]:>10} | {row[5]:>5} | {row[6]}")
+    print("="*115)
 
 if __name__ == "__main__":
     base_dir = "/my_data/gaussian_room/tests/benchmarks"
     results_dir = "/my_data/gaussian_room/tests/results"
-    
-    # Optional: Clear old results
-    # for f in os.listdir(results_dir): os.remove(os.path.join(results_dir, f))
+    baseline_dir = "/my_data/gaussian_room/tests/results/baseline"
+
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--save-baseline", action="store_true")
+    parser.add_argument("--filter", type=str, nargs="+")
+    args = parser.parse_args()
+
+    # Clear old results (but keep baselines)
+    for f in os.listdir(results_dir):
+        if f.endswith(".json"):
+            os.remove(os.path.join(results_dir, f))
 
     mods = discover_benchmarks(base_dir)
+    if args.filter:
+        mods = [m for m in mods if any(f.lower() in m.lower() for f in args.filter)]
+    
     print(f"Found {len(mods)} benchmarks.")
 
+    # Load existing baselines for timeouts
+    curr_baselines = {}
+    if os.path.exists(baseline_dir):
+        for f in os.listdir(baseline_dir):
+            if f.endswith(".json"):
+                try:
+                    with open(os.path.join(baseline_dir, f), 'r') as b:
+                        d = json.load(b)
+                        curr_baselines[d["name"]] = d["vnn_time"]
+                except: pass
+
     for m in mods:
+        # Match module name to test name (usually the same but inside module path)
+        # We'll just pass None if uncertain or try to match.
         run_benchmark(m)
 
-    all_results = aggregate_results(results_dir)
+    all_results = aggregate_results(results_dir, baseline_dir)
     print_summary(all_results)
+    
+    if args.save_baseline:
+        os.makedirs(baseline_dir, exist_ok=True)
+        for res in all_results:
+            b_path = os.path.join(baseline_dir, f"{res['name'].lower()}.json")
+            with open(b_path, 'w') as f:
+                json.dump(res, f)
+        print(f"Saved {len(all_results)} results as baseline.")

@@ -1,0 +1,12 @@
+{
+    "name": "Sum_bf16_cpu",
+    "op": "Sum",
+    "dtype": "bf16",
+    "mode": "cpu",
+    "pt_time": 0.0015935001999423549,
+    "vnn_time": 0.0009500137999566505,
+    "ratio": 0.5961805338907503,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

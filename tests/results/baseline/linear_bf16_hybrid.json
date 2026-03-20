@@ -1,0 +1,1 @@
+{"name": "Linear_bf16_hybrid", "op": "Linear", "dtype": "bf16", "mode": "hybrid", "pt_time": 1.8052294278999852, "vnn_time": 0.1639340304000143, "ratio": 0.09081063485139282, "parity": false, "max_diff": 354.0, "cpu_temp": 52.0, "baseline": null}

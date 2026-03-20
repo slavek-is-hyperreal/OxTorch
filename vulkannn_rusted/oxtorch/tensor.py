@@ -134,9 +134,23 @@ class Tensor:
         other_vnn = other._vnn if isinstance(other, Tensor) else other
         return Tensor(self._vnn.__mul__(other_vnn))
 
+    def __rmul__(self, other):
+        return Tensor(self._vnn.__rmul__(other))
+
     def __truediv__(self, other):
         other_vnn = other._vnn if isinstance(other, Tensor) else other
         return Tensor(self._vnn.__truediv__(other_vnn))
+
+    def __rtruediv__(self, other):
+         # x / tensor -> fallback to PT for now as we don't have scalar / tensor native yet
+         return self.from_torch(other / self.to_torch())
+
+    def __radd__(self, other):
+        return Tensor(self._vnn.__radd__(other))
+
+    def __rsub__(self, other):
+        # x - tensor
+        return self.from_torch(other - self.to_torch())
 
     def __matmul__(self, other):
         other_vnn = other._vnn if isinstance(other, Tensor) else other
