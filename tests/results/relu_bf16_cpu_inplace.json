@@ -3,10 +3,10 @@
     "op": "ReLU",
     "dtype": "bf16",
     "mode": "cpu",
-    "pt_time": 0.0041776334001042414,
-    "vnn_time": 0.001459941499888373,
-    "ratio": 0.3494661594413584,
-    "parity": false,
-    "max_diff": 4.90625,
-    "cpu_temp": 48.0
+    "pt_time": 0.001792493599714362,
+    "vnn_time": 0.0005752518998633604,
+    "ratio": 0.3209227078718876,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 43.0
 }

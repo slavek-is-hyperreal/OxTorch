@@ -128,7 +128,7 @@ impl Tensor {
                     let (v_in, _) = self.get_slice_raw_f32();
                     let (v_out, _) = out.get_slice_raw_mut_f32();
                     match op {
-                        "relu" => crate::cpu::relu_f32_inplace(&mut *v_out),
+                        "relu" => crate::cpu::relu_f32(v_in, v_out),
                         "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_f32(v_out); },
                         "sigmoid" => { v_out.copy_from_slice(v_in); crate::cpu::sigmoid_f32(v_out); },
                         "silu" => { v_out.copy_from_slice(v_in); crate::cpu::silu_f32(v_out); },
@@ -141,7 +141,7 @@ impl Tensor {
                     let (v_in, _) = self.get_slice_raw_f16();
                     let (v_out, _) = out.get_slice_raw_mut_f16();
                     match op {
-                        "relu" => crate::cpu::relu_f16_inplace(v_out),
+                        "relu" => crate::cpu::relu_f16(v_in, v_out),
                         "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_f16(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
@@ -150,7 +150,7 @@ impl Tensor {
                     let (v_in, _) = self.get_slice_raw_bf16();
                     let (v_out, _) = out.get_slice_raw_mut_bf16();
                     match op {
-                        "relu" => crate::cpu::relu_bf16_inplace(v_out),
+                        "relu" => crate::cpu::relu_bf16(v_in, v_out),
                         "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_bf16(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
@@ -197,7 +197,7 @@ impl Tensor {
                     let (v_in, _) = self.get_slice_raw_f16();
                     let (v_out, _) = target.get_slice_raw_mut_f16();
                     match op {
-                        "relu" => crate::cpu::relu_f16_inplace(v_out),
+                        "relu" => crate::cpu::relu_f16(v_in, v_out),
                         "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_f16(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
@@ -206,7 +206,7 @@ impl Tensor {
                     let (v_in, _) = self.get_slice_raw_bf16();
                     let (v_out, _) = target.get_slice_raw_mut_bf16();
                     match op {
-                        "relu" => crate::cpu::relu_bf16_inplace(v_out),
+                        "relu" => crate::cpu::relu_bf16(v_in, v_out),
                         "gelu" => { v_out.copy_from_slice(v_in); crate::cpu::gelu_bf16(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
