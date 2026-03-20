@@ -1,75 +1,77 @@
-# Performance Guide (v3.7.0 (The BitNet Leapfrog))
+# Performance Guide (v3.7.0 — The BitNet Leapfrog)
 
-This guide explains how to interpret benchmark results and how to maximize throughput
-on the target hardware (i5-3450, AMD Bonaire R7 260X, 24GB DDR3, ZFS SSD pool).
-
----
-
-## 1. Reading Benchmark Output
-
-The `unified_benchmark.py` harness reports:
-
-- **PT (Median)**: PyTorch execution time, median over N runs. The primary reference.
-- **OxTorch (Median)**: OxTorch execution time, median over N runs.
-- **OxTorch (Std)**: Standard deviation. High std = thermal or OS interference.
-- **Ratio**: `OxTorch / PyTorch`. Values below 1.0 mean OxTorch is faster.
-
-### v3.7.0 — Phase 6 Complete (53 benchmarks, AMD Bonaire / i5-3450)
-
-| Operation | DType | Mode | Ratio | Why? |
-| :--- | :--- | :--- | :--- | :--- |
-| MatMul | F16 | Vulkan | **0.04x** 🚀 | PT lacks CPU F16C; OxTorch uses Vulkan tiled shader |
-| MatMul | BF16 | Vulkan | **0.05x** 🚀 | Same — PT scalar emulation |
-| MatMul | F32 | Vulkan | **0.06x** 🚀 | Vulkan tiled SGEMM |
-| MatMul | INT8 | CPU | **0.04x** 🚀 | AVX2 SIMD vs PT scalar |
-| ReLU | INT8 | CPU | **0.085x** 🚀 | Dedicated INT8 AVX2 kernel |
-| ReLU | F32 | CPU | **0.44x** ✅ | AVX1 `vmaxps` |
-| GELU | F32 | CPU | 1.85x ⚠️ | PT vectorized GELU still ahead for F32 |
-| ReLU 15M | INT8 | Hybrid | 15.8x ⚠️ | PCIe overhead kills small INT8 on Vulkan |
+This guide explains how to interpret benchmark results and maximize throughput
+on the reference hardware: i5-3450 (Ivy Bridge), AMD Radeon R7 200 (Bonaire GCN 1.1), 24GB DDR3, ZFS SSD pool.
 
 ---
 
-## 2. Hardware Characteristics and Expected Results
+## 1. Running Benchmarks
+
+The primary benchmark system is the **Atomized Suite**:
+
+```bash
+source venv/bin/activate
+PYTHONPATH=/path/to/vulkannn_rusted python tests/run_all_benchmarks.py
+```
+
+Output format (one line per test):
+```
+MatMul_f16_vulkan   | PT: 148.1644s | VNN:   0.1829s | 0.0012x | ✅ PASS
+```
+
+For full details see [how_we_test.md](how_we_test.md).
+
+---
+
+## 2. Benchmark Results (v3.7.0, AMD Bonaire / i5-3450)
+
+### MatMul — OxTorch crushes PyTorch on legacy hardware
+
+| Test | PyTorch | OxTorch | Ratio | Why? |
+|:---|---:|---:|:---:|:---|
+| MatMul F16 (vulkan) | 120.9s | 0.17s | **~0.0014x** 🚀 | ~780x faster via tiled Vulkan shader |
+| MatMul BF16 (vulkan) | 68.9s | 0.17s | **~0.0025x** 🚀 | ~400x faster via SSE2+Vulkan |
+| MatMul F16 (cpu) | 132.6s | 0.17s | **~0.0013x** 🚀 | F16C intrinsics vs PT scalar path |
+| MatMul F32 (vulkan) | 0.22s | 0.18s | **0.82x** ✅ | Vulkan tiled SGEMM |
+| MatMul INT8 (cpu) | 1.01s | 0.15s | **0.15x** 🚀 | 6.5x faster vs PT scalar |
+
+> **Why PyTorch is so slow on F16/BF16 MatMul**: The i5-3450 has AVX+F16C but **not AVX-512**. PyTorch's CPU F16 MatMul requires AVX-512 — without it, it falls back to scalar emulation. OxTorch uses F16C intrinsics (`_mm256_cvtps_ph`) which are available on Ivy Bridge.
+
+### Activations — Mixed results
+
+| Test | PyTorch | OxTorch | Ratio | Notes |
+|:---|---:|---:|:---:|:---|
+| ReLU INT8 (cpu) | 3.1ms | 0.26ms | **0.085x** 🚀 | Dedicated INT8 SIMD kernel |
+| ReLU F32 (cpu) | 4.0ms | 1.8ms | **0.44x** ✅ | AVX1 `vmaxps` |
+| ReLU 15M F16 (hybrid) | 82.7ms | 50.8ms | **0.62x** ✅ | MSTS tile-pulling |
+| ReLU 15M F32 (vulkan) | 24.3ms | 73.2ms | 3.01x ⚠️ | Vulkan PCIe overhead on 15M elems |
+| ReLU 15M INT8 (hybrid) | 2.9ms | 46.3ms | 15.8x ⚠️ | PCIe cost kills small INT8 tensors |
+
+---
+
+## 3. Hardware Characteristics
 
 ### CPU (i5-3450, Ivy Bridge)
 
 - 4 cores, no hyperthreading, 6MB L3 cache
-- Has AVX and F16C but NOT AVX2 or FMA
-- F16/BF16 operations dispatch to F16C intrinsics (F16) or SSE2 SWAR (BF16)
-- F32 MatMul: near 1:1 with PyTorch (~0.21s for 2048x2048)
-- F16/BF16 MatMul: ~500x faster than PyTorch, which uses scalar emulation
+- **Has**: AVX, F16C, SSE4.1 — **No**: AVX2, FMA, AVX-512
+- F16/BF16 dispatch uses F16C intrinsics (F16) or SSE2 SWAR (BF16)
+- F32 MatMul: near 1:1 with PyTorch (~0.21s for 2048×2048)
+- F16/BF16 MatMul: **~500× faster** than PyTorch (scalar emulation vs F16C)
 
-### GPU (AMD Radeon R7 260X, Bonaire GCN 1.1)
+### GPU (AMD Radeon R7 200 Series, Bonaire GCN 1.1)
 
-- 1GB GDDR5 VRAM
-- PCIe 3.0 x16 bus, but PCIe staging roundtrip overhead is ~80ms on this card
-- No native FP16 compute: all shader math runs in F32, with F16/BF16 stored in system RAM
-- Break-even point for dispatching to GPU: approximately 4M elements (~16MB F32)
-- Below this threshold, Vulkan PCIe staging cost dominates and CPU SWAR is faster
-- Vulkan ReLU on 1M elements: ~85ms (26x slower than PyTorch)
-- Vulkan ReLU on 15M+ elements: expected to approach CPU performance or beat it
+- ~1GB GDDR5 VRAM (effective compute pool via gpu-allocator)
+- PCIe 3.0 — round-trip staging cost: ~80ms on Bonaire
+- **No native FP16 compute in SPIR-V**: all shaders operate on F32; F16/BF16 is converted on CPU before upload
+- GPU break-even: **≥4M elements** (~16MB F32, ~8MB F16)
+- Below threshold: Vulkan overhead makes CPU faster
 
 ### SSD (ZFS pool)
 
-- Effective sequential read throughput: ~80-90 MB/s for the 16GB Monster ReLU benchmark
-- io_uring O_DIRECT at 1MB ZFS recordsize boundaries eliminates all page cache overhead
-- ZFS recordsize must be set to 1MB for optimal alignment: `zfs set recordsize=1M pool/dataset`
-
----
-
-## 3. Thermal Behavior
-
-Observed across long benchmark sessions (9000+ seconds):
-
-- **Cold start**: L3 cache is empty, first runs take slightly longer.
-- **Warm**: After a few minutes, tile sizes are cache-resident and times stabilize.
-- **Heat soak (after 2+ hours)**: CPU and GPU clock-down by 10-15%. The OxTorch/PT ratio
-  remains stable because both are equally affected. Use Median to filter isolated spikes.
-
-StdDev thresholds:
-- Below 5ms: excellent stability
-- 5-50ms: normal for background OS activity
-- Above 50ms: likely thermal throttling or memory pressure from other processes
+- Effective sequential read: ~80–90 MB/s for Monster benchmarks
+- `io_uring` + `O_DIRECT` + 1MB recordsize alignment → zero page-cache overhead
+- Setup: `zfs set recordsize=1M pool/dataset`
 
 ---
 
@@ -77,45 +79,45 @@ StdDev thresholds:
 
 `VULKAN_MIN_ELEMS = 4_194_304` (4M elements, ~16MB F32, ~8MB F16)
 
-This constant in `src/tensor/mod.rs` controls the hybrid tile-pulling dispatcher:
-- Below the threshold: only CPU SWAR workers run. GPU dispatcher thread is not spawned.
-- At or above the threshold: GPU dispatcher competes for tiles alongside CPU workers.
+In `src/tensor/mod.rs`. This constant controls the hybrid tile-pulling dispatcher:
+- **Below**: only CPU SIMD runs. GPU thread is not spawned.
+- **At/above**: GPU dispatcher thread competes for tiles alongside CPU.
 
-To tune this for different hardware, search for `VULKAN_MIN_ELEMS` in `src/tensor/mod.rs`.
-On GPUs with lower PCIe latency (e.g., discrete desktop cards with fast transfers),
-the threshold can be lowered significantly.
+To tune for faster PCIe (e.g., high-end discrete GPU), lower this constant.
 
 ---
 
 ## 5. Maximizing Throughput
 
-1. **Use `device="cpu"` for small tensors** (below ~2M elements): the Vulkan overhead is
-   not amortized on the Bonaire. CPU via Rayon + SIMD is faster.
+1. **Small tensors (< 2M elements)**: Always use `device="cpu"`. Vulkan PCIe staging overhead is not amortized.
 
-2. **Use `device="vulkan"` for F16/BF16 MatMul**: even though the GPU cannot natively
-   compute F16, the SWAR upcast in Rust is dramatically faster than PyTorch's scalar path.
+2. **F16/BF16 MatMul**: Use `device="vulkan"`. Even though the GPU computes in F32, OxTorch's upcast path is ~500× faster than PyTorch's CPU scalar path.
 
-3. **Use `device="hybrid"` for large activations** (>4M elements): tile-pulling lets the
-   GPU handle some of the work while CPU SWAR handles the rest, in parallel.
+3. **Large activations (> 4M elements)**: Use `device="hybrid"`. MSTS tile-pulling lets GPU and CPU race for tiles in parallel.
 
-4. **Use `Tensor.from_ssd` for out-of-core weights**: this is the io_uring path. Never
-   load large tensors with numpy and pass them to the Tensor constructor if they do not
-   fit comfortably in RAM below the `l2_ram_max_bytes` budget threshold.
+4. **Out-of-core weights**: Use `Tensor.from_ssd()`. Never load multi-GB tensors with numpy if they don't fit comfortably in RAM below `l2_ram_max_bytes`.
 
-5. **Reduce background processes** during long benchmark runs to minimize StdDev noise.
+5. **Reduce background processes** during benchmark runs to minimize StdDev noise.
 
 ---
 
-## 6. Known Limitations
+## 6. Thermal Behavior
 
-- **Small GPU dispatches are expensive on Bonaire**: The ~80ms PCIe staging cost means
-  Vulkan is a net negative below 4M elements. Hardware characteristic, not a bug.
-- **F16 MatMul Hybrid**: tile-pulling dispatch currently covers only activation functions.
-  MatMul hybrid still uses a full-tensor Vulkan dispatch.
-- **No native FP16 shader compute**: Bonaire GCN 1.1 does not support FP16 in compute
-  shaders via Vulkan. All SPIR-V shaders operate on F32. F16/BF16 is converted on CPU
-  before upload and after download.
-- **INT8 GELU/Mul via fallback**: PyTorch itself does not support GELU or element-wise Mul
-  on `int8` tensors. OxTorch has native kernels for these. When using `oxtorch` as a drop-in
-  and calling GELU on INT8, it routes to OxTorch natively — but there is no PyTorch reference
-  to compare against, so the benchmark shows `FAILED` for the PT side only.
+- **Cold start**: L3 cache empty; first runs slower.
+- **Warm** (after a few minutes): tile sizes cache-resident, times stabilize.
+- **Heat soak (2+ hours)**: CPU/GPU clock down 10–15%. OxTorch/PT ratio stays stable; both affected equally.
+
+StdDev thresholds:
+- < 5ms: excellent
+- 5–50ms: normal (OS activity)
+- > 50ms: thermal throttling or memory pressure
+
+---
+
+## 7. Known Limitations
+
+- **Small GPU dispatches**: Bonaire ~80ms PCIe cost makes Vulkan a net negative below 4M elements. Hardware characteristic, not a bug.
+- **No native FP16 SPIR-V compute**: GCN 1.1 shader units compute in F32. F16/BF16 is always converted on CPU side.
+- **F16 MatMul Hybrid**: tile-pulling hybrid currently covers activations. MatMul hybrid uses full-tensor Vulkan dispatch (fast for matmul sizes).
+- **INT8 GELU/Softmax — no PyTorch reference**: PyTorch has no native CPU INT8 GELU/Softmax kernel. OxTorch has native implementations. Parity is verified against a float32 reference.
+- **autograd / training**: Not yet implemented. Inference-only (Sprint 7 long-term).

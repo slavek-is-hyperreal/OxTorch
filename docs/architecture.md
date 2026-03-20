@@ -1,156 +1,162 @@
 # OxTorch Architecture: The MERA-400 Legacy
 
-OxTorch (formerly VulkanNN Rusted) is built on the philosophy of **asynchronous, deterministic dataflow**. Inspired by the MERA-400 minicomputer, the engine treats hardware as a collection of asynchronous processing units that pull work from a unified stream.
-
-## 🧱 Core Source Map (.rs file overview)
-
-Marek requested a detailed breakdown of every source file in the engine:
-
-### 🚀 Module Entry & API
-- **`src/lib.rs`**: The root of the crate. Defines the PyO3 module and exposes `Tensor`, `DataType`, and other types to Python.
-- **`src/tensor/mod.rs`**: Defines the `Tensor` struct. This is the main handle for all user operations. It manages shape, device, and metadata.
-
-### 🧠 Tensor Orchestration
-- **`src/tensor/linalg.rs`**: High-level linear algebra dispatcher. It decides whether to run a MatMul or BitLinear on the CPU or GPU based on the tensor's `device` property.
-- **`src/tensor/constructors.rs`**: Logic for initializing tensors from memory (`new_from_vec`), zeros, or random data. Includes the **BitNet quantization logic** (Ternary conversion).
-- **`src/tensor/storage.rs`**: The backbone of Tri-Precision. It defines how F32, F16, BF16, Int8, and Ternary data are stored in raw byte vectors.
-- **`src/tensor/access.rs`**: Methods for raw memory access, slicing, and zero-copy views.
-- **`src/tensor/ops.rs`**: Dispatcher for elementwise operations (Add, Mul, Sub).
-- **`src/tensor/reductions.rs`**: Dispatcher for Sum, Mean, Max, and Softmax.
-
-### ⚡ CPU Backend (`src/cpu/`)
-- **`src/cpu/mod.rs`**: entry point for CPU-side execution.
-- **`src/cpu/ops/bit_linear.rs`**: Pure Rust, Rayon-parallelized implementation of the BitNet linear kernel.
-- **`src/cpu/ops/matmul/`**:
-    - `f32.rs`, `f16.rs`, `bf16.rs`: Specialized SIMD implementations for each precision.
-    - `f16.rs` includes runtime detection of **F16C** and **AVX** features for high-speed half-precision compute.
-- **`src/cpu/ops/relu/`**: Optimized activation kernels using AVX/NEON/SWAR.
-- **`src/cpu/elementwise.rs`**: Parallel elementwise kernels.
-
-### 🎮 Vulkan Backend (`src/backend.rs`)
-- **`src/backend.rs`**: The heart of the GPU engine. Uses the `ash` crate for raw Vulkan control. Manages command pools, pipeline layouts, descriptor sets, and the ASH-to-SPIR-V execution flow.
-
-### 💿 SSD & Streaming (MERA-System)
-- **`src/streaming.rs`**: Prefetching and budget management for out-of-core models.
-- **`src/tensor/msts.rs`**: "Mera Style Tiling System". The logic that allows a tensor to reside on an SSD and be processed tile-by-tile.
-- **`src/io_uring_engine.rs`**: High-performance Linux I/O using `io_uring` and `O_DIRECT`.
-
-### ⛓ Scheduler & Utilities
-- **`src/crook_scheduler.rs`**: The "Asynchronous Work-Stealing Queue". It prevents the CPU from waiting for the GPU by letting them pull work tiles independently.
-- **`src/buf_pool.rs`**: A non-blocking Vulkan buffer recycler to minimize allocation latency.
-- **`src/swar_int8.rs`**: "SIMD Within A Register" logic for 8-bit integer math on CPUs that lack native 8-bit SIMD support.
-- **`src/tiling_cpu.rs`**: Helpers for dividing large matrices into cache-friendly CPU tiles.
-- **`src/prng.rs`**: Thread-safe random number generator for `randn()` etc.
+OxTorch (project dir: `vulkannn_rusted`) is built on the philosophy of **asynchronous, deterministic dataflow**. Inspired by the MERA-400 minicomputer, the engine treats hardware as a collection of asynchronous processing units that pull work from a unified stream.
 
 ---
 
-## 2. Vulkan Backend (Raw ash, Vulkan 1.2)
+## 1. Source Map (`.rs` files)
 
-Source: `src/backend.rs`
+### Module Entry & API
+- **`src/lib.rs`**: Root of the crate. Defines the PyO3 `#[pymodule]` and exposes `Tensor`, `DataType` to Python as `import vulkannn_rusted`.
+- **`src/tensor/mod.rs`**: Defines the `Tensor` struct — main user handle. Manages shape, device, dtype metadata.
 
-The GPU backend was rewritten in v3.7.0 (The BitNet Leapfrog)),
-providing explicit control over every GPU resource.
+### Tensor Orchestration
+- **`src/tensor/linalg.rs`**: High-level linear algebra dispatcher. Routes MatMul and BitLinear to CPU or GPU.
+- **`src/tensor/constructors.rs`**: Tensor creation from memory, SSD, zeros, random data. BitNet ternary quantization logic.
+- **`src/tensor/storage.rs`**: Tri-Precision backbone. Defines how F32, F16, BF16, Int8, and Ternary data are stored in raw byte vectors.
+- **`src/tensor/access.rs`**: Raw memory access, slicing, zero-copy views. Handles SSD tensor data traversal.
+- **`src/tensor/ops.rs`**: Dispatcher for elementwise operations (Add, Mul, Sub, scalar ops).
+- **`src/tensor/reductions.rs`**: Dispatcher for Sum, Mean, Max, Softmax.
+- **`src/tensor/msts.rs`**: MSTS (Mera Style Tiling System) — tile-based streaming for SSD-resident tensors.
+- **`src/tensor/types.rs`**: `DataType` enum (F32, F16, BF16, Int8, Ternary).
+
+### CPU Backend (`src/cpu/`)
+- **`src/cpu/mod.rs`**: Entry point; re-exports ops and SIMD conversions.
+- **`src/cpu/conversions.rs`**: F16/BF16 ↔ F32 conversion via F16C/SSE2/NEON/scalar dispatch.
+- **`src/cpu/tiling_cpu.rs`**: Helpers for dividing large matrices into cache-friendly tiles.
+- **`src/cpu/ops/matmul/`**: `f32.rs`, `f16.rs`, `bf16.rs`, `i8.rs` — precision-specific SIMD MatMul.
+- **`src/cpu/ops/unary/`**: `relu/`, `gelu/`, `sigmoid/`, `silu/`, `softmax/` — per-dtype activation kernels. Each dtype has its own file (e.g., `gelu_i8.rs`, `relu_f16.rs`).
+- **`src/cpu/ops/reduction/softmax/`**: Softmax; `softmax_i8.rs` uses dequantized F32 computation.
+- **`src/cpu/ops/binary/`**: Element-wise binary ops (mul, sub, div, scalar).
+- **`src/cpu/ops/bit_linear.rs`**: Rayon-parallelized BitNet 1.58b linear kernel.
+
+### Vulkan Backend
+- **`src/backend.rs`**: Heart of the GPU engine. Raw Vulkan 1.2 via `ash`. Manages command pools, pipelines, descriptor sets, buffer cache, and timeline semaphore.
+
+### SSD & Streaming
+- **`src/streaming.rs`**: RAM budget detection, prefetcher init, background SSD read thread.
+- **`src/io_uring_engine.rs`**: Linux `io_uring` + `O_DIRECT` for direct DMA reads without page cache.
+- **`src/crook_scheduler.rs`**: Asynchronous Work-Stealing Queue. `StatefulTile` ring buffer; CAS-based tile state transitions.
+
+### Utilities
+- **`src/buf_pool.rs`**: Non-blocking Vulkan buffer recycler.
+- **`src/prng.rs`**: Thread-safe RNG (Xoshiro256++).
+
+---
+
+## 2. Python Layer (`oxtorch/`)
+
+The `oxtorch` Python package is a **transparent PyTorch drop-in**. It lives inside `vulkannn_rusted/oxtorch/` and is **completely separate** from the compiled Rust extension.
+
+```
+vulkannn_rusted/oxtorch/__init__.py   ← module-level dispatcher + fallback
+vulkannn_rusted/oxtorch/tensor.py     ← OxTorchTensor proxy class
+```
+
+```
+import oxtorch as torch
+       │
+       ▼
+  oxtorch/__init__.py
+       │
+       ├── op natively in vulkannn_rusted? ──► Rust kernel (Vulkan/CPU SIMD)
+       │
+       └── not implemented? ─────────────────► __getattr__ fallback:
+                                               tensor → numpy → real torch → back
+```
+
+**Why the names are different:** `oxtorch` is the user-facing Python package; `vulkannn_rusted` is the compiled Rust extension it uses internally. Keeping them distinct prevents naming collisions when doing `import oxtorch as torch` (which would otherwise shadow the folder itself).
+
+---
+
+## 3. Vulkan Backend (`src/backend.rs`)
 
 The `AshBackend` singleton (held in `OnceLock`) contains:
 - Physical and logical Vulkan device
 - Separate compute and transfer command pools
-- Pre-built descriptor set layouts and compute pipelines (add, matmul, relu, sigmoid, silu)
-- A `timeline_semaphore` for async operation tracking
-- `pending_ops: Mutex<Vec<AsyncOp>>` — tracks in-flight GPU work for staged cleanup
-- `buffer_cache: Mutex<Vec<CachedBuffer>>` — recycles GPU buffers to avoid per-dispatch allocation
+- Pre-built descriptor set pools and pipelines (matmul, relu, sigmoid, silu, gelu, elementwise, softmax, bit_linear)
+- `timeline_semaphore` for async operation tracking
+- `pending_ops: Mutex<Vec<AsyncOp>>` — tracks in-flight GPU work
+- `buffer_cache: Mutex<Vec<CachedBuffer>>` — pool of recycled GPU buffers
+- `pool_buffer` — 1GB dedicated VRAM pool for device buffers
 
-Shaders are WGSL sources compiled to SPIR-V at build time by `naga` in `build.rs`.
+Shaders are WGSL/GLSL sources compiled to SPIR-V at build time by `naga` in `build.rs`.
 
-### Pipeline Execution Flow (single op)
+### Pipeline Execution Flow
 
-1. Acquire input/output buffers from cache (or allocate)
+1. Acquire input/output device buffers from cache (or allocate from pool)
 2. Acquire CPU-visible staging buffers
-3. Upload: copy input bytes to staging, then `cmd_copy_buffer` staging -> device buffer
-4. Pipeline barrier: `TRANSFER_WRITE` -> `SHADER_READ`
+3. Upload: copy bytes to staging, then `cmd_copy_buffer` staging → device buffer
+4. Pipeline barrier: `TRANSFER_WRITE` → `SHADER_READ`
 5. Bind descriptor set, dispatch compute shader
-6. Pipeline barrier: `SHADER_WRITE` -> `TRANSFER_READ`
-7. `cmd_copy_buffer` device buffer -> staging out
-8. Submit to compute queue; for async path: signal timeline semaphore
+6. Pipeline barrier: `SHADER_WRITE` → `TRANSFER_READ`
+7. `cmd_copy_buffer` device buffer → staging
+8. Submit to compute queue, signal Timeline Semaphore
 9. After semaphore wait: `download_from_stage` copies staging bytes to output
 
 ---
 
-## 3. MSTS Tile-Pulling Hybrid Dispatch
+## 4. MSTS Tile-Pulling Hybrid Dispatch
 
 Source: `src/tensor/mod.rs` (unary_op hybrid branch), `src/crook_scheduler.rs`
 
-Inspired by the MERA-400's clockless asynchronous architecture and the Tagged-Token Dataflow
-model of the CROOK OS, the MSTS dispatcher eliminates static CPU/GPU work splits.
+Inspired by the MERA-400's clockless asynchronous architecture, MSTS eliminates static CPU/GPU work splits.
 
-### Activation Tile-Pulling (Phase 4)
-
-For `device="hybrid"` activation functions:
+### In-Memory Tile Pulling (activations, device="hybrid")
 
 ```
-total_elements -> N tiles of 256K elements each
+total_elements → N tiles of 256K elements each
 tile_counter = Arc<AtomicUsize>(0)
 
 Rayon scope:
-  [GPU dispatcher thread]:  loop { tile_id = tile_counter.fetch_add(1); dispatch to Vulkan }
-  [CPU SWAR thread]:        loop { tile_id = tile_counter.fetch_add(1); compute with SIMD }
+  [GPU dispatcher]:  loop { tile_id = tile_counter.fetch_add(1); dispatch to Vulkan }
+  [CPU SIMD thread]: loop { tile_id = tile_counter.fetch_add(1); compute with SIMD }
 ```
 
-Each thread independently claims the next unclaimed tile. There is no negotiation, no lock,
-and no predetermined split. Whichever resource finishes faster claims more work.
+Each thread independently claims the next tile. No locks. No predetermined split.
 
-**GPU threshold**: if `num_elements < 4_194_304` (4M = ~16MB F32), the GPU dispatcher thread
-is not spawned. Bonaire PCIe round-trip overhead (~80ms) makes Vulkan uncompetitive on small
-tensors.
+**GPU threshold**: if `num_elements < 4_194_304` (4M = ~16MB F32), the GPU dispatcher is not spawned. Bonaire PCIe round-trip overhead (~80ms) makes Vulkan uncompetitive on small tensors.
 
-### StatefulTile Ring Buffer (SSD streaming)
+### SSD Streaming (device="ssd")
 
-Source: `src/crook_scheduler.rs`
-
-A ring of 1MB-aligned `StatefulTile` structures drives SSD-to-RAM streaming for out-of-core
-tensors. Each tile transitions atomically through states:
+A ring of 1MB-aligned `StatefulTile` structures drives disk-to-RAM streaming. Each tile transitions atomically:
 
 ```
-EMPTY -> LOADING -> READY_CPU -> READY_GPU -> GPU_COMPUTING -> GPU_DONE -> EMPTY
+EMPTY → LOADING → READY_FOR_COMPUTE → COMPUTING → READY_FOR_WRITE → EMPTY
 ```
 
-Separate io_uring threads fill tiles from disk while CPU/GPU workers consume them.
-No mutex is used in the hot path; all transitions are Compare-And-Swap.
+`io_uring` threads fill tiles from disk while compute workers consume them. All transitions are Compare-And-Swap — no mutex in the hot path.
 
 ---
 
-## 4. SIMD Conversion Dispatch
+## 5. SIMD Conversion Dispatch
 
 Source: `src/cpu/conversions.rs`
 
-All F16/BF16 <-> F32 conversion is handled by one of four paths, selected at runtime:
-
-| Condition | F16<->F32 | BF16<->F32 |
+| Condition | F16↔F32 | BF16↔F32 |
 |:---|:---|:---|
-| x86_64 + F16C + AVX | `_mm256_cvtps_ph` / `_mm256_cvtph_ps` | SSE2 round-to-nearest-even |
+| x86_64 + F16C + AVX | F16C intrinsics (`_mm256_cvtps_ph`) | SSE2 round-to-nearest-even |
 | x86_64 + SSE2 only | SWAR branchless bit-manipulation | SSE2 round-to-nearest-even |
-| AArch64 | NEON `vcvt_f16_f32` / `vcvt_f32_f16` | NEON shift trick |
-| Other | Rayon scalar `from_f32` / `to_f32` | Rayon scalar |
+| AArch64 | NEON `vcvt_f16_f32` | NEON shift trick |
+| Other | Rayon scalar (`from_f32` / `to_f32`) | Rayon scalar |
 
-The i5-3450 (Ivy Bridge) has both AVX and F16C, so it uses the fastest x86_64 path
-for F16 and the SSE2 path for BF16 (AVX2 not available on Ivy Bridge).
+Runtime dispatch via `is_x86_feature_detected!()` — no compile-time flags needed.
+
+The i5-3450 (Ivy Bridge) has both AVX and F16C → fastest x86_64 path for F16, SSE2 for BF16 (no AVX2).
 
 ---
 
-## 5. SSD Streaming (io_uring + O_DIRECT)
+## 6. SSD Streaming (io_uring + O_DIRECT)
 
 Source: `src/io_uring_engine.rs`
 
-`DirectIoEngine` wraps a Linux `io_uring` instance with `O_DIRECT` file access.
-This bypasses the kernel VFS page cache entirely, streaming data at the disk controller's
-DMA rate directly into user-space buffers aligned to 1MB ZFS recordsize boundaries.
-No page faults, no kernel-to-user copies.
+`DirectIoEngine` wraps a Linux `io_uring` instance with `O_DIRECT` file access. Bypasses the kernel VFS page cache entirely, streaming at the disk controller's DMA rate into user-space buffers aligned to 1MB ZFS recordsize boundaries. No page faults, no kernel-to-user copies.
 
-For the 16GB Monster ReLU benchmark: ~46.6 seconds for 4 billion F32 elements at ~86MB/s
-effective throughput from the ZFS pool.
+For the 16GB Monster ReLU benchmark: ~46.6s for 4B F32 elements at ~86MB/s effective throughput.
 
 ---
 
-## 6. Data Flow Diagram
+## 7. Data Flow Diagram
 
 ```mermaid
 graph TD
@@ -158,13 +164,13 @@ graph TD
     B -- Yes --> C[Tensor.unary_op / matmul]
     B -- No --> Z[Fallback: numpy → real PyTorch → wrap back]
     C --> D{device?}
-    D -- cpu --> E[matrixmultiply sgemm / Rayon SIMD]
+    D -- cpu --> E[CPU SIMD kernels / matrixmultiply sgemm]
     D -- vulkan --> F[AshBackend]
-    D -- hybrid --> G[MSTS tile counter AtomicUsize]
-    G -- tile claimed by GPU --> F
-    G -- tile claimed by CPU --> E
+    D -- hybrid --> G[MSTS AtomicUsize tile counter]
+    G -- GPU tile --> F
+    G -- CPU tile --> E
     D -- ssd --> H[DirectIoEngine io_uring O_DIRECT]
-    H --> I[StatefulTile ring buffer]
+    H --> I[StatefulTile CAS ring buffer]
     I --> E
     F --> J[Vulkan Timeline Semaphore]
     J --> K[staging buffer download]
@@ -175,32 +181,12 @@ graph TD
 
 ---
 
-## 7. Benchmark Harness
+## 8. Benchmark Suite
 
-### Atomized Suite (`tests/benchmarks/`)
+The primary benchmark system is the **Atomized Suite** in `tests/benchmarks/`. Each benchmark is a self-contained Python script testing one op/dtype/backend combination.
 
-Phase 6 introduced 105 self-contained benchmark scripts, each covering one op/dtype/backend combination.
-Results are written to `tests/results/<name>.json` and printed live:
-
-```
->>> TEST: MatMul_f16_vulkan (VULKAN, F16) | Shape: (2048, 2048) | Iter: 2
-    [PyTorch]  4.6100s
-    [OxTorch]  0.1999s | Ratio: 0.04x (OxTorch FASTER) | Parity: ✅ PASS (max_diff=2.50e-01)
-[benchmark] Result saved to tests/results/matmul_f16_vulkan.json
-```
-
-Run all benchmarks:
 ```bash
 PYTHONPATH=/path/to/vulkannn_rusted python tests/run_all_benchmarks.py
 ```
 
-### Statistical Suite (`tests/unified_benchmark.py`)
-
-Multi-run audit with per-test tracking of Median, Mean, StdDev, and OxTorch/PyTorch ratio.
-Results written to `tests/last_results.json` and `tests/benchmark_history.log`.
-
-Parity tolerances:
-- F32: `atol=1e-4`
-- F16: `atol=0.1`
-- BF16: `atol=1.0` (7-bit mantissa accumulation error on 2k MatMul)
-- INT8: `atol=2.0` (integer accumulation rounding)
+See [how_we_test.md](how_we_test.md) for a full description.

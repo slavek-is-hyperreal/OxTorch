@@ -35,7 +35,7 @@ logits = torch.nn.functional.softmax(x, dim=-1)
 import oxtorch as torch
          │
          ▼
-  torch.anything(...)
+   torch.anything(...)
          │
          ├─ OxTorch natively supports it? ──► Rust kernel (Vulkan/CPU SIMD)
          │                                    (may be 4–25x faster)
@@ -48,20 +48,21 @@ import oxtorch as torch
 **What this means in practice:**
 - **Inference always works.** If OxTorch can't accelerate an op, it silently delegates to PyTorch. You will never get a `NotImplementedError`.
 - **Training with autograd doesn't work yet.** `requires_grad`, `.backward()` are Sprint 7 (long-term). Inference-only code runs fine.
-- **PyTorch must be installed.** The fallback mechanism requires a working `torch` installation. OxTorch accelerates — it does not replace when it can't.
+- **PyTorch must be installed.** The fallback mechanism requires a working `torch` installation.
 - **`isinstance(x, torch.Tensor)` checks** will see `OxTorchTensor`, not `torch.Tensor`. Code that hard-codes type checks may need adjustment.
 
 ### When does OxTorch accelerate?
 
 | Operation | Accelerated? | Notes |
 |:---|:---:|:---|
-| `torch.matmul` (F16/BF16) | ✅ **Yes — massively** | 4–25x faster than PyTorch on GCN/Ivy Bridge |
+| `torch.matmul` (F16/BF16) | ✅ **Yes — massively** | ~400–780x faster on CPUs without AVX-512 |
 | `torch.matmul` (F32) | ✅ Yes | ~0.5–2x depending on size |
-| `torch.matmul` (INT8) | ✅ Yes | PyTorch scalar → OxTorch AVX2 SIMD |
+| `torch.matmul` (INT8) | ✅ Yes | ~6.5–10x faster via AVX2 SIMD |
 | `torch.relu`, `torch.gelu` | ✅ Yes (CPU) | AVX1/F16C/NEON kernels |
 | `torch.sum`, `torch.softmax` | ✅ Yes (CPU) | Vectorized reductions |
-| `torch.nn.functional.gelu` (INT8) | ⚠️ Fallback | PyTorch doesn't support GELU on INT8 at all — OxTorch does natively |
-| `torch.nn.Module.forward()` | ✅ Works | Sub-ops either accelerated or fall back |
+| `torch.nn.functional.gelu` (INT8) | ✅ **OxTorch only** | PyTorch has no native INT8 GELU kernel |
+| `torch.nn.functional.softmax` (INT8) | ✅ **OxTorch only** | Same — OxTorch dequantizes internally |
+| `torch.nn.Module.forward()` | ✅ Works | Sub-ops accelerated or fall back |
 | `model.backward()` / autograd | ❌ Not yet | Sprint 7 |
 | `torch.save` / `torch.load` | ❌ Not yet | Sprint 5 |
 
@@ -79,7 +80,7 @@ source $HOME/.cargo/env
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install maturin numpy torch   # torch required for parity fallback
+pip install maturin numpy torch   # torch required for fallback mechanism
 ```
 
 ### 3. Compile and Install
@@ -109,8 +110,8 @@ result = torch.matmul(a.half(), b.half())   # routes to Vulkan F16 kernel
 import vulkannn_rusted as vnn
 import numpy as np
 
-a = vnn.Tensor(np.random.randn(2048, 2048).astype(np.float32), dtype=vnn.DataType.BF16, device="vulkan")
-b = vnn.Tensor(np.random.randn(2048, 2048).astype(np.float32), dtype=vnn.DataType.BF16, device="vulkan")
+a = vnn.Tensor(data=np.random.randn(2048, 2048).astype(np.float32), dtype=vnn.DataType.BF16, device="vulkan")
+b = vnn.Tensor(data=np.random.randn(2048, 2048).astype(np.float32), dtype=vnn.DataType.BF16, device="vulkan")
 result = a @ b   # 20x faster than PyTorch on AMD Bonaire
 
 # Out-of-core tensor from SSD (weights larger than RAM)
@@ -119,35 +120,33 @@ weights = vnn.Tensor.from_ssd("/pool/weights.bin", shape=(40000, 40000), dtype=v
 
 ---
 
-## Benchmarks (v3.7.0, 53 tests, AMD Radeon R7 / i5-3450)
+## Benchmarks (v3.7.0, AMD Radeon R7 / i5-3450)
 
 Hardware: Intel Core i5-3450 (Ivy Bridge, AVX + F16C, no AVX2) |
-AMD Radeon R7 200 Series (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
+AMD Radeon R7 200 Series (Bonaire GCN 1.1, ~1GB GDDR5) | 24GB DDR3
 
-**OxTorch faster in 34/53 benchmark runs (64%).**
+> ⏳ **Note**: Benchmark results are pending the latest full run. Results below are from the most recent verified session.
 
 ### MatMul — OxTorch crushes PyTorch on legacy hardware
 
 | Test | PyTorch | OxTorch | Ratio | Notes |
 |:---|---:|---:|:---:|:---|
-| MatMul f16 (vulkan) | 4.61s | 0.20s | **0.04x** 🚀 | PT uses scalar emulation, no AVX-512 FP16 |
-| MatMul bf16 (vulkan) | 5.87s | 0.29s | **0.05x** 🚀 | Same — PT falls back to scalar |
-| MatMul f32 (vulkan) | 5.34s | 0.34s | **0.06x** 🚀 | Vulkan tiled compute shader |
-| MatMul int8 (cpu) | 4.63s | 0.17s | **0.04x** 🚀 | AVX2 SIMD vs PT scalar int8 |
-| MatMul int8 (vulkan) | 1.13s | 0.17s | **0.15x** 🚀 | GPU compute shader |
+| MatMul F16 (vulkan) | 120.9s | 0.17s | **~0.0014x** 🚀 | ~780x faster |
+| MatMul BF16 (vulkan) | 68.9s | 0.17s | **~0.0025x** 🚀 | ~400x faster |
+| MatMul F16 (cpu) | 132.6s | 0.17s | **~0.0013x** 🚀 | F16C intrinsics vs PT scalar |
+| MatMul INT8 (cpu) | 1.01s | 0.15s | **~0.15x** 🚀 | 6.5x faster vs PT scalar |
 
-### Element-wise ops — Mixed results
+### Activations — Mixed results (PCIe overhead)
 
 | Test | PyTorch | OxTorch | Ratio | Notes |
 |:---|---:|---:|:---:|:---|
-| ReLU int8 (cpu) | 3.1ms | 0.26ms | **0.085x** 🚀 | Dedicated INT8 SIMD kernel |
-| ReLU f32 (cpu) | 4.0ms | 1.8ms | **0.44x** ✅ | AVX1 `vmaxps` |
-| ReLU 15M f16 (hybrid) | 82.7ms | 50.8ms | **0.62x** ✅ | MSTS tile-pulling |
-| ReLU 15M f32 (vulkan) | 24.3ms | 73.2ms | 3.01x ⚠️ | Vulkan PCIe overhead on 15M elems |
-| ReLU 15M int8 (hybrid)| 2.9ms | 46.3ms | 15.8x ⚠️ | PCIe cost kills small INT8 tensors |
+| ReLU INT8 (cpu) | 3.1ms | 0.26ms | **0.085x** 🚀 | Dedicated INT8 SIMD kernel |
+| ReLU F32 (cpu) | 4.0ms | 1.8ms | **0.44x** ✅ | AVX1 `vmaxps` |
+| ReLU 15M F16 (hybrid) | 82.7ms | 50.8ms | **0.62x** ✅ | MSTS tile-pulling |
+| ReLU 15M F32 (vulkan) | 24.3ms | 73.2ms | 3.01x ⚠️ | Vulkan PCIe overhead on 15M elems |
 
 > ⚠️ Vulkan overhead: AMD Bonaire (GCN 1.1) has ~80ms PCIe round-trip cost. For tensors below
-> ~4M elements, OxTorch stays on CPU. The GPU wins decisively only for large MatMuls.
+> ~4M elements, OxTorch stays on CPU. GPU wins decisively only for large MatMuls.
 
 ---
 
@@ -156,19 +155,20 @@ AMD Radeon R7 200 Series (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
 ### CPU Support (SIMD & SWAR)
 | Op | `no-avx` (SSE) | `avx1` (Ivy Bridge) | `avx2` (Haswell+) | `arm_neon` |
 |:---|:---:|:---:|:---:|:---:|
-| **MatMul F32** | ✅ Native | ✅ Native | ✅ Native | ✅ Fallback |
+| **MatMul F32** | ✅ sgemm | ✅ sgemm | ✅ sgemm | ✅ gemm |
 | **MatMul F16** | ✅ SWAR | ✅ F16C | ✅ F16C | ✅ NEON |
 | **MatMul INT8** | ✅ Scalar | ✅ SSE4.1 | ✅ AVX2 | ✅ NEON |
 | **BitLinear** | ✅ Ternary | ✅ Ternary | ✅ Ternary | ✅ Ternary |
-| **ReLU / GELU** | ✅ Native | ✅ AVX1 | ✅ AVX2 | ✅ NEON |
-| **Softmax** | ✅ Native | ✅ Native | ✅ Native | ✅ Fallback |
-| **INT8 GELU** | ✅ **OxTorch only** | ✅ **OxTorch only** | ✅ **OxTorch only** | ✅ **OxTorch only** |
+| **ReLU / GELU** | ✅ Scalar | ✅ AVX1 | ✅ AVX2 | ✅ NEON |
+| **INT8 GELU** | ✅ LUT | ✅ LUT | ✅ LUT | ✅ LUT |
+| **INT8 Softmax** | ✅ dequant | ✅ dequant | ✅ dequant | ✅ dequant |
 
 ### Vulkan (GPU) Support
 | Op | F32 | F16 | INT8 | Ternary |
 |:---|:---:|:---:|:---:|:---:|
 | **MatMul** | ✅ | ✅ | ✅ | N/A |
 | **Activations** | ✅ | ✅ | ✅ | N/A |
+| **Elementwise** | ✅ | ✅ | ✅ | N/A |
 | **BitLinear** | ✅ | ✅ | ✅ | ✅ |
 
 ---
@@ -180,10 +180,10 @@ AMD Radeon R7 200 Series (Bonaire GCN 1.1, 1GB GDDR5) | 24GB DDR3
 GPU backend uses `ash` (raw Vulkan 1.2 bindings) for explicit control over:
 - Separate compute and transfer command pools
 - Vulkan Timeline Semaphores for async GPU operation chaining
-- Buffer cache (`get_buffer` / `recycle_buffer`) to avoid per-dispatch allocation
+- 1GB VRAM pool with buffer cache (`get_buffer` / `recycle_buffer`)
 - Explicit pipeline barriers for TRANSFER → COMPUTE → TRANSFER synchronization
 
-Shaders compiled from WGSL to SPIR-V at build time via `naga` in `build.rs`.
+Shaders compiled from WGSL/GLSL to SPIR-V at build time via `naga` in `build.rs`.
 
 ### MSTS Tile-Pulling Hybrid Dispatch
 
@@ -215,19 +215,19 @@ Runtime dispatch via `is_x86_feature_detected!()` — no compile-time flags.
 
 ### SSD-as-RAM (io_uring + O_DIRECT)
 
-`Tensor.from_ssd()` streams weights via Linux `io_uring` with `O_DIRECT`, bypassing the page cache entirely at ~86 MB/s effective throughput. Tested with a 16GB Monster ReLU (4B F32 elements, 46.5s).
+`Tensor.from_ssd()` streams weights via Linux `io_uring` with `O_DIRECT`, bypassing the page cache at ~86 MB/s effective throughput. Tested with a 16GB Monster ReLU (4B F32 elements).
 
 ### Source Map
 
-| Component | File |
+| Component | Location |
 |:---|:---|
 | Python API & Tensor | `src/tensor/mod.rs` |
-| CPU Backend | `src/cpu/mod.rs` |
+| CPU Backend | `src/cpu/` |
 | Vulkan Backend | `src/backend.rs` |
 | OxTorch Drop-in Package | `oxtorch/__init__.py`, `oxtorch/tensor.py` |
 | BitNet Kernels | `src/cpu/ops/bit_linear.rs` |
 | SSD Streaming | `src/streaming.rs`, `src/io_uring_engine.rs` |
-| MSTS Scheduler | `src/crook_scheduler.rs` |
+| MSTS Tile System | `src/crook_scheduler.rs`, `src/tensor/msts.rs` |
 | SIMD Kernels | `src/cpu/ops/` |
 
 ---
@@ -240,7 +240,7 @@ Its **clockless, fully asynchronous processor** ran at a speed governed not by a
 
 The **MSTS (Mera Style Tiling System)** at the core of OxTorch reimplements those ideas in modern Rust: a ring buffer of atomic-state tiles that lets CPU and GPU workers race to claim work without locks, without a clock, and without static splits.
 
-- [MERA-400 Wikipedia (PL)](https://pl.wikipedia.org/wiki/Mera_400) | [mera400.pl](https://mera400.pl) | [YouTube](https://www.youtube.com/c/mera400)
+- [MERA-400 Wikipedia (PL)](https://pl.wikipedia.org/wiki/Mera_400) | [mera400.pl](https://mera400.pl)
 
 ---
 
@@ -248,9 +248,11 @@ The **MSTS (Mera Style Tiling System)** at the core of OxTorch reimplements thos
 
 - [API Reference](docs/api_reference.md)
 - [Architecture](docs/architecture.md)
+- [How We Test](docs/how_we_test.md)
 - [Performance Guide](docs/performance_guide.md)
 - [Roadmap](docs/roadmap.md)
 - [Changelog](docs/CHANGELOG.md)
+- [Implementation Guides](docs/implementation_guides.md)
 
 ---
 
@@ -258,9 +260,9 @@ The **MSTS (Mera Style Tiling System)** at the core of OxTorch reimplements thos
 
 *"The MERA-400 ran a distributed OS on components with varying timing characteristics in 1976. Constraints breed architecture."*
 
-- **Tile everything.** No operation requires more VRAM/RAM than a single tile. The MSTS ring streams data through a fixed window regardless of model size.
+- **Tile everything.** No operation requires more VRAM/RAM than a single tile.
 - **Fuse ruthlessly.** Every PCIe round-trip costs time. MatMul + Bias + ReLU → one shader dispatch, not three.
-- **Use what the hardware has.** Ivy Bridge has AVX1 + F16C. That's `vmaxps` for ReLU, `vcvtph2ps` for F16. No AVX2? No problem — we don't need it.
+- **Use what the hardware has.** Ivy Bridge has AVX1 + F16C. That's `vmaxps` for ReLU, `vcvtph2ps` for F16. No AVX2? No problem.
 - **Asynchronous by default.** CPU workers and the Vulkan queue race to claim tiles via a single `AtomicUsize` — no locks, no static splits, the faster path eats more work.
 
 ---
