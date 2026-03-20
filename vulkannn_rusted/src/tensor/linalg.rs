@@ -68,7 +68,7 @@ impl Tensor {
                  "sigmoid" => 2,
                  _ => 0,
              };
-             crate::backend::execute_linear_into(a_raw, b_raw, bias_raw, out_raw, m as u32, k as u32, n as u32, act_type, input.dtype);
+             crate::backend::execute_linear_into(a_raw, b_raw, bias_raw, out_raw, m as u32, k as u32, n as u32, act_type, 1, input.dtype);
         }
         Ok(res)
     }
@@ -120,7 +120,7 @@ impl Tensor {
              let (a_raw, _) = self.get_slice_raw_bytes();
              let (b_raw, _) = other.get_slice_raw_bytes();
              let (out_raw, _) = res.get_slice_raw_mut_bytes();
-             crate::backend::execute_linear_into(a_raw, b_raw, &[], out_raw, m as u32, k as u32, n as u32, 0, self.dtype);
+             crate::backend::execute_matmul_into(a_raw, b_raw, out_raw, m as u32, k as u32, n as u32, self.dtype);
         }
         Ok(res)
     }

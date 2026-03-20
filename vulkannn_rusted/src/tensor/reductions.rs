@@ -83,7 +83,10 @@ impl Tensor {
             let (a_raw, _) = self.get_slice_raw_bytes();
             let blocks = crate::backend::execute_reduce(a_raw, op, self.dtype);
             let val = match op {
-                "sum" => blocks.iter().sum::<f32>(),
+                "sum" => {
+                    let s: f64 = blocks.iter().map(|&x| x as f64).sum();
+                    s as f32
+                },
                 "mean" => blocks.iter().sum::<f32>() / (self.shape.iter().product::<usize>() as f32),
                 _ => blocks[0], 
             };

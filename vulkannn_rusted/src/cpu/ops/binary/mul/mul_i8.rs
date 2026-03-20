@@ -38,9 +38,6 @@ unsafe fn mul_i8_avx2(a: &[i8], b: &[i8], res: &mut [i8]) {
         
         let lo_a = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(va));
         let hi_a = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(va, 1));
-        let lo_b = _mm256_cvtepi8_epi16(_mm256_castsi128_si256(_mm256_castsi256_si128(vb)));
-        
-        // Correct unpack for B
         let lo_b = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(vb));
         let hi_b = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(vb, 1));
         

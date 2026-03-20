@@ -6,7 +6,7 @@ pub fn sum_bf16(buf: &[half::bf16]) -> f32 {
     const PAR_LIMIT: usize = 128_000;
     if buf.len() > PAR_LIMIT {
         use rayon::prelude::*;
-        return buf.par_chunks(PAR_LIMIT).map(|chunk| sum_bf16_serial(chunk)).sum();
+        return buf.par_chunks(PAR_LIMIT).map(|chunk| sum_bf16_serial(chunk) as f64).sum::<f64>() as f32;
     }
     sum_bf16_serial(buf)
 }
@@ -15,7 +15,7 @@ fn sum_bf16_serial(buf: &[half::bf16]) -> f32 {
     #[cfg(target_arch = "x86_64")] {
         if is_x86_feature_detected!("avx") { return unsafe { sum_bf16_avx(buf) }; }
     }
-    buf.iter().map(|x| x.to_f32()).sum()
+    buf.iter().map(|x| x.to_f32() as f64).sum::<f64>() as f32
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -32,5 +32,5 @@ unsafe fn sum_bf16_avx(buf: &[half::bf16]) -> f32 {
         sum_v = _mm256_add_ps(sum_v, f_vec);
     }
     let mut tmp = [0.0f32; 8]; _mm256_storeu_ps(tmp.as_mut_ptr(), sum_v);
-    let mut s = tmp.iter().sum::<f32>(); for &x in &buf[n8..] { s += x.to_f32(); } s
+    let mut s = tmp.iter().map(|&x| x as f64).sum::<f64>(); for &x in &buf[n8..] { s += x.to_f32() as f64; } s as f32
 }

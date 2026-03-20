@@ -48,6 +48,7 @@ pub struct AshBackend {
     pub pipe_layout_reduce: vk::PipelineLayout,
     pub pipe_layout_elementwise: vk::PipelineLayout,
     pub pipe_layout_linear: vk::PipelineLayout,
+    pub pipe_layout_matmul: vk::PipelineLayout,
     pub pipe_layout_bit_linear: vk::PipelineLayout,
     
     #[allow(dead_code)]
@@ -55,6 +56,7 @@ pub struct AshBackend {
     pub pipe_relu: vk::Pipeline,
     pub pipe_softmax: vk::Pipeline,
     pub pipe_linear: vk::Pipeline,
+    pub pipe_matmul: vk::Pipeline,
     pub pipe_bit_linear: vk::Pipeline,
     pub pipe_sigmoid: vk::Pipeline,
     pub pipe_silu: vk::Pipeline,
@@ -78,6 +80,7 @@ pub struct AshBackend {
     pub pool_desc_reduce: Mutex<DescriptorSetPool>,
     pub pool_desc_elementwise: Mutex<DescriptorSetPool>,
     pub pool_desc_linear: Mutex<DescriptorSetPool>,
+    pub pool_desc_matmul: Mutex<DescriptorSetPool>,
     pub pool_desc_bit_linear: Mutex<DescriptorSetPool>,
     
     pub timeline_semaphore: vk::Semaphore,
@@ -328,6 +331,14 @@ pub fn init_backend() {
         ];
         let dsl_linear = unsafe { device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_linear), None) }.unwrap();
         
+        // DSL MatMul: 3 Storage
+        let bindings_matmul = [
+            vk::DescriptorSetLayoutBinding::default().binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default().binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default().binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
+        ];
+        let dsl_matmul = unsafe { device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_matmul), None) }.unwrap();
+        
         // DSL BitLinear: 5 Storage
         let bindings_bit_linear = [
             vk::DescriptorSetLayoutBinding::default().binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
@@ -350,8 +361,11 @@ pub fn init_backend() {
         let pc_elementwise_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];
         let pipe_layout_elementwise = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_elementwise]).push_constant_ranges(&pc_elementwise_range), None) }.unwrap();
 
-        let pc_linear_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];
+        let pc_linear_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(20)]; // Increased to 20 for transpose_b
         let pipe_layout_linear = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_linear]).push_constant_ranges(&pc_linear_range), None) }.unwrap();
+
+        let pc_matmul_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(12)];
+        let pipe_layout_matmul = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_matmul]).push_constant_ranges(&pc_matmul_range), None) }.unwrap();
 
         let pc_bit_linear_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];
         let pipe_layout_bit_linear = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_bit_linear]).push_constant_ranges(&pc_bit_linear_range), None) }.unwrap();
@@ -368,6 +382,7 @@ pub fn init_backend() {
         let sm_elementwise = load_shader(include_bytes!("shaders/elementwise.comp.spv"));
         let sm_softmax = load_shader(include_bytes!("shaders/softmax.wgsl.spv"));
         let sm_linear = load_shader(include_bytes!("shaders/linear.comp.spv"));
+        let sm_matmul = load_shader(include_bytes!("shaders/matmul_tiled.comp.spv"));
         let sm_bit_linear = load_shader(include_bytes!("shaders/bit_linear.comp.spv"));
 
         let entry_main = CString::new("main").unwrap();
@@ -394,6 +409,7 @@ pub fn init_backend() {
         let pipe_elementwise = create_pipe(sm_elementwise, &entry_main, pipe_layout_elementwise);
         let pipe_softmax = create_pipe(sm_softmax, &entry_main, pipe_layout_act);
         let pipe_linear = create_pipe(sm_linear, &entry_main, pipe_layout_linear);
+        let pipe_matmul = create_pipe(sm_matmul, &entry_main, pipe_layout_matmul);
         let pipe_bit_linear = create_pipe(sm_bit_linear, &entry_main, pipe_layout_bit_linear);
         let pipe_relu = create_pipe(sm_act, &entry_relu, pipe_layout_act);
         let pipe_sigmoid = create_pipe(sm_act, &entry_sigm, pipe_layout_act);
@@ -417,6 +433,7 @@ pub fn init_backend() {
             device.destroy_shader_module(sm_elementwise, None);
             device.destroy_shader_module(sm_softmax, None);
             device.destroy_shader_module(sm_linear, None);
+            device.destroy_shader_module(sm_matmul, None);
             device.destroy_shader_module(sm_bit_linear, None);
         }
 
@@ -452,6 +469,7 @@ pub fn init_backend() {
         let pool_desc_reduce = create_pool(dsl_reduce, 64);
         let pool_desc_elementwise = create_pool(dsl_elementwise, 64);
         let pool_desc_linear = create_pool(dsl_linear, 64);
+        let pool_desc_matmul = create_pool(dsl_matmul, 64);
         let pool_desc_bit_linear = create_pool(dsl_bit_linear, 32);
 
         // NEW: Phase 1 VRAM Pool Allocation
@@ -491,7 +509,10 @@ pub fn init_backend() {
             pool_desc_reduce: Mutex::new(pool_desc_reduce),
             pool_desc_elementwise: Mutex::new(pool_desc_elementwise),
             pool_desc_linear: Mutex::new(pool_desc_linear),
+            pool_desc_matmul: Mutex::new(pool_desc_matmul),
             pool_desc_bit_linear: Mutex::new(pool_desc_bit_linear),
+            pipe_layout_matmul,
+            pipe_matmul,
             pipe_layout_bit_linear,
             pipe_bit_linear,
             timeline_semaphore,
@@ -1235,7 +1256,7 @@ pub fn execute_softmax_into(input_raw: &[u8], output_raw: &mut [u8], width: u32,
     poll_async_ops();
 }
 
-pub fn execute_linear_into(a_raw: &[u8], b_raw: &[u8], bias_raw: &[u8], res_raw: &mut [u8], m: u32, k: u32, n: u32, act_type: u32, dtype: DataType) {
+pub fn execute_linear_into(a_raw: &[u8], b_raw: &[u8], bias_raw: &[u8], res_raw: &mut [u8], m: u32, k: u32, n: u32, act_type: u32, transpose_b: u32, dtype: DataType) {
     let backend = BACKEND.get().unwrap();
     let num_bytes_f32_a = (m * k * 4) as vk::DeviceSize;
     let num_bytes_f32_b = (k * n * 4) as vk::DeviceSize;
@@ -1292,7 +1313,7 @@ pub fn execute_linear_into(a_raw: &[u8], b_raw: &[u8], bias_raw: &[u8], res_raw:
         backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_linear);
         backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_linear, 0, &[set], &[]);
 
-        let pc_data = [m, k, n, act_type];
+        let pc_data = [m, k, n, act_type, transpose_b];
         backend.device.cmd_push_constants(cmd, backend.pipe_layout_linear, vk::ShaderStageFlags::COMPUTE, 0, bytemuck::cast_slice(&pc_data));
 
         backend.device.cmd_dispatch(cmd, (n + 15) / 16, (m + 15) / 16, 1);
@@ -1313,6 +1334,83 @@ pub fn execute_linear_into(a_raw: &[u8], b_raw: &[u8], bias_raw: &[u8], res_raw:
         backend.pending_ops.lock().unwrap().push(AsyncOp {
             staging_buffers: vec![stage_a, stage_b, stage_bias, stage_c.copy_for_async()],
             device_buffers: vec![buf_a, buf_b, buf_bias, buf_c],
+            cmd_buffer: cmd,
+            desc_set: set,
+            wait_id: wait_val,
+        });
+
+        let wait_info = vk::SemaphoreWaitInfo::default().semaphores(std::slice::from_ref(&backend.timeline_semaphore)).values(std::slice::from_ref(&wait_val));
+        backend.device.wait_semaphores(&wait_info, u64::MAX).unwrap();
+        download_from_stage(res_raw, &stage_c, dtype);
+    }
+
+    poll_async_ops();
+}
+
+pub fn execute_matmul_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], m: u32, k: u32, n: u32, dtype: DataType) {
+    let backend = BACKEND.get().unwrap();
+    let num_bytes_f32_a = (m * k * 4) as vk::DeviceSize;
+    let num_bytes_f32_b = (k * n * 4) as vk::DeviceSize;
+    let num_bytes_f32_c = (m * n * 4) as vk::DeviceSize;
+
+    let buf_a = get_buffer(num_bytes_f32_a, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("MatMul_A"), false);
+    let buf_b = get_buffer(num_bytes_f32_b, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("MatMul_B"), false);
+    let buf_c = get_buffer(num_bytes_f32_c, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("MatMul_C"), false);
+
+    let stage_a = get_buffer(num_bytes_f32_a, vk::BufferUsageFlags::TRANSFER_SRC, Some("MatMul_Stage_A"), true);
+    let stage_b = get_buffer(num_bytes_f32_b, vk::BufferUsageFlags::TRANSFER_SRC, Some("MatMul_Stage_B"), true);
+    let stage_c = get_buffer_readback(num_bytes_f32_c, vk::BufferUsageFlags::TRANSFER_DST, Some("MatMul_Stage_C"));
+
+    upload_to_stage(a_raw, &stage_a, dtype);
+    upload_to_stage(b_raw, &stage_b, dtype);
+
+    let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
+    unsafe {
+        backend.device.cmd_copy_buffer(cmd, stage_a.buffer, buf_a.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_a.pool_offset.unwrap_or(0), size: num_bytes_f32_a }]);
+        backend.device.cmd_copy_buffer(cmd, stage_b.buffer, buf_b.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_b.pool_offset.unwrap_or(0), size: num_bytes_f32_b }]);
+
+        let barriers = [
+            vk::BufferMemoryBarrier::default().buffer(buf_a.buffer).offset(buf_a.pool_offset.unwrap_or(0)).size(buf_a.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+            vk::BufferMemoryBarrier::default().buffer(buf_b.buffer).offset(buf_b.pool_offset.unwrap_or(0)).size(buf_b.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+        ];
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &barriers, &[]);
+
+        let set = backend.pool_desc_matmul.lock().unwrap().next();
+        let info_a = [vk::DescriptorBufferInfo::default().buffer(buf_a.buffer).offset(buf_a.pool_offset.unwrap_or(0)).range(buf_a.size)];
+        let info_b = [vk::DescriptorBufferInfo::default().buffer(buf_b.buffer).offset(buf_b.pool_offset.unwrap_or(0)).range(buf_b.size)];
+        let info_c = [vk::DescriptorBufferInfo::default().buffer(buf_c.buffer).offset(buf_c.pool_offset.unwrap_or(0)).range(buf_c.size)];
+
+        let writes = [
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_a),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_b),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_c),
+        ];
+        backend.device.update_descriptor_sets(&writes, &[]);
+
+        backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_matmul);
+        backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_matmul, 0, &[set], &[]);
+
+        let pc_data = [m, k, n];
+        backend.device.cmd_push_constants(cmd, backend.pipe_layout_matmul, vk::ShaderStageFlags::COMPUTE, 0, bytemuck::cast_slice(&pc_data));
+
+        backend.device.cmd_dispatch(cmd, (n + 15) / 16, (m + 15) / 16, 1);
+
+        let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_c.buffer).offset(buf_c.pool_offset.unwrap_or(0)).size(buf_c.size).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
+
+        backend.device.cmd_copy_buffer(cmd, buf_c.buffer, stage_c.buffer, &[vk::BufferCopy { src_offset: buf_c.pool_offset.unwrap_or(0), dst_offset: 0, size: num_bytes_f32_c }]);
+
+        backend.device.end_command_buffer(cmd).unwrap();
+        let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default().signal_semaphore_values(std::slice::from_ref(&wait_val));
+        let cmds = [cmd];
+        let submit_info = vk::SubmitInfo::default().push_next(&mut timeline_info).command_buffers(&cmds).signal_semaphores(std::slice::from_ref(&backend.timeline_semaphore));
+
+        backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
+
+        backend.pending_ops.lock().unwrap().push(AsyncOp {
+            staging_buffers: vec![stage_a, stage_b, stage_c.copy_for_async()],
+            device_buffers: vec![buf_a, buf_b, buf_c],
             cmd_buffer: cmd,
             desc_set: set,
             wait_id: wait_val,
