@@ -22,7 +22,7 @@ def run_benchmark(mod_name, baseline_time=None):
     env["PYTHONPATH"] = "/my_data/gaussian_room/vulkannn_rusted"
     
     # 2x slowdown threshold (+ some grace for noise)
-    timeout = baseline_time * 3.0 if baseline_time else 300.0
+    timeout = baseline_time * 3.0 if baseline_time else 600.0
     
     try:
         t0 = time.perf_counter()

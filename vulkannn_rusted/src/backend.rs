@@ -47,7 +47,6 @@ pub struct AshBackend {
     pub pipe_layout_act: vk::PipelineLayout,
     pub pipe_layout_reduce: vk::PipelineLayout,
     pub pipe_layout_elementwise: vk::PipelineLayout,
-    pub pipe_layout_linear: vk::PipelineLayout,
     pub pipe_layout_matmul: vk::PipelineLayout,
     pub pipe_layout_bit_linear: vk::PipelineLayout,
     
@@ -55,7 +54,6 @@ pub struct AshBackend {
     pub pipe_elementwise: vk::Pipeline,
     pub pipe_relu: vk::Pipeline,
     pub pipe_softmax: vk::Pipeline,
-    pub pipe_linear: vk::Pipeline,
     pub pipe_matmul: vk::Pipeline,
     pub pipe_bit_linear: vk::Pipeline,
     pub pipe_sigmoid: vk::Pipeline,
@@ -362,8 +360,6 @@ pub fn init_backend() {
         let pc_elementwise_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];
         let pipe_layout_elementwise = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_elementwise]).push_constant_ranges(&pc_elementwise_range), None) }.unwrap();
 
-        let pc_linear_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(20)]; // Increased to 20 for transpose_b
-        let pipe_layout_linear = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_linear]).push_constant_ranges(&pc_linear_range), None) }.unwrap();
 
         let pc_matmul_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(24)];
         let pipe_layout_matmul = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_matmul]).push_constant_ranges(&pc_matmul_range), None) }.unwrap();
@@ -382,7 +378,6 @@ pub fn init_backend() {
         let sm_reduce = load_shader(include_bytes!("shaders/reduce.wgsl.spv"));
         let sm_elementwise = load_shader(include_bytes!("shaders/elementwise.comp.spv"));
         let sm_softmax = load_shader(include_bytes!("shaders/softmax.wgsl.spv"));
-        let sm_linear = load_shader(include_bytes!("shaders/linear.comp.spv"));
         let sm_matmul = load_shader(include_bytes!("shaders/matmul_tiled.comp.spv"));
         let sm_bit_linear = load_shader(include_bytes!("shaders/bit_linear.comp.spv"));
 
@@ -409,7 +404,6 @@ pub fn init_backend() {
 
         let pipe_elementwise = create_pipe(sm_elementwise, &entry_main, pipe_layout_elementwise);
         let pipe_softmax = create_pipe(sm_softmax, &entry_main, pipe_layout_act);
-        let pipe_linear = create_pipe(sm_linear, &entry_main, pipe_layout_linear);
         let pipe_matmul = create_pipe(sm_matmul, &entry_main, pipe_layout_matmul);
         let pipe_bit_linear = create_pipe(sm_bit_linear, &entry_main, pipe_layout_bit_linear);
         let pipe_relu = create_pipe(sm_act, &entry_relu, pipe_layout_act);
@@ -433,7 +427,6 @@ pub fn init_backend() {
             device.destroy_shader_module(sm_reduce, None);
             device.destroy_shader_module(sm_elementwise, None);
             device.destroy_shader_module(sm_softmax, None);
-            device.destroy_shader_module(sm_linear, None);
             device.destroy_shader_module(sm_matmul, None);
             device.destroy_shader_module(sm_bit_linear, None);
         }
@@ -500,8 +493,8 @@ pub fn init_backend() {
             transfer_queue, _transfer_family: transfer_family,
             allocator: Mutex::new(allocator),
             desc_pool: Mutex::new(desc_pool),
-            pipe_layout_act, pipe_layout_reduce, pipe_layout_elementwise, pipe_layout_linear,
-            pipe_elementwise, pipe_relu, pipe_softmax, pipe_linear, pipe_sigmoid, pipe_silu,
+            pipe_layout_act, pipe_layout_reduce, pipe_layout_elementwise, 
+            pipe_elementwise, pipe_relu, pipe_softmax, pipe_sigmoid, pipe_silu,
             pipe_gelu, pipe_leaky_relu, pipe_elu, pipe_tanh, pipe_clamp,
             pipe_reduce_sum, pipe_reduce_max, pipe_reduce_min,
             compute_cmd_pool, transfer_cmd_pool,

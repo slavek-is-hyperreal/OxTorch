@@ -1,5 +1,3 @@
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
 
 /// Scalar operations for F32 tensors.
 pub fn scalar_op_f32(in_buf: &[f32], scalar: f32, out_buf: &mut [f32], op: &str) {
