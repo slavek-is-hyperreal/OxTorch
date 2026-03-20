@@ -1,0 +1,12 @@
+{
+    "name": "Sub_bf16_cpu",
+    "op": "Sub",
+    "dtype": "bf16",
+    "mode": "cpu",
+    "pt_time": 0.007098080099967774,
+    "vnn_time": 0.025784445500175935,
+    "ratio": 3.632594326498654,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

@@ -1,0 +1,12 @@
+{
+    "name": "Softmax_bf16_vulkan",
+    "op": "Softmax",
+    "dtype": "bf16",
+    "mode": "vulkan",
+    "pt_time": 0.016556473299715435,
+    "vnn_time": 0.011225116599962347,
+    "ratio": 0.6779895933607599,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

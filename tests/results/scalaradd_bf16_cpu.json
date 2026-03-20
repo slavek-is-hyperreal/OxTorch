@@ -1,0 +1,12 @@
+{
+    "name": "ScalarAdd_bf16_cpu",
+    "op": "ScalarAdd",
+    "dtype": "bf16",
+    "mode": "cpu",
+    "pt_time": 0.004823128000134602,
+    "vnn_time": 0.004873381899960805,
+    "ratio": 1.0104193585210264,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 42.0
+}

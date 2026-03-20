@@ -1,0 +1,12 @@
+{
+    "name": "Linear_bf16_vulkan",
+    "op": "Linear",
+    "dtype": "bf16",
+    "mode": "vulkan",
+    "pt_time": 1.125065301200084,
+    "vnn_time": 0.6419865572002891,
+    "ratio": 0.5706215954891642,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 41.0
+}
