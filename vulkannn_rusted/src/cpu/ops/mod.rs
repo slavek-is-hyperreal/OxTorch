@@ -9,3 +9,6 @@ pub use binary::*;
 pub use reduction::*;
 pub mod bit_linear;
 pub use bit_linear::*;
+
+pub mod norm;
+pub use norm::*;

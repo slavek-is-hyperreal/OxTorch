@@ -1,0 +1,42 @@
+#version 450
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer X { float data[]; } x;
+layout(set = 0, binding = 1) readonly buffer Weight { float data[]; } weight;
+layout(set = 0, binding = 2) buffer Y { float data[]; } y;
+
+layout(push_constant) uniform PushConsts {
+    uint N;
+    uint D;
+    float eps;
+} params;
+
+shared float s_sq_sum[64];
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    if (row >= params.N) return;
+    uint tid = gl_LocalInvocationID.x;
+    
+    float local_sq_sum = 0.0;
+    for (uint i = tid; i < params.D; i += 64) {
+        float val = x.data[row * params.D + i];
+        local_sq_sum += val * val;
+    }
+    s_sq_sum[tid] = local_sq_sum;
+    barrier();
+    
+    for (uint stride = 32; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            s_sq_sum[tid] += s_sq_sum[tid + stride];
+        }
+        barrier();
+    }
+    float row_mean_sq = s_sq_sum[0] / float(params.D);
+    float inv_rms = inversesqrt(row_mean_sq + params.eps);
+    
+    for (uint i = tid; i < params.D; i += 64) {
+        float val = x.data[row * params.D + i] * inv_rms * weight.data[i];
+        y.data[row * params.D + i] = val;
+    }
+}

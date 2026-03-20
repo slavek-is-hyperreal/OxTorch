@@ -89,6 +89,12 @@ def from_numpy(data):
 def bmm(input, mat2):
     return input.bmm(mat2)
 
+def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
+    return input.layer_norm(normalized_shape, weight, bias, eps)
+
+def rms_norm(input, normalized_shape, weight=None, eps=1e-5):
+    return input.rms_norm(normalized_shape, weight, eps)
+
 def zeros(*args, **kwargs):
     # Try native vnn.Tensor.zeros first
     try:

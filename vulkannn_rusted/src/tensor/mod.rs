@@ -98,6 +98,16 @@ impl Tensor {
          self.bmm(other)
     }
 
+    #[pyo3(name = "layer_norm", signature = (normalized_shape, weight=None, bias=None, eps=1e-5))]
+    pub fn py_layer_norm(&self, normalized_shape: Vec<usize>, weight: Option<&Tensor>, bias: Option<&Tensor>, eps: f32) -> PyResult<Tensor> {
+         self.layer_norm(normalized_shape, weight, bias, eps)
+    }
+
+    #[pyo3(name = "rms_norm", signature = (normalized_shape, weight=None, eps=1e-5))]
+    pub fn py_rms_norm(&self, normalized_shape: Vec<usize>, weight: Option<&Tensor>, eps: f32) -> PyResult<Tensor> {
+         self.rms_norm(normalized_shape, weight, eps)
+    }
+
     pub fn transpose(&self) -> PyResult<Tensor> {
         self.execute_transpose()
     }

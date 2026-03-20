@@ -180,6 +180,92 @@ impl Tensor {
         Ok(res)
     }
 
+    pub fn layer_norm(&self, normalized_shape: Vec<usize>, weight: Option<&Tensor>, bias: Option<&Tensor>, eps: f32) -> PyResult<Tensor> {
+        let mut d = 1;
+        for dim in &normalized_shape { d *= dim; }
+        let total = self.shape.iter().product::<usize>();
+        if total % d != 0 {
+            return Err(PyValueError::new_err("Invalid normalized_shape for layer_norm"));
+        }
+        let n = total / d;
+        let mut res = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
+
+        if self.device == "cpu" {
+             match self.dtype {
+                 DataType::F32 => {
+                     let (x_raw, _) = self.get_slice_raw_f32();
+                     let w_raw = if let Some(w) = weight { w.get_slice_raw_f32().0 } else { &[] };
+                     let b_raw = if let Some(b) = bias   { b.get_slice_raw_f32().0 } else { &[] };
+                     let (out_raw, _) = res.get_slice_raw_mut_f32();
+                     crate::cpu::layer_norm_f32(x_raw, w_raw, b_raw, out_raw, n, d, eps);
+                 },
+                 DataType::F16 => {
+                     let (x_raw, _) = self.get_slice_raw_f16();
+                     let w_raw = if let Some(w) = weight { w.get_slice_raw_f16().0 } else { &[] };
+                     let b_raw = if let Some(b) = bias   { b.get_slice_raw_f16().0 } else { &[] };
+                     let (out_raw, _) = res.get_slice_raw_mut_f16();
+                     crate::cpu::layer_norm_f16(x_raw, w_raw, b_raw, out_raw, n, d, eps);
+                 },
+                 DataType::BF16 => {
+                     let (x_raw, _) = self.get_slice_raw_bf16();
+                     let w_raw = if let Some(w) = weight { w.get_slice_raw_bf16().0 } else { &[] };
+                     let b_raw = if let Some(b) = bias   { b.get_slice_raw_bf16().0 } else { &[] };
+                     let (out_raw, _) = res.get_slice_raw_mut_bf16();
+                     crate::cpu::layer_norm_bf16(x_raw, w_raw, b_raw, out_raw, n, d, eps);
+                 },
+                 _ => return Err(PyValueError::new_err("Unsupported dtype for layer_norm on CPU")),
+             }
+        } else {
+             let (x_raw, _) = self.get_slice_raw_bytes();
+             let w_raw = if let Some(w) = weight { w.get_slice_raw_bytes().0 } else { &[] };
+             let b_raw = if let Some(b) = bias   { b.get_slice_raw_bytes().0 } else { &[] };
+             let (out_raw, _) = res.get_slice_raw_mut_bytes();
+             crate::backend::execute_layer_norm_into(x_raw, w_raw, b_raw, out_raw, n as u32, d as u32, eps, self.dtype);
+        }
+        Ok(res)
+    }
+
+    pub fn rms_norm(&self, normalized_shape: Vec<usize>, weight: Option<&Tensor>, eps: f32) -> PyResult<Tensor> {
+        let mut d = 1;
+        for dim in &normalized_shape { d *= dim; }
+        let total = self.shape.iter().product::<usize>();
+        if total % d != 0 {
+            return Err(PyValueError::new_err("Invalid normalized_shape for rms_norm"));
+        }
+        let n = total / d;
+        let mut res = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
+
+        if self.device == "cpu" {
+             match self.dtype {
+                 DataType::F32 => {
+                     let (x_raw, _) = self.get_slice_raw_f32();
+                     let w_raw = if let Some(w) = weight { w.get_slice_raw_f32().0 } else { &[] };
+                     let (out_raw, _) = res.get_slice_raw_mut_f32();
+                     crate::cpu::rms_norm_f32(x_raw, w_raw, out_raw, n, d, eps);
+                 },
+                 DataType::F16 => {
+                     let (x_raw, _) = self.get_slice_raw_f16();
+                     let w_raw = if let Some(w) = weight { w.get_slice_raw_f16().0 } else { &[] };
+                     let (out_raw, _) = res.get_slice_raw_mut_f16();
+                     crate::cpu::rms_norm_f16(x_raw, w_raw, out_raw, n, d, eps);
+                 },
+                 DataType::BF16 => {
+                     let (x_raw, _) = self.get_slice_raw_bf16();
+                     let w_raw = if let Some(w) = weight { w.get_slice_raw_bf16().0 } else { &[] };
+                     let (out_raw, _) = res.get_slice_raw_mut_bf16();
+                     crate::cpu::rms_norm_bf16(x_raw, w_raw, out_raw, n, d, eps);
+                 },
+                 _ => return Err(PyValueError::new_err("Unsupported dtype for rms_norm on CPU")),
+             }
+        } else {
+             let (x_raw, _) = self.get_slice_raw_bytes();
+             let w_raw = if let Some(w) = weight { w.get_slice_raw_bytes().0 } else { &[] };
+             let (out_raw, _) = res.get_slice_raw_mut_bytes();
+             crate::backend::execute_rms_norm_into(x_raw, w_raw, out_raw, n as u32, d as u32, eps, self.dtype);
+        }
+        Ok(res)
+    }
+
     pub fn execute_bit_linear(input: &Tensor, weight: &Tensor, scale: &Tensor, bias: Option<&Tensor>) -> PyResult<Tensor> {
         let m = input.shape[0];
         let k = input.shape[1];

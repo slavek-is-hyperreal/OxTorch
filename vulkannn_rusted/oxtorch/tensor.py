@@ -216,6 +216,15 @@ class Tensor:
         other_vnn = other._vnn if isinstance(other, Tensor) else other
         return Tensor(self._vnn.bmm(other_vnn))
 
+    def layer_norm(self, normalized_shape, weight=None, bias=None, eps=1e-5):
+        w_vnn = weight._vnn if weight is not None else None
+        b_vnn = bias._vnn if bias is not None else None
+        return Tensor(self._vnn.layer_norm(list(normalized_shape), w_vnn, b_vnn, eps))
+
+    def rms_norm(self, normalized_shape, weight=None, eps=1e-5):
+        w_vnn = weight._vnn if weight is not None else None
+        return Tensor(self._vnn.rms_norm(list(normalized_shape), w_vnn, eps))
+
     def __getitem__(self, key):
         # Indexing is complex; fallback to PyTorch
         pt_res = self.to_torch().__getitem__(key)
