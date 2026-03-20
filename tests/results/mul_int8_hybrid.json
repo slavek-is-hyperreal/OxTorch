@@ -1,0 +1,12 @@
+{
+    "name": "Mul_int8_hybrid",
+    "op": "Mul",
+    "dtype": "int8",
+    "mode": "hybrid",
+    "pt_time": 0.0012905814499390544,
+    "vnn_time": 0.016229312900031802,
+    "ratio": 12.575194615417884,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 46.0
+}

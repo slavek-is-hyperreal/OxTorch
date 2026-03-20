@@ -1,0 +1,12 @@
+{
+    "name": "Sub_int8_hybrid",
+    "op": "Sub",
+    "dtype": "int8",
+    "mode": "hybrid",
+    "pt_time": 0.0013283222500831472,
+    "vnn_time": 0.026830311249977968,
+    "ratio": 20.198646260949484,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

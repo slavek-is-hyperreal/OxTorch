@@ -1,0 +1,12 @@
+{
+    "name": "ScalarMul_f32_cpu",
+    "op": "ScalarMul",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.0034502126000006683,
+    "vnn_time": 0.0055069536500013784,
+    "ratio": 1.5961200912663502,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 46.0
+}

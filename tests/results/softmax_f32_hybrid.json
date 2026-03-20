@@ -1,0 +1,12 @@
+{
+    "name": "Softmax_f32_hybrid",
+    "op": "Softmax",
+    "dtype": "f32",
+    "mode": "hybrid",
+    "pt_time": 0.010010651350057742,
+    "vnn_time": 0.011519186350051313,
+    "ratio": 1.150692991618859,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 43.0
+}

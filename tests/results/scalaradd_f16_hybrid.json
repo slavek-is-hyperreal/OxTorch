@@ -1,0 +1,12 @@
+{
+    "name": "ScalarAdd_f16_hybrid",
+    "op": "ScalarAdd",
+    "dtype": "f16",
+    "mode": "hybrid",
+    "pt_time": 0.006671857399851433,
+    "vnn_time": 0.0211802293000801,
+    "ratio": 3.1745626488587324,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 42.0
+}
