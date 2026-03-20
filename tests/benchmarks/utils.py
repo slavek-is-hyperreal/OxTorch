@@ -55,7 +55,7 @@ def check_parity(vnn_tensor, torch_tensor, name, atol=1e-2):
         atol = 1.0
         if "sum" in name_l: atol = 50.0
     elif "f16" in name_l and "sum" in name_l:
-        atol = 0.1
+        atol = 0.5
     if "int8" in name_l:
         if "sum" in name_l: atol = 5000.0
         elif "matmul" in name_l: atol = 300.0

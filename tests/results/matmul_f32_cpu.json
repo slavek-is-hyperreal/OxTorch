@@ -1,0 +1,12 @@
+{
+    "name": "MatMul_f32_cpu",
+    "op": "MatMul",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.38883365299989237,
+    "vnn_time": 0.24525417150107387,
+    "ratio": 0.630743171556557,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 50.0
+}

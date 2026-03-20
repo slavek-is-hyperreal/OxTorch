@@ -1,0 +1,12 @@
+{
+    "name": "ReLU_15M_int8_vulkan",
+    "op": "ReLU",
+    "dtype": "int8",
+    "mode": "vulkan",
+    "pt_time": 0.009671361599612283,
+    "vnn_time": 0.050423423600295794,
+    "ratio": 5.213684038276185,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 50.0
+}

@@ -1,0 +1,12 @@
+{
+    "name": "Sub_f32_cpu",
+    "op": "Sub",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.008605508649998228,
+    "vnn_time": 0.03895271609999327,
+    "ratio": 4.526486194398432,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 52.0
+}

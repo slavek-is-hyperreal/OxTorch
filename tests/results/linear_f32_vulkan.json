@@ -1,0 +1,12 @@
+{
+    "name": "Linear_f32_vulkan",
+    "op": "Linear",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.22408820154996648,
+    "vnn_time": 0.6415370077000262,
+    "ratio": 2.8628772209454247,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 53.0
+}

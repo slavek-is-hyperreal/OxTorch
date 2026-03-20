@@ -1,0 +1,12 @@
+{
+    "name": "ScalarAdd_f16_vulkan",
+    "op": "ScalarAdd",
+    "dtype": "f16",
+    "mode": "vulkan",
+    "pt_time": 0.0189936876999127,
+    "vnn_time": 0.02534739820002869,
+    "ratio": 1.334516951131359,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 54.0
+}

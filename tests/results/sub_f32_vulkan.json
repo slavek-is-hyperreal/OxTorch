@@ -1,0 +1,12 @@
+{
+    "name": "Sub_f32_vulkan",
+    "op": "Sub",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.012092810049944091,
+    "vnn_time": 0.037576615199941446,
+    "ratio": 3.107351810269704,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 46.0
+}

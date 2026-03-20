@@ -1,0 +1,12 @@
+{
+    "name": "ScalarAdd_f32_cpu",
+    "op": "ScalarAdd",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.0076096581999081534,
+    "vnn_time": 0.0077683457499006184,
+    "ratio": 1.0208534399080342,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 46.0
+}

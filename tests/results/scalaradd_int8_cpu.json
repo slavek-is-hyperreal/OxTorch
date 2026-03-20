@@ -1,0 +1,12 @@
+{
+    "name": "ScalarAdd_int8_cpu",
+    "op": "ScalarAdd",
+    "dtype": "int8",
+    "mode": "cpu",
+    "pt_time": 0.015643103699949278,
+    "vnn_time": 0.001502614499986521,
+    "ratio": 0.09605603394365998,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 56.0
+}

@@ -1,0 +1,12 @@
+{
+    "name": "Sub_int8_cpu",
+    "op": "Sub",
+    "dtype": "int8",
+    "mode": "cpu",
+    "pt_time": 0.0046263924999948355,
+    "vnn_time": 0.041082041049958204,
+    "ratio": 8.879929891379529,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 48.0
+}

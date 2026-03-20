@@ -1,0 +1,12 @@
+{
+    "name": "Sum_f16_hybrid",
+    "op": "Sum",
+    "dtype": "f16",
+    "mode": "hybrid",
+    "pt_time": 0.008073228100329288,
+    "vnn_time": 0.011245285100085312,
+    "ratio": 1.3929106127481574,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 54.0
+}
