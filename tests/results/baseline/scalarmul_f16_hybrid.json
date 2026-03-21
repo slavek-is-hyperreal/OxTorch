@@ -1,0 +1,1 @@
+{"name": "ScalarMul_f16_hybrid", "op": "ScalarMul", "dtype": "f16", "mode": "hybrid", "pt_time": 0.004523959500147612, "vnn_time": 0.022019787200042627, "ratio": 4.867370541076715, "parity": true, "max_diff": 0.0, "cpu_temp": 45.0, "baseline": null}

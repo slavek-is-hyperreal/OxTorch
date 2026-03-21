@@ -24,6 +24,7 @@ _DTYPE_ATTR_MAP = {
 _OP_NAME_MAP = {
     "Mul": "mul",
     "Sub": "sub",
+    "Div": "div",
     "Sum": "sum",
     "Softmax": "softmax",
     "ReLU": "relu",
@@ -31,11 +32,16 @@ _OP_NAME_MAP = {
     "Linear": "linear",
     "LayerNorm": "layer_norm",
     "RMSNorm": "rms_norm",
+    "Cat": "cat",
+    "Stack": "stack",
+    "Split": "split",
+    "Chunk": "chunk",
 }
 
 # Ops that require keyword args when calling torch.nn.functional
 _OP_KWARGS = {
     "softmax": {"dim": -1},
+    # split and chunk use positional args — handled explicitly in dispatch
 }
 
 class BenchmarkBase:
@@ -82,7 +88,11 @@ class BenchmarkBase:
             if self.op in ["MatMul", "Linear"]:
                 b_np = np.random.randn(self.shape[-1], self.shape[-1]).astype(np.float32)
             elif self.op in ["LayerNorm", "RMSNorm"]:
+                # Normalization weights are 1D (normalized_shape)
                 b_np = np.random.randn(self.shape[-1]).astype(np.float32)
+            elif self.op in ["Cat", "Stack"]:
+                # For Cat/Stack we use two tensors of the same shape
+                b_np = np.random.randn(*self.shape).astype(np.float32)
             else:
                 b_np = np.random.randn(*self.shape).astype(np.float32)
 
@@ -110,6 +120,14 @@ class BenchmarkBase:
                     res_torch = a_torch + b_torch
                 elif self.op == "ScalarMul":
                     res_torch = a_torch * b_torch
+                elif self.op == "Cat":
+                    res_torch = torch.cat([a_torch, b_torch], dim=0)
+                elif self.op == "Stack":
+                    res_torch = torch.stack([a_torch, b_torch], dim=0)
+                elif self.op == "Split":
+                    res_torch = torch.split(a_torch, 1, dim=0)
+                elif self.op == "Chunk":
+                    res_torch = torch.chunk(a_torch, 2, dim=0)
                 elif self.op == "LayerNorm":
                     res_torch = torch.layer_norm(a_torch, [self.shape[-1]], weight=b_torch, bias=None, eps=1e-5)
                 elif self.op == "RMSNorm":
@@ -156,6 +174,16 @@ class BenchmarkBase:
                 res_vnn = a_ox + b_ox
             elif self.op == "Mul" or self.op == "ScalarMul":
                 res_vnn = a_ox * b_ox
+            elif self.op == "Div":
+                res_vnn = a_ox / b_ox
+            elif self.op == "Cat":
+                res_vnn = torch_ox.cat([a_ox, b_ox], dim=0)
+            elif self.op == "Stack":
+                res_vnn = torch_ox.stack([a_ox, b_ox], dim=0)
+            elif self.op == "Split":
+                res_vnn = torch_ox.split(a_ox, 1, dim=0)
+            elif self.op == "Chunk":
+                res_vnn = torch_ox.chunk(a_ox, 2, dim=0)
             elif self.op == "LayerNorm":
                 res_vnn = a_ox.layer_norm([self.shape[-1]], weight=b_ox, bias=None, eps=1e-5)
             elif self.op == "RMSNorm":
@@ -178,10 +206,16 @@ class BenchmarkBase:
 
         # Parity Check
         if not self.is_ssd:
-            # Cast to float32 for comparison as numpy doesn't support all torch dtypes (like bfloat16) directly
-            res_torch_np = res_torch.detach().cpu().to(torch.float32).numpy()
-            res_vnn_np = res_vnn.to_numpy()
+            # Handle list returns for split/chunk
+            if isinstance(res_torch, (list, tuple)):
+                res_torch_np = np.concatenate([r.detach().cpu().to(torch.float32).numpy() for r in res_torch])
+                res_vnn_np = np.concatenate([r.to_numpy() for r in res_vnn])
+            else:
+                res_torch_np = res_torch.detach().cpu().to(torch.float32).numpy()
+                res_vnn_np = res_vnn.to_numpy()
+            
             parity_ok, max_diff = check_parity(res_vnn_np, res_torch_np, self.name, self.op)
+
         else:
             # For SSD, we assume PASS if it finished without error
             parity_ok = True

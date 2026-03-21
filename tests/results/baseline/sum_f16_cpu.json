@@ -1,0 +1,1 @@
+{"name": "Sum_f16_cpu", "op": "Sum", "dtype": "f16", "mode": "cpu", "pt_time": 0.0008226760999605176, "vnn_time": 0.0005253995001112344, "ratio": 0.6386468503660794, "parity": true, "max_diff": 0.0, "cpu_temp": 44.0, "baseline": null}

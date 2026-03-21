@@ -1,0 +1,1 @@
+{"name": "Mul_f32_cpu", "op": "Mul", "dtype": "f32", "mode": "cpu", "pt_time": 0.005407625149928208, "vnn_time": 0.010174609800014878, "ratio": 1.881530157494359, "parity": true, "max_diff": 0.0, "cpu_temp": 49.0, "baseline": null}

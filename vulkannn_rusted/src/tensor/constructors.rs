@@ -37,7 +37,7 @@ impl Tensor {
             }
         };
 
-        let strides = Self::calculate_default_strides(&shape);
+        let strides = Self::calculate_default_strides(shape.clone());
         Ok(Tensor { 
             shape, 
             strides,
@@ -60,7 +60,7 @@ impl Tensor {
             DataType::Int8 => Storage::Int8(vec![0; size]),
             DataType::Ternary => Storage::Ternary(vec![0; size]),
         };
-        let strides = Self::calculate_default_strides(&shape);
+        let strides = Self::calculate_default_strides(shape.clone());
         Ok(Tensor { 
             shape, 
             strides,
@@ -105,7 +105,7 @@ impl Tensor {
 
     pub fn new_from_ssd(path: &str, shape: Vec<usize>, dtype: DataType) -> PyResult<Self> {
         let engine = crate::io_uring_engine::DirectIoEngine::new(path, true);
-        let strides = Self::calculate_default_strides(&shape);
+        let strides = Self::calculate_default_strides(shape.clone());
         Ok(Tensor { 
             shape, 
             strides,
@@ -129,7 +129,7 @@ impl Tensor {
         let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         file.set_len((size * bytes_per_elem) as u64).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         let engine = crate::io_uring_engine::DirectIoEngine::new(path, false);
-        let strides = Self::calculate_default_strides(&shape);
+        let strides = Self::calculate_default_strides(shape.clone());
         Ok(Tensor { 
             shape, 
             strides,

@@ -258,4 +258,76 @@ impl Tensor {
         
         Ok(res_tensor)
     }
+
+    /// True MSTS Streaming Copy.
+    /// Streams tiles from this SSD tensor directly into a caller-supplied byte buffer
+    /// at `dest_offset_bytes`. The caller allocates RAM only for the final result.
+    /// Supports all dtypes (raw byte copy of the correct width).
+    pub fn load_to_buffer(&self, dest: &mut [u8], dest_offset_bytes: u64) -> PyResult<()> {
+        let engine = match &self.mmap_data {
+            Some(IoEngineType::ReadOnly(e)) => e.clone(),
+            Some(IoEngineType::ReadWrite(e)) => e.clone(),
+            None => return Err(pyo3::exceptions::PyValueError::new_err("load_to_buffer: not an SSD tensor")),
+        };
+
+        let total_elems = self.shape.iter().product::<usize>();
+        let bytes_per_elem = self.dtype.size();
+        let total_bytes = (total_elems * bytes_per_elem) as u64;
+
+        let ring_size = 8;
+        let scheduler = crate::crook_scheduler::CrookScheduler::new(ring_size);
+        let io_handle = crate::crook_scheduler::CrookScheduler::start_read_worker(
+            scheduler.clone(), engine, total_bytes,
+        );
+
+        let mut src_offset: u64 = 0;
+        let mut tile_idx: usize = 0;
+
+        while src_offset < total_bytes {
+            let tile = &scheduler.ring[tile_idx];
+
+            // Spin until I/O worker signals the tile is ready
+            while tile.state.compare_exchange(
+                crate::crook_scheduler::TILE_READY_FOR_COMPUTE,
+                crate::crook_scheduler::TILE_COMPUTING,
+                std::sync::atomic::Ordering::Acquire,
+                std::sync::atomic::Ordering::Relaxed,
+            ).is_err() {
+                std::hint::spin_loop();
+            }
+
+            let bytes_in_tile = std::cmp::min(1_048_576, (total_bytes - src_offset) as usize);
+            let payload = unsafe { &*tile.payload.get() };
+            let src_slice = &payload[..bytes_in_tile];
+
+            // Direct copy into destination window — no intermediate Vec
+            let dst_start = (dest_offset_bytes + src_offset) as usize;
+            dest[dst_start..dst_start + bytes_in_tile].copy_from_slice(src_slice);
+
+            tile.state.store(crate::crook_scheduler::TILE_EMPTY, std::sync::atomic::Ordering::Release);
+            src_offset += bytes_in_tile as u64;
+            tile_idx = (tile_idx + 1) % ring_size;
+        }
+
+        io_handle.join().unwrap();
+        Ok(())
+    }
+
+    /// Load the entire SSD tensor into typed CPU RAM storage.
+    /// Kept for single-tensor convenience (e.g. to_numpy).
+    pub fn load_to_storage_cpu(&self) -> PyResult<crate::tensor::Storage> {
+        let total_elems = self.shape.iter().product::<usize>();
+        let bytes_per_elem = self.dtype.size();
+        let total_bytes = (total_elems * bytes_per_elem) as usize;
+
+        let mut raw = vec![0u8; total_bytes];
+        self.load_to_buffer(&mut raw, 0)?;
+
+        Ok(match self.dtype {
+            DataType::F32 => crate::tensor::Storage::F32(bytemuck::cast_slice::<u8, f32>(&raw).to_vec()),
+            DataType::F16 => crate::tensor::Storage::F16(bytemuck::cast_slice::<u8, half::f16>(&raw).to_vec()),
+            DataType::BF16 => crate::tensor::Storage::BF16(bytemuck::cast_slice::<u8, half::bf16>(&raw).to_vec()),
+            DataType::Int8 | DataType::Ternary => crate::tensor::Storage::Int8(bytemuck::cast_slice::<u8, i8>(&raw).to_vec()),
+        })
+    }
 }

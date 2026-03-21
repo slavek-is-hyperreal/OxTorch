@@ -308,7 +308,7 @@ impl Tensor {
     pub fn execute_transpose(&self) -> PyResult<Tensor> {
         if self.shape.len() != 2 { return Err(PyValueError::new_err("2D required for transpose")); }
         let new_shape = vec![self.shape[1], self.shape[0]];
-        let strides = Self::calculate_default_strides(&new_shape);
+        let strides = Self::calculate_default_strides(new_shape.clone());
         Ok(Tensor {
             shape: new_shape,
             strides,
@@ -348,53 +348,90 @@ impl Tensor {
             }
         }
         
-        // For now, if any are on Vulkan, we download to CPU and concat there
-        // TODO: Implement native Vulkan concatenation
-        let mut cpu_tensors = Vec::new();
-        let mut temp_tensors = Vec::new();
-        
-        for t in tensors {
-            if t.device == "vulkan" {
-                let (slice, _) = t.get_slice_raw_bytes();
-                let storage = t.raw_to_storage(slice);
-                let strides = Self::calculate_default_strides(&t.shape);
-                let temp = Tensor {
-                    shape: t.shape.clone(),
-                    strides,
-                    offset: 0,
-                    device: "cpu".to_string(),
-                    dtype: t.dtype,
-                    storage,
-                    is_transposed: t.is_transposed,
-                    name: format!("{}_cpu_tmp", t.name),
-                    mmap_data: None,
-                };
-                temp_tensors.push(temp);
-            }
-        }
-        
-        let mut ptr_idx = 0;
-        for t in tensors {
-            if t.device == "vulkan" {
-                cpu_tensors.push(&temp_tensors[ptr_idx]);
-                ptr_idx += 1;
-            } else {
-                cpu_tensors.push(*t);
-            }
-        }
-
+        // Allocate the result buffer ONCE in RAM (raw bytes)
+        let bytes_per_elem = dtype.size();
         let mut out_shape = first.shape.clone();
         let total_dim: usize = tensors.iter().map(|t| t.shape[dim]).sum();
         out_shape[dim] = total_dim;
+        let total_out_elems: usize = out_shape.iter().product();
+        let total_out_bytes = total_out_elems * bytes_per_elem;
 
+        let mut raw_out = vec![0u8; total_out_bytes];
+
+        // For each input tensor, copy its bytes into the correct window of raw_out.
+        // SSD tensors use MSTS load_to_buffer (ring-buffered, no intermediate Vec).
+        // RAM/Vulkan tensors use a direct memcpy.
+        //
+        // For dim=0 (and contiguous row-major layout) every tensor contributes a contiguous
+        // block. We compute the destination byte offset per tensor.
+        //
+        // For dim>0 we fall back to the typed cat kernels (RAM tensors only).
+        let all_contiguous_dim0 = dim == 0;
+
+        if all_contiguous_dim0 {
+            let mut dest_byte_offset: u64 = 0;
+            for t in tensors.iter() {
+                let t_bytes = (t.shape.iter().product::<usize>()) * bytes_per_elem;
+                if t.is_ssd() {
+                    // True MSTS: stream tile-by-tile directly into raw_out window
+                    t.load_to_buffer(&mut raw_out, dest_byte_offset)?;
+                } else if t.device == "vulkan" {
+                    let (slice, _) = t.get_slice_raw_bytes();
+                    let dst_start = dest_byte_offset as usize;
+                    raw_out[dst_start..dst_start + t_bytes].copy_from_slice(slice);
+                } else {
+                    let (slice, _) = t.get_slice_raw_bytes();
+                    let dst_start = dest_byte_offset as usize;
+                    raw_out[dst_start..dst_start + t_bytes].copy_from_slice(slice);
+                }
+                dest_byte_offset += t_bytes as u64;
+            }
+        } else {
+            // dim > 0: need typed strides logic – load everything to RAM first, use typed kernels
+            let mut cpu_tensors_owned = Vec::new();
+            for t in tensors.iter() {
+                if t.is_ssd() {
+                    let storage = t.load_to_storage_cpu()?;
+                    let strides = Self::calculate_default_strides(t.shape.clone());
+                    cpu_tensors_owned.push(Tensor {
+                        shape: t.shape.clone(), strides, offset: 0,
+                        device: "cpu".to_string(), dtype: t.dtype, storage,
+                        is_transposed: false,
+                        name: format!("{}_hssd", t.name), mmap_data: None,
+                    });
+                } else if t.device == "vulkan" {
+                    let (slice, _) = t.get_slice_raw_bytes();
+                    let storage = t.raw_to_storage(slice);
+                    let strides = Self::calculate_default_strides(t.shape.clone());
+                    cpu_tensors_owned.push(Tensor {
+                        shape: t.shape.clone(), strides, offset: 0,
+                        device: "cpu".to_string(), dtype: t.dtype, storage,
+                        is_transposed: false,
+                        name: format!("{}_hv", t.name), mmap_data: None,
+                    });
+                } else {
+                    cpu_tensors_owned.push((*t).clone());
+                }
+            }
+            let cpu_tensors: Vec<&Tensor> = cpu_tensors_owned.iter().collect();
+            let typed_raw = match dtype {
+                DataType::F32  => bytemuck::cast_slice::<f32, u8>(&crate::cpu::cat_f32(&cpu_tensors, dim)).to_vec(),
+                DataType::F16  => bytemuck::cast_slice::<half::f16, u8>(&crate::cpu::cat_f16(&cpu_tensors, dim)).to_vec(),
+                DataType::BF16 => bytemuck::cast_slice::<half::bf16, u8>(&crate::cpu::cat_bf16(&cpu_tensors, dim)).to_vec(),
+                DataType::Int8 | DataType::Ternary => bytemuck::cast_slice::<i8, u8>(&crate::cpu::cat_i8(&cpu_tensors, dim)).to_vec(),
+            };
+            raw_out = typed_raw;
+        }
+
+        // Build the typed Storage from raw bytes
         let storage = match dtype {
-            DataType::F32 => Storage::F32(crate::cpu::cat_f32(&cpu_tensors, dim)),
-            DataType::F16 => Storage::F16(crate::cpu::cat_f16(&cpu_tensors, dim)),
-            DataType::BF16 => Storage::BF16(crate::cpu::cat_bf16(&cpu_tensors, dim)),
-            DataType::Int8 | DataType::Ternary => Storage::Int8(crate::cpu::cat_i8(&cpu_tensors, dim)),
+            DataType::F32  => Storage::F32(bytemuck::cast_slice::<u8, f32>(&raw_out).to_vec()),
+            DataType::F16  => Storage::F16(bytemuck::cast_slice::<u8, half::f16>(&raw_out).to_vec()),
+            DataType::BF16 => Storage::BF16(bytemuck::cast_slice::<u8, half::bf16>(&raw_out).to_vec()),
+            DataType::Int8 | DataType::Ternary => Storage::Int8(bytemuck::cast_slice::<u8, i8>(&raw_out).to_vec()),
         };
 
-        let strides = Self::calculate_default_strides(&out_shape);
+        let strides = Self::calculate_default_strides(out_shape.clone());
         let mut out = Tensor {
             shape: out_shape,
             strides,
@@ -406,11 +443,11 @@ impl Tensor {
             name: format!("{}_cat", first.name),
             mmap_data: None,
         };
-        
+
         if device == "vulkan" {
             out = out.to_device(device)?;
         }
-        
+
         Ok(out)
     }
 

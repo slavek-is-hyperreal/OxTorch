@@ -1,0 +1,1 @@
+{"name": "Softmax_int8_vulkan", "op": "Softmax", "dtype": "int8", "mode": "vulkan", "pt_time": 0.012656297250032367, "vnn_time": 0.013800101549986721, "ratio": 1.0903743233394292, "parity": true, "max_diff": 0.0, "cpu_temp": 45.0, "baseline": null}

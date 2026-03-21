@@ -1,0 +1,1 @@
+{"name": "Mul_f32_hybrid", "op": "Mul", "dtype": "f32", "mode": "hybrid", "pt_time": 0.005469036100021185, "vnn_time": 0.020539588700012247, "ratio": 3.7556140285730946, "parity": true, "max_diff": 0.0, "cpu_temp": 45.0, "baseline": null}

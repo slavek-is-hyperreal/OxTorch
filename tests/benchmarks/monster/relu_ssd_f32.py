@@ -1,13 +1,10 @@
-from ..base import BenchmarkBase
+from .monster_base import MonsterBenchmarkBase
 
 if __name__ == "__main__":
-    bench = BenchmarkBase(
+    bench = MonsterBenchmarkBase(
         name="Monster_ReLU_F32_SSD",
         op="ReLU",
-        shape=(4000000000,),
-        mode="cpu",
         dtype="f32",
-        inplace=False,
-        is_ssd=True
+        mode="cpu",
     )
     bench.run()

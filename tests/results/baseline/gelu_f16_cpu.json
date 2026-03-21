@@ -1,0 +1,1 @@
+{"name": "GELU_f16_cpu", "op": "GELU", "dtype": "f16", "mode": "cpu", "pt_time": 0.016343086400047467, "vnn_time": 0.034116349699979766, "ratio": 2.0875095967112234, "parity": true, "max_diff": 0.0, "cpu_temp": 46.0, "baseline": null}

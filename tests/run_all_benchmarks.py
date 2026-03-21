@@ -8,9 +8,10 @@ import time
 def discover_benchmarks(base_dir):
     benchmarks = []
     for root, dirs, files in os.walk(base_dir):
+        # Never descend into the monster/ directory — use run_all_monster_benchmarks.py for that
+        dirs[:] = [d for d in dirs if d != "monster"]
         for file in files:
             if file.endswith(".py") and not file.startswith("__") and file != "generate_atoms.py" and file != "base.py" and file != "utils.py":
-                # Convert path to module name
                 rel_path = os.path.relpath(os.path.join(root, file), "/my_data/gaussian_room")
                 mod_name = rel_path.replace("/", ".").replace(".py", "")
                 benchmarks.append(mod_name)

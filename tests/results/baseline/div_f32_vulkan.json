@@ -1,0 +1,1 @@
+{"name": "Div_f32_vulkan", "op": "Div", "dtype": "f32", "mode": "vulkan", "pt_time": 0.0011186350499883702, "vnn_time": 0.005560283649992925, "ratio": 4.970596666044687, "parity": true, "max_diff": 0.0, "cpu_temp": 45.0, "baseline": null}

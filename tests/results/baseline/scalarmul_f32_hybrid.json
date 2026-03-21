@@ -1,0 +1,1 @@
+{"name": "ScalarMul_f32_hybrid", "op": "ScalarMul", "dtype": "f32", "mode": "hybrid", "pt_time": 0.004182302549997985, "vnn_time": 0.004912864200014156, "ratio": 1.1746792923951717, "parity": true, "max_diff": 0.0, "cpu_temp": 44.0, "baseline": null}

@@ -190,7 +190,7 @@ impl Tensor {
     pub fn get_slice_raw_bytes(&self) -> (&[u8], usize) {
         let offset = self.offset;
         let size = self.shape.iter().product::<usize>();
-        let bpe = match self.dtype {
+        let _bpe = match self.dtype {
             DataType::F32 => 4,
             DataType::F16 | DataType::BF16 => 2,
             DataType::Int8 | DataType::Ternary => 1,

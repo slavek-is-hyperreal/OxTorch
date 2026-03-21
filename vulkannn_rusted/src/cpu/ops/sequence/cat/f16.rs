@@ -1,6 +1,7 @@
 use crate::tensor::{Tensor, DataType, Storage};
 
 pub fn cat_f16(tensors: &[&Tensor], dim: usize) -> Vec<half::f16> {
+    debug_assert!(tensors[0].dtype == DataType::F16);
     let mut out_shape = tensors[0].shape.clone();
     let total_dim: usize = tensors.iter().map(|t| t.shape[dim]).sum();
     out_shape[dim] = total_dim;

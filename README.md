@@ -1,10 +1,14 @@
 # OxTorch (v3.7.0 — "The BitNet Leapfrog")
 
-**A high-performance, Rust-powered tensor engine for constrained consumer hardware.**
+**Run modern AI inference on hardware that PyTorch left behind.**
 
-Designed to run AI inference on hardware modern frameworks quietly abandoned:
-legacy CPUs without AVX2, sub-2GB GPUs, systems with DDR3 RAM and SSD-resident weights.
-No CUDA. No dedicated tensor cores. No Apple Silicon required.
+OxTorch is a Rust tensor engine built for machines that are too slow, too old, or have too little RAM for mainstream frameworks.
+It streams model weights from SSD tile-by-tile (never loading the full model into RAM),
+pushes compute to whatever GPU the machine has via raw Vulkan, and falls back to hand-tuned SIMD for everything else.
+
+- **No CUDA.** Works on any Vulkan-capable GPU, including decade-old AMD/Intel cards.
+- **No RAM limit.** Model weights live on SSD and stream through an 8MB ring buffer.
+- **No code changes.** `import oxtorch as torch` — existing PyTorch inference scripts run unchanged.
 
 [![Engine: Rust + Vulkan](https://img.shields.io/badge/Engine-Rust%20%2B%20Vulkan%20ash-blue.svg)](#technical-overview)
 [![Precision: Quad-Mode](https://img.shields.io/badge/Precision-F32%20%7C%20F16%20%7C%20BF16%20%7C%20INT8-green.svg)](#architecture-support-matrix)
@@ -14,7 +18,9 @@ No CUDA. No dedicated tensor cores. No Apple Silicon required.
 
 ## ⚡ One-Import Drop-In
 
-OxTorch ships with a Python package called `oxtorch` that is a **transparent drop-in replacement** for PyTorch:
+OxTorch ships a Python package called `oxtorch` that replaces PyTorch at the import level.
+Ops that OxTorch has implemented natively run in Rust (faster). Ops it hasn't implemented yet
+fall back silently to real PyTorch — you never hit a `NotImplementedError`.
 
 ```python
 # Before:
@@ -234,11 +240,16 @@ Runtime dispatch via `is_x86_feature_detected!()` — no compile-time flags.
 
 ## Inspiration: The MERA-400
 
-This project is directly inspired by the **MERA-400**, a Polish 16-bit minicomputer designed at Zakład Komputerów ERA, Warsaw (1976–1985). ~650 units built.
+This project is directly inspired by the **MERA-400**, a Polish 16-bit minicomputer designed at
+*Zakład Komputerów Fabryki Mierników i Komputerów ERA*, Warsaw (produced 1976–1987, ~656 units built).
 
-Its **clockless, fully asynchronous processor** ran at a speed governed not by a fixed clock, but by the number of operations per unit time — each module operating independently. The CROOK OS paired with it created a system that did more with less than almost anything built in the West at the time.
+Its processor was **asynchronously sequential** — its speed was defined not by a clock frequency
+but by the number of operations completed per unit of time (~400 000 ops/s).
+The CROOK OS running on it managed preemptive multitasking on hardware that had no atomic compare-and-swap instruction.
 
-The **MSTS (Mera Style Tiling System)** at the core of OxTorch reimplements those ideas in modern Rust: a ring buffer of atomic-state tiles that lets CPU and GPU workers race to claim work without locks, without a clock, and without static splits.
+The **MSTS (Mera Style Tiling System)** at the core of OxTorch reimplements those ideas in modern Rust:
+a ring buffer of atomic-state tiles that lets CPU and GPU workers race to claim work without locks,
+without a fixed clock, and without static splits.
 
 - [MERA-400 Wikipedia (PL)](https://pl.wikipedia.org/wiki/Mera_400) | [mera400.pl](https://mera400.pl)
 
@@ -256,14 +267,19 @@ The **MSTS (Mera Style Tiling System)** at the core of OxTorch reimplements thos
 
 ---
 
-## Why OxTorch? (The Engineering Philosophy)
+## Why OxTorch?
 
-*"The MERA-400 ran a distributed OS on components with varying timing characteristics in 1976. Constraints breed architecture."*
+PyTorch requires CUDA for serious GPU work and loads full model weights into RAM.
+On a machine with a 2015 AMD GPU and 8 GB RAM, running a 7B model means either renting cloud compute or not running it at all.
 
-- **Tile everything.** No operation requires more VRAM/RAM than a single tile.
-- **Fuse ruthlessly.** Every PCIe round-trip costs time. MatMul + Bias + ReLU → one shader dispatch, not three.
-- **Use what the hardware has.** Ivy Bridge has AVX1 + F16C. That's `vmaxps` for ReLU, `vcvtph2ps` for F16. No AVX2? No problem.
-- **Asynchronous by default.** CPU workers and the Vulkan queue race to claim tiles via a single `AtomicUsize` — no locks, no static splits, the faster path eats more work.
+OxTorch attacks this differently:
+
+- **Tile everything.** Weights stream from SSD through an 8 MB ring buffer. A 70B model needs 8 MB of working RAM, not 140 GB.
+- **Use what the hardware has.** Ivy Bridge has AVX1 + F16C. That's enough for fast F16 matmul — 400–780x faster than PyTorch's scalar fallback.
+- **GPU when it helps, CPU when it doesn't.** PCIe round-trips cost ~80 ms on a 2014 AMD card. OxTorch measures this and routes accordingly — no GPU dispatch under 4M elements.
+- **Asynchronous by default.** CPU and GPU race over tiles via a single `AtomicUsize` — no locks, no static splits, the faster resource eats more work.
+
+*Inspired by the MERA-400 — a Polish 16-bit minicomputer (1976, ~656 units built) whose asynchronously sequential processor ran at 400 000 ops/s without a clock signal.*
 
 ---
 

@@ -6,7 +6,7 @@ impl Tensor {
         let old_size: usize = self.shape.iter().product();
         let new_size: usize = new_shape.iter().product();
         if old_size != new_size { return Err(pyo3::exceptions::PyValueError::new_err(format!("Reshape size mismatch: {} vs {}", old_size, new_size))); }
-        let strides = Self::calculate_default_strides(&new_shape);
+        let strides = Self::calculate_default_strides(new_shape.clone());
         Ok(Tensor { 
             shape: new_shape, 
             strides,
