@@ -19,6 +19,10 @@ use numpy::{PyArrayMethods, PyUntypedArrayMethods};
 pub struct Tensor {
     #[pyo3(get)]
     pub shape: Vec<usize>,
+    #[pyo3(get)]
+    pub strides: Vec<usize>,
+    #[pyo3(get)]
+    pub offset: usize,
     #[pyo3(get, set)]
     pub device: String,
     #[pyo3(get, set)]
@@ -32,6 +36,18 @@ pub struct Tensor {
 
 #[pymethods]
 impl Tensor {
+    #[staticmethod]
+    pub fn calculate_default_strides(shape: Vec<usize>) -> Vec<usize> {
+        if shape.is_empty() { return vec![]; }
+        let mut strides = vec![0; shape.len()];
+        let mut current = 1;
+        for i in (0..shape.len()).rev() {
+            strides[i] = current;
+            current *= shape[i];
+        }
+        strides
+    }
+
     #[new]
     #[pyo3(signature = (shape=None, data=None, dtype=DataType::F32, device="cpu", name="tensor"))]
     pub fn py_new(
@@ -174,6 +190,35 @@ impl Tensor {
 
     pub fn reshape(&self, new_shape: Vec<usize>) -> PyResult<Tensor> {
         self.execute_reshape(new_shape)
+    }
+
+    pub fn unsqueeze(&self, dim: usize) -> PyResult<Tensor> {
+        self.execute_unsqueeze(dim)
+    }
+
+    #[pyo3(signature = (dim=None))]
+    pub fn squeeze(&self, dim: Option<usize>) -> PyResult<Tensor> {
+        self.execute_squeeze(dim)
+    }
+
+    pub fn split(&self, split_size: usize, dim: usize) -> PyResult<Vec<Tensor>> {
+        self.execute_split(split_size, dim)
+    }
+
+    pub fn chunk(&self, chunks: usize, dim: usize) -> PyResult<Vec<Tensor>> {
+        self.execute_chunk(chunks, dim)
+    }
+
+    #[staticmethod]
+    pub fn cat(tensors: Vec<PyRef<'_, Tensor>>, dim: usize) -> PyResult<Tensor> {
+        let refs: Vec<&Tensor> = tensors.iter().map(|r| &**r).collect();
+        Tensor::execute_cat(&refs, dim)
+    }
+
+    #[staticmethod]
+    pub fn stack(tensors: Vec<PyRef<'_, Tensor>>, dim: usize) -> PyResult<Tensor> {
+        let refs: Vec<&Tensor> = tensors.iter().map(|r| &**r).collect();
+        Tensor::execute_stack(&refs, dim)
     }
 
     pub fn msts_pytorch_apply(&self, py: Python, callback: PyObject) -> PyResult<Tensor> {

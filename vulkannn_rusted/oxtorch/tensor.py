@@ -33,6 +33,39 @@ class Tensor:
     def device(self):
         return self._vnn.device
 
+    def reshape(self, *shape):
+        if len(shape) == 1 and isinstance(shape[0], (list, tuple)):
+            shape = shape[0]
+        return Tensor(self._vnn.reshape(list(shape)))
+
+    def unsqueeze(self, dim):
+        return Tensor(self._vnn.unsqueeze(dim))
+
+    def squeeze(self, dim=None):
+        return Tensor(self._vnn.squeeze(dim))
+
+    def cat(self, others, dim=0):
+        if not isinstance(others, (list, tuple)):
+            others = [others]
+        vnn_tensors = [self._vnn] + [t._vnn if isinstance(t, Tensor) else t for t in others]
+        return Tensor(vnn.Tensor.cat(vnn_tensors, dim))
+    
+    def stack(self, others, dim=0):
+        if not isinstance(others, (list, tuple)):
+            others = [others]
+        vnn_tensors = [self._vnn] + [t._vnn if isinstance(t, Tensor) else t for t in others]
+        return Tensor(vnn.Tensor.stack(vnn_tensors, dim))
+    def split(self, split_size, dim=0):
+        vnn_results = self._vnn.split(split_size, dim)
+        return [Tensor(v) for v in vnn_results]
+
+    def chunk(self, chunks, dim=0):
+        vnn_results = self._vnn.chunk(chunks, dim)
+        return [Tensor(v) for v in vnn_results]
+
+    def relu(self):
+        return Tensor(self._vnn.relu())
+
     @property
     def dtype(self):
         return self._vnn.dtype

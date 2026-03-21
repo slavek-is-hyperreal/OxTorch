@@ -95,6 +95,34 @@ def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
 def rms_norm(input, normalized_shape, weight=None, eps=1e-5):
     return input.rms_norm(normalized_shape, weight, eps)
 
+def cat(tensors, dim=0):
+    from .tensor import Tensor as ProxyTensor
+    import vulkannn_rusted as vnn
+    if not isinstance(tensors, (list, tuple)):
+        tensors = [tensors]
+    vnn_tensors = [t._vnn if hasattr(t, '_vnn') else t for t in tensors]
+    return ProxyTensor(vnn.Tensor.cat(vnn_tensors, dim))
+
+def stack(tensors, dim=0):
+    from .tensor import Tensor as ProxyTensor
+    import vulkannn_rusted as vnn
+    if not isinstance(tensors, (list, tuple)):
+        tensors = [tensors]
+    vnn_tensors = [t._vnn if hasattr(t, '_vnn') else t for t in tensors]
+    return ProxyTensor(vnn.Tensor.stack(vnn_tensors, dim))
+
+def unsqueeze(input, dim):
+    return input.unsqueeze(dim)
+
+def squeeze(input, dim=None):
+    return input.squeeze(dim)
+
+def split(tensor, split_size, dim=0):
+    return tensor.split(split_size, dim)
+
+def chunk(tensor, chunks, dim=0):
+    return tensor.chunk(chunks, dim)
+
 def zeros(*args, **kwargs):
     # Try native vnn.Tensor.zeros first
     try:

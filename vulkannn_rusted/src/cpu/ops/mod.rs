@@ -12,3 +12,6 @@ pub use bit_linear::*;
 
 pub mod norm;
 pub use norm::*;
+
+pub mod sequence;
+pub use sequence::*;

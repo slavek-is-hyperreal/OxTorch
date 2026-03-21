@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
+use crate::tensor::{Tensor, DataType, Storage};
 use rayon::prelude::*;
-use super::{Tensor, DataType};
 
 impl Tensor {
     pub fn execute_linear(input: &Tensor, weight: &Tensor, bias: Option<&Tensor>, activation: &str) -> PyResult<Tensor> {
@@ -307,14 +307,157 @@ impl Tensor {
 
     pub fn execute_transpose(&self) -> PyResult<Tensor> {
         if self.shape.len() != 2 { return Err(PyValueError::new_err("2D required for transpose")); }
-        Ok(Tensor { 
-            shape: vec![self.shape[1], self.shape[0]], 
-            storage: self.storage.clone(), 
-            dtype: self.dtype, 
-            device: self.device.clone(), 
-            name: format!("{}_T", self.name),
-            is_transposed: !self.is_transposed,
+        let new_shape = vec![self.shape[1], self.shape[0]];
+        let strides = Self::calculate_default_strides(&new_shape);
+        Ok(Tensor {
+            shape: new_shape,
+            strides,
+            offset: self.offset,
+            device: self.device.clone(),
+            dtype: self.dtype,
+            storage: self.storage.clone(),
+            is_transposed: self.is_transposed,
+            name: format!("{}_reshaped", self.name),
             mmap_data: self.mmap_data.clone(),
         })
+    }
+
+    pub fn execute_cat(tensors: &[&Self], dim: usize) -> PyResult<Self> {
+        if tensors.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err("cat: tensors must not be empty"));
+        }
+        
+        let first = tensors[0];
+        let dtype = first.dtype;
+        let device = &first.device;
+        
+        for t in tensors {
+            if t.dtype != dtype {
+                return Err(pyo3::exceptions::PyValueError::new_err("cat: all tensors must have the same dtype"));
+            }
+            if t.device != *device {
+                return Err(pyo3::exceptions::PyValueError::new_err("cat: all tensors must be on the same device"));
+            }
+            if t.shape.len() != first.shape.len() {
+                return Err(pyo3::exceptions::PyValueError::new_err("cat: all tensors must have the same number of dimensions"));
+            }
+            for i in 0..first.shape.len() {
+                if i != dim && t.shape[i] != first.shape[i] {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!("cat: dimension mismatch at dim {}", i)));
+                }
+            }
+        }
+        
+        // For now, if any are on Vulkan, we download to CPU and concat there
+        // TODO: Implement native Vulkan concatenation
+        let mut cpu_tensors = Vec::new();
+        let mut temp_tensors = Vec::new();
+        
+        for t in tensors {
+            if t.device == "vulkan" {
+                let (slice, _) = t.get_slice_raw_bytes();
+                let storage = t.raw_to_storage(slice);
+                let strides = Self::calculate_default_strides(&t.shape);
+                let temp = Tensor {
+                    shape: t.shape.clone(),
+                    strides,
+                    offset: 0,
+                    device: "cpu".to_string(),
+                    dtype: t.dtype,
+                    storage,
+                    is_transposed: t.is_transposed,
+                    name: format!("{}_cpu_tmp", t.name),
+                    mmap_data: None,
+                };
+                temp_tensors.push(temp);
+            }
+        }
+        
+        let mut ptr_idx = 0;
+        for t in tensors {
+            if t.device == "vulkan" {
+                cpu_tensors.push(&temp_tensors[ptr_idx]);
+                ptr_idx += 1;
+            } else {
+                cpu_tensors.push(*t);
+            }
+        }
+
+        let mut out_shape = first.shape.clone();
+        let total_dim: usize = tensors.iter().map(|t| t.shape[dim]).sum();
+        out_shape[dim] = total_dim;
+
+        let storage = match dtype {
+            DataType::F32 => Storage::F32(crate::cpu::cat_f32(&cpu_tensors, dim)),
+            DataType::F16 => Storage::F16(crate::cpu::cat_f16(&cpu_tensors, dim)),
+            DataType::BF16 => Storage::BF16(crate::cpu::cat_bf16(&cpu_tensors, dim)),
+            DataType::Int8 | DataType::Ternary => Storage::Int8(crate::cpu::cat_i8(&cpu_tensors, dim)),
+        };
+
+        let strides = Self::calculate_default_strides(&out_shape);
+        let mut out = Tensor {
+            shape: out_shape,
+            strides,
+            offset: 0,
+            device: "cpu".to_string(),
+            dtype,
+            storage,
+            is_transposed: false,
+            name: format!("{}_cat", first.name),
+            mmap_data: None,
+        };
+        
+        if device == "vulkan" {
+            out = out.to_device(device)?;
+        }
+        
+        Ok(out)
+    }
+
+    pub fn execute_stack(tensors: &[&Self], dim: usize) -> PyResult<Self> {
+        let mut unsqueezed = Vec::new();
+        for t in tensors {
+            unsqueezed.push(t.execute_unsqueeze(dim)?);
+        }
+        let refs: Vec<&Tensor> = unsqueezed.iter().collect();
+        Self::execute_cat(&refs, dim)
+    }
+
+    pub fn execute_split(&self, split_size: usize, dim: usize) -> PyResult<Vec<Tensor>> {
+        if dim >= self.shape.len() { return Err(PyValueError::new_err("Dim out of range")); }
+        let dim_size = self.shape[dim];
+        let mut results = Vec::new();
+        let mut current = 0;
+        
+        while current < dim_size {
+            let size = std::cmp::min(split_size, dim_size - current);
+            let mut new_shape = self.shape.clone();
+            new_shape[dim] = size;
+            
+            let offset = self.offset + current * self.strides[dim];
+            
+            results.push(Tensor {
+                shape: new_shape,
+                strides: self.strides.clone(),
+                offset,
+                device: self.device.clone(),
+                dtype: self.dtype,
+                storage: self.storage.clone(),
+                is_transposed: self.is_transposed,
+                name: format!("{}_split_{}", self.name, results.len()),
+                mmap_data: self.mmap_data.clone(),
+            });
+            
+            current += size;
+        }
+        Ok(results)
+    }
+
+    pub fn execute_chunk(&self, chunks: usize, dim: usize) -> PyResult<Vec<Tensor>> {
+        if dim >= self.shape.len() { return Err(PyValueError::new_err("Dim out of range")); }
+        let dim_size = self.shape[dim];
+        if chunks == 0 { return Err(PyValueError::new_err("chunks must be > 0")); }
+        let split_size = (dim_size + chunks - 1) / chunks;
+        self.execute_split(split_size, dim)
     }
 }

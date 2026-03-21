@@ -74,92 +74,176 @@ impl Tensor {
 
     pub fn get_slice_raw_f32(&self) -> (&[f32], usize) {
         match &self.storage {
-            Storage::F32(v) => (v.as_slice(), v.len()),
+            Storage::F32(v) => {
+                let size = self.shape.iter().product::<usize>();
+                let end = std::cmp::min(self.offset + size, v.len());
+                (&v[self.offset..end], end - self.offset)
+            },
             _ => (&[], 0),
         }
     }
 
     pub fn get_slice_raw_mut_f32(&mut self) -> (&mut [f32], usize) {
+        let offset = self.offset;
+        let size = self.shape.iter().product::<usize>();
         match &mut self.storage {
-            Storage::F32(v) => { let l = v.len(); (v.as_mut_slice(), l) },
+            Storage::F32(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (&mut v[offset..end], end - offset)
+            },
             _ => (&mut [], 0),
         }
     }
 
     pub fn get_slice_raw_f16(&self) -> (&[half::f16], usize) {
         match &self.storage {
-            Storage::F16(v) => (v.as_slice(), v.len()),
+            Storage::F16(v) => {
+                let size = self.shape.iter().product::<usize>();
+                let end = std::cmp::min(self.offset + size, v.len());
+                (&v[self.offset..end], end - self.offset)
+            },
             _ => (&[], 0),
         }
     }
 
     pub fn get_slice_raw_mut_f16(&mut self) -> (&mut [half::f16], usize) {
+        let offset = self.offset;
+        let size = self.shape.iter().product::<usize>();
         match &mut self.storage {
-            Storage::F16(v) => { let l = v.len(); (v.as_mut_slice(), l) },
+            Storage::F16(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (&mut v[offset..end], end - offset)
+            },
             _ => (&mut [], 0),
         }
     }
 
     pub fn get_slice_raw_bf16(&self) -> (&[half::bf16], usize) {
         match &self.storage {
-            Storage::BF16(v) => (v.as_slice(), v.len()),
+            Storage::BF16(v) => {
+                let size = self.shape.iter().product::<usize>();
+                let end = std::cmp::min(self.offset + size, v.len());
+                (&v[self.offset..end], end - self.offset)
+            },
             _ => (&[], 0),
         }
     }
 
     pub fn get_slice_raw_mut_bf16(&mut self) -> (&mut [half::bf16], usize) {
+        let offset = self.offset;
+        let size = self.shape.iter().product::<usize>();
         match &mut self.storage {
-            Storage::BF16(v) => { let l = v.len(); (v.as_mut_slice(), l) },
+            Storage::BF16(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (&mut v[offset..end], end - offset)
+            },
             _ => (&mut [], 0),
         }
     }
 
     pub fn get_slice_raw_i8(&self) -> (&[i8], usize) {
         match &self.storage {
-            Storage::Int8(v) => (v.as_slice(), v.len()),
+            Storage::Int8(v) => {
+                let size = self.shape.iter().product::<usize>();
+                let end = std::cmp::min(self.offset + size, v.len());
+                (&v[self.offset..end], end - self.offset)
+            },
             _ => (&[], 0),
         }
     }
 
     pub fn get_slice_raw_mut_i8(&mut self) -> (&mut [i8], usize) {
+        let offset = self.offset;
+        let size = self.shape.iter().product::<usize>();
         match &mut self.storage {
-            Storage::Int8(v) => { let l = v.len(); (v.as_mut_slice(), l) },
+            Storage::Int8(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (&mut v[offset..end], end - offset)
+            },
             _ => (&mut [], 0),
         }
     }
 
     pub fn get_slice_raw_ternary(&self) -> (&[i8], usize) {
         match &self.storage {
-            Storage::Ternary(v) => (v.as_slice(), v.len()),
+            Storage::Ternary(v) => {
+                let size = self.shape.iter().product::<usize>();
+                let end = std::cmp::min(self.offset + size, v.len());
+                (&v[self.offset..end], end - self.offset)
+            },
             _ => (&[], 0),
         }
     }
 
     pub fn get_slice_raw_mut_ternary(&mut self) -> (&mut [i8], usize) {
+        let offset = self.offset;
+        let size = self.shape.iter().product::<usize>();
         match &mut self.storage {
-            Storage::Ternary(v) => { let l = v.len(); (v.as_mut_slice(), l) },
+            Storage::Ternary(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (&mut v[offset..end], end - offset)
+            },
             _ => (&mut [], 0),
         }
     }
 
     pub fn get_slice_raw_bytes(&self) -> (&[u8], usize) {
+        let offset = self.offset;
+        let size = self.shape.iter().product::<usize>();
+        let bpe = match self.dtype {
+            DataType::F32 => 4,
+            DataType::F16 | DataType::BF16 => 2,
+            DataType::Int8 | DataType::Ternary => 1,
+        };
         match &self.storage {
-            Storage::F32(v) => (bytemuck::cast_slice(v), v.len() * 4),
-            Storage::F16(v) => (bytemuck::cast_slice(v), v.len() * 2),
-            Storage::BF16(v) => (bytemuck::cast_slice(v), v.len() * 2),
-            Storage::Int8(v) => (bytemuck::cast_slice(v), v.len()),
-            Storage::Ternary(v) => (bytemuck::cast_slice(v), v.len()),
+            Storage::F32(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (bytemuck::cast_slice(&v[offset..end]), (end - offset) * 4)
+            },
+            Storage::F16(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (bytemuck::cast_slice(&v[offset..end]), (end - offset) * 2)
+            },
+            Storage::BF16(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (bytemuck::cast_slice(&v[offset..end]), (end - offset) * 2)
+            },
+            Storage::Int8(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (bytemuck::cast_slice(&v[offset..end]), end - offset)
+            },
+            Storage::Ternary(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (bytemuck::cast_slice(&v[offset..end]), end - offset)
+            },
             Storage::None => (&[], 0),
         }
     }
 
     pub fn get_slice_raw_mut_bytes(&mut self) -> (&mut [u8], usize) {
+        let offset = self.offset;
+        let size = self.shape.iter().product::<usize>();
         match &mut self.storage {
-            Storage::F32(v) => { let l = v.len() * 4; (bytemuck::cast_slice_mut(v), l) },
-            Storage::F16(v) => { let l = v.len() * 2; (bytemuck::cast_slice_mut(v), l) },
-            Storage::BF16(v) => { let l = v.len() * 2; (bytemuck::cast_slice_mut(v), l) },
-            Storage::Int8(v) => { let l = v.len(); (bytemuck::cast_slice_mut(v), l) },
-            Storage::Ternary(v) => { let l = v.len(); (bytemuck::cast_slice_mut(v), l) },
+            Storage::F32(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (bytemuck::cast_slice_mut(&mut v[offset..end]), (end - offset) * 4)
+            },
+            Storage::F16(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (bytemuck::cast_slice_mut(&mut v[offset..end]), (end - offset) * 2)
+            },
+            Storage::BF16(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (bytemuck::cast_slice_mut(&mut v[offset..end]), (end - offset) * 2)
+            },
+            Storage::Int8(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (bytemuck::cast_slice_mut(&mut v[offset..end]), end - offset)
+            },
+            Storage::Ternary(v) => {
+                let end = std::cmp::min(offset + size, v.len());
+                (bytemuck::cast_slice_mut(&mut v[offset..end]), end - offset)
+            },
             Storage::None => (&mut [], 0),
         }
     }

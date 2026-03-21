@@ -6,8 +6,11 @@ impl Tensor {
         let old_size: usize = self.shape.iter().product();
         let new_size: usize = new_shape.iter().product();
         if old_size != new_size { return Err(pyo3::exceptions::PyValueError::new_err(format!("Reshape size mismatch: {} vs {}", old_size, new_size))); }
+        let strides = Self::calculate_default_strides(&new_shape);
         Ok(Tensor { 
             shape: new_shape, 
+            strides,
+            offset: self.offset,
             storage: self.storage.clone(), 
             dtype: self.dtype, 
             device: self.device.clone(), 
@@ -15,6 +18,48 @@ impl Tensor {
             is_transposed: self.is_transposed,
             mmap_data: self.mmap_data.clone(),
         })
+    }
+
+    pub fn to_device(&self, device: &str) -> PyResult<Tensor> {
+        let mut out = self.clone();
+        out.device = device.to_string();
+        Ok(out)
+    }
+
+    pub fn execute_unsqueeze(&self, dim: usize) -> PyResult<Tensor> {
+        let mut new_shape = self.shape.clone();
+        if dim > new_shape.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!("unsqueeze: Dimension out of range (expected to be in range [0, {}], but got {})", new_shape.len(), dim)));
+        }
+        new_shape.insert(dim, 1);
+        self.execute_reshape(new_shape)
+    }
+
+    pub fn execute_squeeze(&self, dim: Option<usize>) -> PyResult<Tensor> {
+        let mut new_shape = Vec::new();
+        match dim {
+            Some(d) => {
+                if d >= self.shape.len() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!("squeeze: Dimension out of range (dim {})", d)));
+                }
+                for (i, &s) in self.shape.iter().enumerate() {
+                    if i != d || s != 1 {
+                        new_shape.push(s);
+                    }
+                }
+            },
+            None => {
+                for &s in self.shape.iter() {
+                    if s != 1 {
+                        new_shape.push(s);
+                    }
+                }
+            }
+        }
+        if new_shape.is_empty() && !self.shape.is_empty() {
+             new_shape.push(1);
+        }
+        self.execute_reshape(new_shape)
     }
 
     pub fn elementwise_op(&self, other: &Tensor, op: &str) -> PyResult<Tensor> {

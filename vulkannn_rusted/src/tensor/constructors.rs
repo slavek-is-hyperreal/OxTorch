@@ -37,13 +37,16 @@ impl Tensor {
             }
         };
 
-        Ok(Tensor {
-            shape,
-            device: device.to_owned(),
+        let strides = Self::calculate_default_strides(&shape);
+        Ok(Tensor { 
+            shape, 
+            strides,
+            offset: 0,
+            dtype, 
+            device: device.to_owned(), 
+            storage, 
             name: name.to_owned(),
             is_transposed: false,
-            dtype,
-            storage,
             mmap_data: None,
         })
     }
@@ -57,8 +60,11 @@ impl Tensor {
             DataType::Int8 => Storage::Int8(vec![0; size]),
             DataType::Ternary => Storage::Ternary(vec![0; size]),
         };
+        let strides = Self::calculate_default_strides(&shape);
         Ok(Tensor { 
             shape, 
+            strides,
+            offset: 0,
             device: device.to_string(), 
             name: name.to_string(),
             is_transposed: false,
@@ -99,7 +105,18 @@ impl Tensor {
 
     pub fn new_from_ssd(path: &str, shape: Vec<usize>, dtype: DataType) -> PyResult<Self> {
         let engine = crate::io_uring_engine::DirectIoEngine::new(path, true);
-        Ok(Tensor { shape, device: "ssd".to_string(), name: "SSDMapped".to_string(), is_transposed: false, dtype, storage: Storage::None, mmap_data: Some(crate::tensor::IoEngineType::ReadOnly(std::sync::Arc::new(engine))) })
+        let strides = Self::calculate_default_strides(&shape);
+        Ok(Tensor { 
+            shape, 
+            strides,
+            offset: 0,
+            device: "ssd".to_string(), 
+            name: "SSDMapped".to_string(), 
+            is_transposed: false, 
+            dtype, 
+            storage: Storage::None, 
+            mmap_data: Some(crate::tensor::IoEngineType::ReadOnly(std::sync::Arc::new(engine))) 
+        })
     }
 
     pub fn new_ssd_raw(path: &str, shape: Vec<usize>, dtype: DataType) -> PyResult<Self> {
@@ -112,6 +129,17 @@ impl Tensor {
         let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         file.set_len((size * bytes_per_elem) as u64).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         let engine = crate::io_uring_engine::DirectIoEngine::new(path, false);
-        Ok(Tensor { shape, device: "ssd".to_string(), name: "SSDResult".to_string(), is_transposed: false, dtype, storage: Storage::None, mmap_data: Some(crate::tensor::IoEngineType::ReadWrite(std::sync::Arc::new(engine))) })
+        let strides = Self::calculate_default_strides(&shape);
+        Ok(Tensor { 
+            shape, 
+            strides,
+            offset: 0,
+            device: "ssd".to_string(), 
+            name: "SSDResult".to_string(), 
+            is_transposed: false, 
+            dtype, 
+            storage: Storage::None, 
+            mmap_data: Some(crate::tensor::IoEngineType::ReadWrite(std::sync::Arc::new(engine))) 
+        })
     }
 }
