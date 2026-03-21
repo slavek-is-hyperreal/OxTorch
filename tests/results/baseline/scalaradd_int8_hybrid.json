@@ -1,1 +1,1 @@
-{"name": "ScalarAdd_int8_hybrid", "op": "ScalarAdd", "dtype": "int8", "mode": "hybrid", "pt_time": 0.0070846189999429045, "vnn_time": 0.0009639421499741729, "ratio": 0.13606125466760335, "parity": true, "max_diff": 0.0, "cpu_temp": 44.0, "baseline": null}
+{"name": "ScalarAdd_int8_hybrid", "op": "ScalarAdd", "dtype": "int8", "mode": "hybrid", "pt_time": 0.0067573313499451615, "vnn_time": 0.000985968600070919, "ratio": 0.14591094457413584, "parity": true, "max_diff": 0.0, "cpu_temp": 37.0, "baseline": 0.0010493785500329978}

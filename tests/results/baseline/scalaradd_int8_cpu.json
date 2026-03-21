@@ -1,1 +1,1 @@
-{"name": "ScalarAdd_int8_cpu", "op": "ScalarAdd", "dtype": "int8", "mode": "cpu", "pt_time": 0.007082524900033605, "vnn_time": 0.0009080988000278011, "ratio": 0.128216817144334, "parity": true, "max_diff": 0.0, "cpu_temp": 45.0, "baseline": null}
+{"name": "ScalarAdd_int8_cpu", "op": "ScalarAdd", "dtype": "int8", "mode": "cpu", "pt_time": 0.014523550299963972, "vnn_time": 0.0011397773001590394, "ratio": 0.07847787053568209, "parity": true, "max_diff": 0.0, "cpu_temp": 39.0, "baseline": 0.0011760200999560767}

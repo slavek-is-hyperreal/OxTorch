@@ -1,1 +1,1 @@
-{"name": "ScalarAdd_f16_hybrid", "op": "ScalarAdd", "dtype": "f16", "mode": "hybrid", "pt_time": 0.006314933799876599, "vnn_time": 0.021139390999996975, "ratio": 3.3475237698311364, "parity": true, "max_diff": 0.0, "cpu_temp": 46.0, "baseline": null}
+{"name": "ScalarAdd_f16_hybrid", "op": "ScalarAdd", "dtype": "f16", "mode": "hybrid", "pt_time": 0.008545334699738305, "vnn_time": 0.0038106906999018975, "ratio": 0.44593814447298324, "parity": true, "max_diff": 0.0, "cpu_temp": 38.0, "baseline": 0.02234091329992225}

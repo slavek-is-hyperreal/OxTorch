@@ -1,1 +1,1 @@
-{"name": "ScalarAdd_f16_cpu", "op": "ScalarAdd", "dtype": "f16", "mode": "cpu", "pt_time": 0.006090416299957724, "vnn_time": 0.020808669200050645, "ratio": 3.4166251000272485, "parity": true, "max_diff": 0.0, "cpu_temp": 45.0, "baseline": null}
+{"name": "ScalarAdd_f16_cpu", "op": "ScalarAdd", "dtype": "f16", "mode": "cpu", "pt_time": 0.016653369499908876, "vnn_time": 0.004417217000082019, "ratio": 0.26524464013761234, "parity": true, "max_diff": 0.0, "cpu_temp": 39.0, "baseline": 0.02166488319999189}
