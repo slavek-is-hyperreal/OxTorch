@@ -250,11 +250,26 @@ impl Tensor {
 
     pub fn raw_to_storage(&self, raw: &[u8]) -> Storage {
         match self.dtype {
-            DataType::F32 => Storage::F32(bytemuck::cast_slice(raw).to_vec()),
-            DataType::F16 => Storage::F16(bytemuck::cast_slice(raw).to_vec()),
-            DataType::BF16 => Storage::BF16(bytemuck::cast_slice(raw).to_vec()),
-            DataType::Int8 => Storage::Int8(bytemuck::cast_slice(raw).to_vec()),
-            DataType::Ternary => Storage::Ternary(bytemuck::cast_slice(raw).to_vec()),
+            DataType::F32 => unsafe {
+                let v_f32 = std::slice::from_raw_parts(raw.as_ptr() as *const f32, raw.len() / 4);
+                Storage::F32(v_f32.to_vec())
+            },
+            DataType::F16 => unsafe {
+                let v_f16 = std::slice::from_raw_parts(raw.as_ptr() as *const half::f16, raw.len() / 2);
+                Storage::F16(v_f16.to_vec())
+            },
+            DataType::BF16 => unsafe {
+                let v_bf16 = std::slice::from_raw_parts(raw.as_ptr() as *const half::bf16, raw.len() / 2);
+                Storage::BF16(v_bf16.to_vec())
+            },
+            DataType::Int8 => unsafe {
+                let v_i8 = std::slice::from_raw_parts(raw.as_ptr() as *const i8, raw.len());
+                Storage::Int8(v_i8.to_vec())
+            },
+            DataType::Ternary => unsafe {
+                let v_i8 = std::slice::from_raw_parts(raw.as_ptr() as *const i8, raw.len());
+                Storage::Ternary(v_i8.to_vec())
+            },
         }
     }
 }

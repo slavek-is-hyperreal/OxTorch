@@ -70,8 +70,11 @@ The hardware fingerprint maps to compile-time variables:
 
 | Machine Parameter | Source | Rust Variable (`build.rs`) | Formula |
 |---|---|---|---|
-| L2 cache per core (KB) | `/sys/devices/system/cpu/cpu0/cache/index*/size` | `MSTS_TILE_BYTES` | `L2_KB * 1024 * 0.75` |
-| L3 cache total (MB) | same, `index3` | `MSTS_RING_DEPTH` | `min(L3_MB / TILE_MB, 64)` |
+| L2 cache per core (KB) | `/sys/devices/system/cpu/cpu0/cache/index*/size` | `MSTS_TILE_BYTES` | `L2_KB * 1024 * 0.75` (large tile) |
+| L2 cache per core (KB) | same | `MSTS_TILE_SMALL` | `L2_KB * 1024 * 0.75` (small-path tile ≈ 192KB for 256KB L2) |
+| L3 cache total (MB) | same, `index3` | `MSTS_RING_DEPTH` | `min(L3_MB / TILE_MB, 8)` (large path) |
+| L3 cache total (MB) | same | `MSTS_RING_SMALL` | `2` (single-thread path, just read-ahead) |
+| L3 cache total (MB) | same | `MSTS_DIRECT_MAX` | `L3_MB * 1024 * 1024 / 2` (50% of L3 → pure mmap, no ring) |
 | CPU micro-arch | `cpuid` leaf 0x1 via `raw-cpuid` crate | `RUSTFLAGS=-C target-cpu=...` | e.g. `znver4`, `alderlake` |
 | SIMD flags | `cpuid` leaf 7 | `RUSTFLAGS=-C target-feature=...` | `+avx512f,+avx512vnni,...` |
 | GPU PCI ID | `lspci -nn \| grep VGA` | `VNN_VULKAN_VENDOR` | `10de`=NVIDIA `1002`=AMD `8086`=Intel |

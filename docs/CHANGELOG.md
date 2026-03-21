@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.7.1] - 2026-03-21 "MSTS Dual-Path Dispatch & TensorPool"
+
+### Added (Pulled Forward from Sprint 4)
+- **MSTS 3-Path Dispatch** (`src/tensor/msts.rs`): Three compile-time dispatch paths eliminate thread-spawn overhead for SSD tensors:
+  - **Path A (Direct):** tensor < `MSTS_DIRECT_MAX` (≈3 MB for Ivy Bridge) → `mmap` read + single AVX loop. Zero atomics, zero threads.
+  - **Path B (Single-thread):** < 32 MB → 1 IO worker, ring depth = 2, tile ≈ 75% L2 cache.
+  - **Path C (Full CrookScheduler):** ≥ 32 MB → 2 background workers + `rayon` parallel compute.
+- **`save_ssd` method** (`src/tensor/constructors.rs`): Writes tensor raw bytes to disk and returns a new SSD-mapped tensor. Exposed to Python.
+- **`TensorPool` slab allocator** (`src/tensor/pool.rs`): Thread-local 6-bucket pool (4KB → 64MB) eliminates per-op `Vec<u8>` allocation overhead.
+- **`unary_op_ssd`, `load_to_f32_vec_msts` Python bindings** (`src/tensor/mod.rs`).
+- **MSTS SSD Benchmark Suite** (`tests/benchmarks/ssd/`): Three new benchmarks (`msts_path_a_relu_f32.py`, `msts_path_b_relu_f32.py`, `msts_path_c_relu_f32.py`) — verify correctness and report MB/s throughput for each dispatch path.
+
+### Fixed
+- **`Storage::drop` AlignmentMismatch panic**: Replaced incorrect `bytemuck::cast_vec` with manual `Vec::from_raw_parts` pointer reconstruction. No memory copy; correct alignment contract maintained.
+- **`AlignedBuffer` indexing in `msts.rs`**: Added `.as_slice()` / `.as_mut_slice()` calls; `AlignedBuffer` does not implement `Index`.
+- **Recursion guard in `mod.rs`**: Python wrappers now call `execute_*` (renamed internal) variants.
+
+---
+
 ## [3.7.0] - 2026-03-19 "The BitNet Leapfrog & OxTorch Rebranding"
 ### Added
 - **Project Rebranding**: Transitioned from `VulkanNN` to **OxTorch**.

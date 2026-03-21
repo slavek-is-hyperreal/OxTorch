@@ -6,35 +6,58 @@ impl Tensor {
     pub fn new_from_vec(data: Vec<f32>, shape: Vec<usize>, dtype: DataType, device: &str, name: &str) -> PyResult<Self> {
         let storage = match dtype {
             DataType::F32 => Storage::F32(data),
+            _ if device == "cpu" => {
+                let size = data.len();
+                let n_bytes = size * dtype.size();
+                super::pool::TENSOR_POOL.with(|pool| {
+                    let mut p = pool.borrow_mut();
+                    let mut buf = p.alloc(n_bytes);
+                    let (ptr, _len, cap) = (buf.as_mut_ptr(), buf.len(), buf.capacity());
+                    std::mem::forget(buf);
+                    
+                    match dtype {
+                        DataType::F16 => {
+                            let mut v = unsafe { Vec::from_raw_parts(ptr as *mut half::f16, size, cap / 2) };
+                            for i in 0..size { v[i] = half::f16::from_f32(data[i]); }
+                            Storage::F16(v)
+                        },
+                        DataType::BF16 => {
+                            let mut v = unsafe { Vec::from_raw_parts(ptr as *mut half::bf16, size, cap / 2) };
+                            for i in 0..size { v[i] = half::bf16::from_f32(data[i]); }
+                            Storage::BF16(v)
+                        },
+                        DataType::Int8 => {
+                            let mut v = unsafe { Vec::from_raw_parts(ptr as *mut i8, size, cap) };
+                            for i in 0..size { v[i] = data[i] as i8; }
+                            Storage::Int8(v)
+                        },
+                        DataType::Ternary => {
+                            let gamma = if data.is_empty() { 1.0 } else {
+                                data.iter().map(|x| x.abs()).sum::<f32>() / (size as f32)
+                            }.max(1e-5);
+                            let mut v = unsafe { Vec::from_raw_parts(ptr as *mut i8, size, cap) };
+                            for i in 0..size { v[i] = (data[i] / gamma).clamp(-1.0, 1.0).round() as i8; }
+                            Storage::Ternary(v)
+                        },
+                        _ => unreachable!(),
+                    }
+                })
+            },
             DataType::F16 => {
-                let mut data_f16 = vec![half::f16::ZERO; data.len()];
-                for i in 0..data.len() { data_f16[i] = half::f16::from_f32(data[i]); }
-                Storage::F16(data_f16)
+                let mut v = vec![half::f16::ZERO; data.len()];
+                for i in 0..data.len() { v[i] = half::f16::from_f32(data[i]); }
+                Storage::F16(v)
             },
             DataType::BF16 => {
-                let mut data_bf16 = vec![half::bf16::ZERO; data.len()];
-                for i in 0..data.len() { data_bf16[i] = half::bf16::from_f32(data[i]); }
-                Storage::BF16(data_bf16)
+                let mut v = vec![half::bf16::ZERO; data.len()];
+                for i in 0..data.len() { v[i] = half::bf16::from_f32(data[i]); }
+                Storage::BF16(v)
             },
-            DataType::Int8 => {
-                let mut data_i8 = vec![0i8; data.len()];
-                for i in 0..data.len() { data_i8[i] = data[i] as i8; }
-                Storage::Int8(data_i8)
+            DataType::Int8 | DataType::Ternary => {
+                let mut v = vec![0i8; data.len()];
+                for i in 0..data.len() { v[i] = data[i] as i8; }
+                Storage::Int8(v)
             },
-            DataType::Ternary => {
-                // BitNet 1.58b Quantization: w = round(clip(w / gamma, -1, 1))
-                // gamma = mean(abs(w))
-                let gamma = if data.is_empty() { 1.0 } else {
-                    data.iter().map(|x| x.abs()).sum::<f32>() / (data.len() as f32)
-                }.max(1e-5);
-                
-                let mut data_t = vec![0i8; data.len()];
-                for i in 0..data.len() {
-                    let val = (data[i] / gamma).clamp(-1.0, 1.0).round();
-                    data_t[i] = val as i8;
-                }
-                Storage::Ternary(data_t)
-            }
         };
 
         let strides = Self::calculate_default_strides(shape.clone());
@@ -53,13 +76,48 @@ impl Tensor {
 
     pub fn new(shape: Vec<usize>, dtype: DataType, device: &str, name: &str) -> PyResult<Self> {
         let size: usize = shape.iter().product();
-        let storage = match dtype {
-            DataType::F32 => Storage::F32(vec![0.0; size]),
-            DataType::F16 => Storage::F16(vec![half::f16::ZERO; size]),
-            DataType::BF16 => Storage::BF16(vec![half::bf16::ZERO; size]),
-            DataType::Int8 => Storage::Int8(vec![0; size]),
-            DataType::Ternary => Storage::Ternary(vec![0; size]),
+        let n_bytes = size * dtype.size();
+        
+        let storage = if device == "cpu" {
+            super::pool::TENSOR_POOL.with(|pool| {
+                let mut p = pool.borrow_mut();
+                let mut buf = p.alloc(n_bytes);
+                let (ptr, _len, cap) = (buf.as_mut_ptr(), buf.len(), buf.capacity());
+                std::mem::forget(buf);
+                
+                match dtype {
+                    DataType::F32 => {
+                        let v = unsafe { Vec::from_raw_parts(ptr as *mut f32, size, cap / 4) };
+                        Storage::F32(v)
+                    },
+                    DataType::F16 => {
+                        let v = unsafe { Vec::from_raw_parts(ptr as *mut half::f16, size, cap / 2) };
+                        Storage::F16(v)
+                    },
+                    DataType::BF16 => {
+                        let v = unsafe { Vec::from_raw_parts(ptr as *mut half::bf16, size, cap / 2) };
+                        Storage::BF16(v)
+                    },
+                    DataType::Int8 => {
+                        let v = unsafe { Vec::from_raw_parts(ptr as *mut i8, size, cap) };
+                        Storage::Int8(v)
+                    },
+                    DataType::Ternary => {
+                        let v = unsafe { Vec::from_raw_parts(ptr as *mut i8, size, cap) };
+                        Storage::Ternary(v)
+                    },
+                }
+            })
+        } else {
+            match dtype {
+                DataType::F32 => Storage::F32(vec![0.0; size]),
+                DataType::F16 => Storage::F16(vec![half::f16::ZERO; size]),
+                DataType::BF16 => Storage::BF16(vec![half::bf16::ZERO; size]),
+                DataType::Int8 => Storage::Int8(vec![0; size]),
+                DataType::Ternary => Storage::Ternary(vec![0; size]),
+            }
         };
+
         let strides = Self::calculate_default_strides(shape.clone());
         Ok(Tensor { 
             shape, 
@@ -141,5 +199,15 @@ impl Tensor {
             storage: Storage::None, 
             mmap_data: Some(crate::tensor::IoEngineType::ReadWrite(std::sync::Arc::new(engine))) 
         })
+    }
+
+    pub fn execute_save_ssd(&self, path: &str) -> PyResult<Self> {
+        use std::io::Write;
+        let (bytes, _) = self.get_slice_raw_bytes();
+        let mut file = std::fs::File::create(path).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        file.write_all(bytes).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        file.sync_all().map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        
+        Self::new_from_ssd(path, self.shape.clone(), self.dtype)
     }
 }

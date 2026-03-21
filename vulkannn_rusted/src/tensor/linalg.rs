@@ -91,30 +91,55 @@ impl Tensor {
              // CPU Fallback: Loop over the batch dimension
              let a_f32 = self.to_numpy_f32_vec();
              let b_f32 = other.to_numpy_f32_vec();
-             let mut c_f32 = vec![0.0f32; (b * m * n) as usize];
              
              let stride_a = (m * k) as usize;
              let stride_b = (k * n) as usize;
              let stride_c = (m * n) as usize;
 
-             for i in 0..b as usize {
-                 let a_slice = &a_f32[i * stride_a .. (i+1) * stride_a];
-                 let b_slice = &b_f32[i * stride_b .. (i+1) * stride_b];
-                 let c_slice = &mut c_f32[i * stride_c .. (i+1) * stride_c];
-                 crate::cpu::matmul_f32(m as usize, k as usize, n as usize, a_slice, b_slice, c_slice);
-             }
-
-             // Write back the result bytes depending on output dtype
-             let res_dtype = res.dtype; 
+             let res_dtype = res.dtype;
              let (res_bytes, _) = res.get_slice_raw_mut_bytes();
-             match res_dtype {
-                 DataType::F32 => bytemuck::cast_slice_mut::<u8, f32>(res_bytes).copy_from_slice(&c_f32),
-                 DataType::F16 => crate::cpu::convert_f32_to_f16(&c_f32, bytemuck::cast_slice_mut(res_bytes)),
-                 DataType::BF16 => crate::cpu::convert_f32_to_bf16(&c_f32, bytemuck::cast_slice_mut(res_bytes)),
-                 DataType::Int8 | DataType::Ternary => {
-                      let dst = bytemuck::cast_slice_mut::<u8, i8>(res_bytes);
-                      for i in 0..c_f32.len() { dst[i] = c_f32[i] as i8; }
+
+             if res_dtype == DataType::F32 {
+                 let c_f32: &mut [f32] = bytemuck::cast_slice_mut(res_bytes);
+                 for i in 0..b as usize {
+                     let a_slice = &a_f32[i * stride_a .. (i+1) * stride_a];
+                     let b_slice = &b_f32[i * stride_b .. (i+1) * stride_b];
+                     let c_slice = &mut c_f32[i * stride_c .. (i+1) * stride_c];
+                     crate::cpu::matmul_f32(m as usize, k as usize, n as usize, a_slice, b_slice, c_slice);
                  }
+             } else {
+                 let total_elems = (b * m * n) as usize;
+                 let mut c_f32_vec = super::pool::TENSOR_POOL.with(|pool| {
+                     let mut p = pool.borrow_mut();
+                     let mut buf = p.alloc(total_elems * 4);
+                     let (ptr, _len, cap) = (buf.as_mut_ptr(), buf.len(), buf.capacity());
+                     std::mem::forget(buf);
+                     unsafe { Vec::from_raw_parts(ptr as *mut f32, total_elems, cap / 4) }
+                 });
+
+                 for i in 0..b as usize {
+                     let a_slice = &a_f32[i * stride_a .. (i+1) * stride_a];
+                     let b_slice = &b_f32[i * stride_b .. (i+1) * stride_b];
+                     let c_slice = &mut c_f32_vec[i * stride_c .. (i+1) * stride_c];
+                     crate::cpu::matmul_f32(m as usize, k as usize, n as usize, a_slice, b_slice, c_slice);
+                 }
+
+                 match res_dtype {
+                     DataType::F16 => crate::cpu::convert_f32_to_f16(&c_f32_vec, bytemuck::cast_slice_mut(res_bytes)),
+                     DataType::BF16 => crate::cpu::convert_f32_to_bf16(&c_f32_vec, bytemuck::cast_slice_mut(res_bytes)),
+                     DataType::Int8 | DataType::Ternary => {
+                          let dst = bytemuck::cast_slice_mut::<u8, i8>(res_bytes);
+                          for i in 0..c_f32_vec.len() { dst[i] = c_f32_vec[i] as i8; }
+                     }
+                     _ => {}
+                 }
+                 // c_f32_vec drop returns to pool
+                 super::pool::TENSOR_POOL.with(|pool| {
+                     let mut v = std::mem::take(&mut c_f32_vec);
+                     let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
+                     std::mem::forget(v);
+                     pool.borrow_mut().free(unsafe { Vec::from_raw_parts(ptr as *mut u8, len * 4, cap * 4) });
+                 });
              }
         } else {
              // Vulkan single shader dispatch
@@ -158,17 +183,31 @@ impl Tensor {
                 _ => {
                     let a_f32 = self.to_numpy_f32_vec();
                     let b_f32 = other.to_numpy_f32_vec();
-                    let mut c_f32 = vec![0.0f32; (m * n) as usize];
-                    crate::cpu::matmul_f32(m as usize, k as usize, n as usize, &a_f32, &b_f32, &mut c_f32);
+                    let total_elems = (m * n) as usize;
+                    let mut c_f32_vec = super::pool::TENSOR_POOL.with(|pool| {
+                        let mut p = pool.borrow_mut();
+                        let mut buf = p.alloc(total_elems * 4);
+                        let (ptr, _len, cap) = (buf.as_mut_ptr(), buf.len(), buf.capacity());
+                        std::mem::forget(buf);
+                        unsafe { Vec::from_raw_parts(ptr as *mut f32, total_elems, cap / 4) }
+                    });
+
+                    crate::cpu::matmul_f32(m as usize, k as usize, n as usize, &a_f32, &b_f32, &mut c_f32_vec);
                     let res_dtype = res.dtype; let (res_bytes, _) = res.get_slice_raw_mut_bytes();
                     match res_dtype {
-                        DataType::BF16 => crate::cpu::convert_f32_to_bf16(&c_f32, bytemuck::cast_slice_mut(res_bytes)),
-                        DataType::Int8 => {
+                        DataType::BF16 => crate::cpu::convert_f32_to_bf16(&c_f32_vec, bytemuck::cast_slice_mut(res_bytes)),
+                        DataType::Int8 | DataType::Ternary => {
                              let dst = bytemuck::cast_slice_mut::<u8, i8>(res_bytes);
-                             for i in 0..c_f32.len() { dst[i] = c_f32[i] as i8; }
+                             for i in 0..c_f32_vec.len() { dst[i] = c_f32_vec[i] as i8; }
                         }
                         _ => {}
                     }
+                    super::pool::TENSOR_POOL.with(|pool| {
+                        let mut v = std::mem::take(&mut c_f32_vec);
+                        let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
+                        std::mem::forget(v);
+                        pool.borrow_mut().free(unsafe { Vec::from_raw_parts(ptr as *mut u8, len * 4, cap * 4) });
+                    });
                 }
             }
         } else {
@@ -356,7 +395,13 @@ impl Tensor {
         let total_out_elems: usize = out_shape.iter().product();
         let total_out_bytes = total_out_elems * bytes_per_elem;
 
-        let mut raw_out = vec![0u8; total_out_bytes];
+        let mut raw_out = unsafe {
+            let cap = (total_out_bytes + 7) / 8;
+            let v_f64 = vec![0.0f64; cap];
+            let ptr = v_f64.as_ptr();
+            std::mem::forget(v_f64);
+            Vec::from_raw_parts(ptr as *mut u8, total_out_bytes, cap * 8)
+        };
 
         // For each input tensor, copy its bytes into the correct window of raw_out.
         // SSD tensors use MSTS load_to_buffer (ring-buffered, no intermediate Vec).
@@ -391,7 +436,7 @@ impl Tensor {
             let mut cpu_tensors_owned = Vec::new();
             for t in tensors.iter() {
                 if t.is_ssd() {
-                    let storage = t.load_to_storage_cpu()?;
+                    let storage = t.execute_load_to_storage_cpu()?;
                     let strides = Self::calculate_default_strides(t.shape.clone());
                     cpu_tensors_owned.push(Tensor {
                         shape: t.shape.clone(), strides, offset: 0,
@@ -414,21 +459,72 @@ impl Tensor {
                 }
             }
             let cpu_tensors: Vec<&Tensor> = cpu_tensors_owned.iter().collect();
-            let typed_raw = match dtype {
-                DataType::F32  => bytemuck::cast_slice::<f32, u8>(&crate::cpu::cat_f32(&cpu_tensors, dim)).to_vec(),
-                DataType::F16  => bytemuck::cast_slice::<half::f16, u8>(&crate::cpu::cat_f16(&cpu_tensors, dim)).to_vec(),
-                DataType::BF16 => bytemuck::cast_slice::<half::bf16, u8>(&crate::cpu::cat_bf16(&cpu_tensors, dim)).to_vec(),
-                DataType::Int8 | DataType::Ternary => bytemuck::cast_slice::<i8, u8>(&crate::cpu::cat_i8(&cpu_tensors, dim)).to_vec(),
+            raw_out = match dtype {
+                DataType::F32  => unsafe {
+                    let v = crate::cpu::cat_f32(&cpu_tensors, dim);
+                    let ptr = v.as_ptr();
+                    let len = v.len() * 4;
+                    let cap = v.capacity() * 4;
+                    std::mem::forget(v);
+                    Vec::from_raw_parts(ptr as *mut u8, len, cap)
+                },
+                DataType::F16  => unsafe {
+                    let v = crate::cpu::cat_f16(&cpu_tensors, dim);
+                    let ptr = v.as_ptr();
+                    let len = v.len() * 2;
+                    let cap = v.capacity() * 2;
+                    std::mem::forget(v);
+                    Vec::from_raw_parts(ptr as *mut u8, len, cap)
+                },
+                DataType::BF16 => unsafe {
+                    let v = crate::cpu::cat_bf16(&cpu_tensors, dim);
+                    let ptr = v.as_ptr();
+                    let len = v.len() * 2;
+                    let cap = v.capacity() * 2;
+                    std::mem::forget(v);
+                    Vec::from_raw_parts(ptr as *mut u8, len, cap)
+                },
+                DataType::Int8 | DataType::Ternary => unsafe {
+                    let v = crate::cpu::cat_i8(&cpu_tensors, dim);
+                    let ptr = v.as_ptr();
+                    let len = v.len();
+                    let cap = v.capacity();
+                    std::mem::forget(v);
+                    Vec::from_raw_parts(ptr as *mut u8, len, cap)
+                },
             };
-            raw_out = typed_raw;
         }
 
         // Build the typed Storage from raw bytes
         let storage = match dtype {
-            DataType::F32  => Storage::F32(bytemuck::cast_slice::<u8, f32>(&raw_out).to_vec()),
-            DataType::F16  => Storage::F16(bytemuck::cast_slice::<u8, half::f16>(&raw_out).to_vec()),
-            DataType::BF16 => Storage::BF16(bytemuck::cast_slice::<u8, half::bf16>(&raw_out).to_vec()),
-            DataType::Int8 | DataType::Ternary => Storage::Int8(bytemuck::cast_slice::<u8, i8>(&raw_out).to_vec()),
+            DataType::F32  => unsafe {
+                let ptr = raw_out.as_ptr();
+                let len = raw_out.len() / 4;
+                let cap = raw_out.capacity() / 4;
+                std::mem::forget(raw_out);
+                Storage::F32(Vec::from_raw_parts(ptr as *mut f32, len, cap))
+            },
+            DataType::F16  => unsafe {
+                let ptr = raw_out.as_ptr();
+                let len = raw_out.len() / 2;
+                let cap = raw_out.capacity() / 2;
+                std::mem::forget(raw_out);
+                Storage::F16(Vec::from_raw_parts(ptr as *mut half::f16, len, cap))
+            },
+            DataType::BF16 => unsafe {
+                let ptr = raw_out.as_ptr();
+                let len = raw_out.len() / 2;
+                let cap = raw_out.capacity() / 2;
+                std::mem::forget(raw_out);
+                Storage::BF16(Vec::from_raw_parts(ptr as *mut half::bf16, len, cap))
+            },
+            DataType::Int8 | DataType::Ternary => unsafe {
+                let ptr = raw_out.as_ptr();
+                let len = raw_out.len();
+                let cap = raw_out.capacity();
+                std::mem::forget(raw_out);
+                Storage::Int8(Vec::from_raw_parts(ptr as *mut i8, len, cap))
+            },
         };
 
         let strides = Self::calculate_default_strides(out_shape.clone());

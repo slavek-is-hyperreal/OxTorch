@@ -1,0 +1,12 @@
+{
+    "name": "LayerNorm_f32_hybrid",
+    "op": "LayerNorm",
+    "dtype": "f32",
+    "mode": "hybrid",
+    "pt_time": 0.0031967002500095988,
+    "vnn_time": 0.001981323299878568,
+    "ratio": 0.6198026542753323,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 49.0
+}

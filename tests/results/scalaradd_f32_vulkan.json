@@ -1,0 +1,12 @@
+{
+    "name": "ScalarAdd_f32_vulkan",
+    "op": "ScalarAdd",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.0053003668999735964,
+    "vnn_time": 0.004730803399979777,
+    "ratio": 0.892542627568545,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 45.0
+}

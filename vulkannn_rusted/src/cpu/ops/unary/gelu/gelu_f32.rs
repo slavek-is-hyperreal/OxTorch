@@ -31,16 +31,19 @@ fn gelu_f32_serial(buf: &mut [f32]) {
     gelu_f32_scalar(buf);
 }
 
-fn gelu_f32_scalar(buf: &mut [f32]) {
+pub fn gelu_f32_scalar_single(v: f32) -> f32 {
     const K: f32 = 0.7978845608; 
     const C: f32 = 0.044715;
+    let inner = K * (v + C * v * v * v); 
+    let y = inner.clamp(-9.0, 9.0);
+    let e2y = (2.0 * y).exp(); 
+    let tanh_v = (e2y - 1.0) / (e2y + 1.0); 
+    0.5 * v * (1.0 + tanh_v)
+}
+
+fn gelu_f32_scalar(buf: &mut [f32]) {
     for x in buf.iter_mut() {
-        let v = *x; 
-        let inner = K * (v + C * v * v * v); 
-        let y = inner.clamp(-9.0, 9.0);
-        let e2y = (2.0 * y).exp(); 
-        let tanh_v = (e2y - 1.0) / (e2y + 1.0); 
-        *x = 0.5 * v * (1.0 + tanh_v);
+        *x = gelu_f32_scalar_single(*x);
     }
 }
 

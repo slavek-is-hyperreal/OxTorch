@@ -61,11 +61,30 @@ fn sub_i8_neon(a: &[i8], b: &[i8], res: &mut [i8]) {
 
 /// GPR-based SWAR subtraction (8 bytes at a time)
 fn sub_i8_swar(a: &[i8], b: &[i8], res: &mut [i8]) {
-    let _n8 = (a.len() / 8) * 8;
-    // SWAR Sub is trickier due to borrow bit.
-    // Simplifying: use scalar for now or implement full SWAR sub if needed.
-    // For legacy Pi 1, we mostly care about Add and Move.
-    sub_i8_scalar(a, b, res);
+    #[cfg(target_arch = "x86_64")]
+    {
+        // On x86_64 we always have at least SSE2; _mm_subs_epi8 handles saturating sub.
+        return sub_i8_sse2(a, b, res);
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // For other arches without SIMD, keep scalar for now.
+        sub_i8_scalar(a, b, res);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn sub_i8_sse2(a: &[i8], b: &[i8], res: &mut [i8]) {
+    let n16 = (a.len() / 16) * 16;
+    for i in (0..n16).step_by(16) {
+        unsafe {
+            let va = _mm_loadu_si128(a.as_ptr().add(i) as *const __m128i);
+            let vb = _mm_loadu_si128(b.as_ptr().add(i) as *const __m128i);
+            _mm_storeu_si128(res.as_mut_ptr().add(i) as *mut __m128i, _mm_subs_epi8(va, vb));
+        }
+    }
+    sub_i8_scalar(&a[n16..], &b[n16..], &mut res[n16..]);
 }
 
 fn sub_i8_scalar(a: &[i8], b: &[i8], res: &mut [i8]) {

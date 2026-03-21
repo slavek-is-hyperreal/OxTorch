@@ -5,6 +5,7 @@ if __name__ == "__main__":
         name="Split_f32_cpu",
         op="Split",
         shape=(1000, 1000),
+        kwargs={"split_size": 250, "dim": 0},
         mode="cpu",
         dtype="f32",
         is_ssd=False

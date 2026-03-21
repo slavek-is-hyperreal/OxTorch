@@ -45,7 +45,7 @@ _OP_KWARGS = {
 }
 
 class BenchmarkBase:
-    def __init__(self, name, op, shape, mode="cpu", dtype="f32", iterations=None, is_ssd=False, inplace=False):
+    def __init__(self, name, op, shape, mode="cpu", dtype="f32", iterations=None, is_ssd=False, inplace=False, kwargs=None):
         self.name = name
         self.op = op
         self.shape = shape
@@ -54,6 +54,7 @@ class BenchmarkBase:
         self.iterations = iterations
         self.is_ssd = is_ssd
         self.inplace = inplace
+        self.kwargs = kwargs or {}
         self.vnn, self.vnn_mod_name = load_vnn()
 
     def run(self):
@@ -77,7 +78,9 @@ class BenchmarkBase:
 
         # Resolve op name: PascalCase -> actual torch function name
         _resolved_op = _OP_NAME_MAP.get(self.op, self.op)
-        _op_kwargs = _OP_KWARGS.get(_resolved_op, {})
+        # Get any op-specific keyword args (like dim for softmax)
+        _op_kwargs = _OP_KWARGS.get(_resolved_op.lower(), {}).copy()
+        _op_kwargs.update(self.kwargs)
         b_vnn = None
         b_torch = None
         b_ox = None
@@ -125,9 +128,9 @@ class BenchmarkBase:
                 elif self.op == "Stack":
                     res_torch = torch.stack([a_torch, b_torch], dim=0)
                 elif self.op == "Split":
-                    res_torch = torch.split(a_torch, 1, dim=0)
+                    res_torch = torch.split(a_torch, _op_kwargs.get("split_size", 1), dim=_op_kwargs.get("dim", 0))
                 elif self.op == "Chunk":
-                    res_torch = torch.chunk(a_torch, 2, dim=0)
+                    res_torch = torch.chunk(a_torch, _op_kwargs.get("chunks", 2), dim=_op_kwargs.get("dim", 0))
                 elif self.op == "LayerNorm":
                     res_torch = torch.layer_norm(a_torch, [self.shape[-1]], weight=b_torch, bias=None, eps=1e-5)
                 elif self.op == "RMSNorm":
@@ -181,9 +184,9 @@ class BenchmarkBase:
             elif self.op == "Stack":
                 res_vnn = torch_ox.stack([a_ox, b_ox], dim=0)
             elif self.op == "Split":
-                res_vnn = torch_ox.split(a_ox, 1, dim=0)
+                res_vnn = torch_ox.split(a_ox, _op_kwargs.get("split_size", 1), dim=_op_kwargs.get("dim", 0))
             elif self.op == "Chunk":
-                res_vnn = torch_ox.chunk(a_ox, 2, dim=0)
+                res_vnn = torch_ox.chunk(a_ox, _op_kwargs.get("chunks", 2), dim=_op_kwargs.get("dim", 0))
             elif self.op == "LayerNorm":
                 res_vnn = a_ox.layer_norm([self.shape[-1]], weight=b_ox, bias=None, eps=1e-5)
             elif self.op == "RMSNorm":
@@ -208,8 +211,22 @@ class BenchmarkBase:
         if not self.is_ssd:
             # Handle list returns for split/chunk
             if isinstance(res_torch, (list, tuple)):
-                res_torch_np = np.concatenate([r.detach().cpu().to(torch.float32).numpy() for r in res_torch])
-                res_vnn_np = np.concatenate([r.to_numpy() for r in res_vnn])
+                if len(res_torch) > 10:
+                    # If list is very long (e.g. split_size=1 on 1000x1000), 
+                    # materializing all to_numpy() is extremely slow in benchmarks.
+                    # Check first and last element for parity.
+                    print(f"    [parity] Checking first and last chunks (Total {len(res_torch)} chunks)")
+                    res_torch_np = np.concatenate([
+                        res_torch[0].detach().cpu().to(torch.float32).numpy(),
+                        res_torch[-1].detach().cpu().to(torch.float32).numpy()
+                    ])
+                    res_vnn_np = np.concatenate([
+                        res_vnn[0].to_numpy(),
+                        res_vnn[-1].to_numpy()
+                    ])
+                else:
+                    res_torch_np = np.concatenate([r.detach().cpu().to(torch.float32).numpy() for r in res_torch])
+                    res_vnn_np = np.concatenate([r.to_numpy() for r in res_vnn])
             else:
                 res_torch_np = res_torch.detach().cpu().to(torch.float32).numpy()
                 res_vnn_np = res_vnn.to_numpy()

@@ -24,10 +24,10 @@
 
 ### In Progress
 - [/] **MSTS PyTorch Fallback** — generalize tile-pulling to arbitrary `Callable`, enables SSD streaming for any op.
-- [ ] `bmm` (Batch MatMul), `outer` (RoPE).
-- [ ] `scaled_dot_product_attention` — fused Vulkan mega-kernel.
-- [ ] `index_select`, `__getitem__` (slicing), `embedding` lookup.
-- [ ] `argmax`, `topk` (decoding ops).
+- [x] `bmm` (Batch MatMul) [NATIVE], `outer` (RoPE).
+- [ ] `scaled_dot_product_attention` — [FALLBACK], fused Vulkan mega-kernel pending.
+- [ ] `index_select`, `__getitem__` (slicing), `embedding` lookup — [FALLBACK].
+- [ ] `argmax`, `topk` (decoding ops) — [FALLBACK].
 
 ---
 
@@ -45,29 +45,29 @@
 
 ### [Sprint 2] Transformers Ops (LLM Ready) [/]
 *Target: run LLaMA/Mistral/Phi mini inference (quantized, SSD-resident).*
-- [ ] **Matrix**: `bmm` (Batch MatMul), `outer` (RoPE).
+- [x] **Matrix**: `bmm` (Batch MatMul) ✅, `outer` (RoPE).
 - [ ] **Fused Linear**: `F.linear(x, W, b)` - mm + bias + relu in one Vulkan dispatch.
-- [x] **Normalization**: `rms_norm` ✅ (f16: 6× faster than PyTorch), `layer_norm` ✅.
+- [x] **Normalization**: `rms_norm` ✅, `layer_norm` ✅.
 - [x] **Sequence**: `cat` ✅, `stack` ✅, `split` ✅, `chunk` ✅.
-- [ ] **Indexing**: `index_select` (gather/scatter), `__getitem__` (slicing).
-- [ ] **Embeddings**: `embedding(input, weight)` lookup table.
-- [ ] **Attention**: `scaled_dot_product_attention` (fused Vulkan mega-kernel).
-- [ ] **Decoding**: `argmax`, `topk`.
-- [ ] **Arithmetic**: `div` ✅ (cpu+vulkan). remaining: `mod`, `pow`.
-- [/] **MSTS PyTorch Fallback** — generalize tile-pulling to arbitrary `Callable[[np.ndarray], np.ndarray]`. Enables: (1) SSD streaming for any op without a native Vulkan shader (e.g. `layer_norm`, `erf`, `embedding`), (2) memory-efficient processing of tensors larger than RAM by materializing only 256K-element tiles at a time.
+- [ ] **Indexing**: `index_select`, `__getitem__` [FALLBACK].
+- [ ] **Embeddings**: `embedding` lookup [FALLBACK].
+- [ ] **Attention**: `scaled_dot_product_attention` [FALLBACK].
+- [ ] **Decoding**: `argmax`, `topk` [FALLBACK].
+- [ ] **Arithmetic**: `div` ✅. remaining: `mod`, `pow`.
+- [x] **MSTS PyTorch Fallback**: `msts_pytorch_apply` ✅ (Streams SSD tiles through PyTorch for all missing ops).
 
-**Performance regressions (identified 2026-03-21 from baseline, 164 tests):**
-- [ ] **`sub_i8_swar` is scalar stub** — `sub_i8_swar()` calls `sub_i8_scalar()` (SWAR borrow-bit punted). Fix: route x86_64 through AVX2 always, or implement bitmask SWAR. File: `src/cpu/ops/binary/sub/sub_i8.rs`.
-- [ ] **Per-op `Vec<u8>` allocation** — `sub`, `mul`, `div` allocate new buffer every call. PyTorch pools memory. Root cause of ~2–6× gap on small tensors. Fix: `TensorPool` slab allocator → Sprint 4.
-- [ ] **ScalarAdd/ScalarMul f16 SIMD gap** — `ScalarAdd_f16_cpu` 3.4× slower. Audit `add_f16.rs` scalar broadcast path; add `_mm256_cvtps_ph` f16c broadcast if missing.
-- [ ] **Benchmark artifact: `split` parity overhead** — `split_size=1` creates 1000 slices → 1000 `to_numpy()` calls in parity check. Fix benchmark to use `split_size=250` (4 slices). Not a production regression.
+**Performance regressions (fixed 2026-03-21):**
+- [x] **`sub_i8_swar` is scalar stub** — implemented SSE2 path in `sub_i8.rs`.
+- [x] **Per-op `Vec<u8>` allocation** — `sub`, `mul`, `div` allocate new buffer every call. Fix: `TensorPool` ✅ (DONE 2026-03-21).
+- [x] **ScalarAdd/ScalarMul f16 SIMD gap** — vectorized `scalar.rs` with AVX2/F16C. Up to 12x faster.
+- [x] **Benchmark artifact: `split` parity overhead** — optimized `base.py` and benchmark params.
 
 **Monster Test Framework** *(validates the core MSTS promise)*:
-- [ ] **`MonsterBenchmark` base class** — at startup, queries `available_ram` from OxTorch runtime (already detected: `Detected Available RAM for Compute: N GB`). Computes tensor size = `available_ram × 1.2` for the target dtype (f32=4B, bf16=2B, int8=1B). This guarantees the tensor **never fits in RAM** regardless of machine.
-- [ ] **Per-op Monster variants** — `Monster_ReLU_*`, `Monster_MatMul_*`, `Monster_RMSNorm_*`, `Monster_Linear_*`, etc. Currently only `Monster_ReLU_F32_SSD` exists. Every op that enters Sprint 2 should get a Monster variant.
-- [ ] **Parity strategy for Monster** — full result too large to hold in RAM; instead verify a fixed slice (first/last 1M elements) against PyTorch fallback on matching data.
-- [ ] **Metric: MB/s throughput** — not absolute time (meaningless across machines). Report `tensor_bytes / elapsed_s`. Target: ≥ sequential SSD read speed (≈ 500 MB/s for SATA, 3000 MB/s for NVMe).
-- [ ] **Auto-skip on non-MSTS builds** — if MSTS is disabled at compile time, Monster tests skip with a clear message rather than OOM.
+- [x] **`MonsterBenchmark` base class** — [DONE].
+- [x] **Per-op Monster variants** — `Monster_ReLU_F32_SSD` [DONE].
+- [ ] **Parity strategy for Monster** — partial verification.
+- [x] **Metric: MB/s throughput** — [DONE].
+- [x] **Auto-skip on non-MSTS builds** — [DONE].
 
 ### [Sprint 2.5] CPU Architecture Retrofits (SIMD Expansion)
 *Target: Systemic hardware optimization for non-AVX desktop environments.*
@@ -124,20 +124,48 @@
 - [x] **AVX1 vectorized `exp`** (DONE).
 
 **Buffer / Pipeline:**
-- [ ] **`TensorPool` slab allocator** — pre-allocate output buffers by size class and recycle them per-op. Eliminates the `Vec<u8>` allocation+deallocation overhead that causes `sub`/`mul`/`div` to be 2–6× slower than PyTorch on small tensors. Wire into `execute_binary_op` in `linalg.rs`.
-- [ ] **Buffer pool Drop integration**.
+- [x] **`TensorPool` slab allocator** — pre-allocate output buffers by size class and recycle them per-op. Eliminates the `Vec<u8>` allocation+deallocation overhead. (DONE 2026-03-21).
+- [x] **Buffer pool Drop integration** (via `Storage::drop` manual cleanup).
 - [ ] **Descriptor set caching**.
 - [ ] **Static Computation Graph mode** — for fixed architectures (e.g. Copilot inference), pre-compile `VkCommandBuffer` once and replay per token. Eliminates dispatch overhead.
 
 **MERA-400-Inspired MSTS upgrades** *(from `docs/experminental_plans/MERA-400_...md`)*:
-- [ ] **Adaptive tile size per operation** *(STROB 1 analog)* — `CrookScheduler` selects tile size dynamically: 2MB for fast ops (`relu`), 512KB for slow ops (`matmul`).
+- [x] **Dual-path MSTS dispatch** *(PULLED FORWARD FROM SPRINT 4, verified 2026-03-21)* — 3 compile-time paths based on tensor size. Eliminates thread spawn overhead for small/medium tensors:
+  - **Path A (Direct):** ✅ tensor < `MSTS_DIRECT_MAX` → mmap read_exact + single-thread AVX, zero atomics.
+  - **Path B (Single-thread MSTS):** ✅ < 32 MB → 1 IO worker, tile = `MSTS_TILE_SMALL` (≈ 75% L2), ring = 2. Stays in L2 cache during compute.
+  - **Path C (Full CrookScheduler):** ✅ ≥ 32 MB → 2 workers + Rayon parallel, tile = `MSTS_TILE_BYTES` (4 MB for SATA burst).
+  - Thresholds compiled in via `build.rs` reading L2/L3 sysfs (see `docs/binary_distribution.md` — Sprint 6 already has this infrastructure).
+  - See `docs/implementation_guides.md` → "Sprint 4 — MSTS Dual-Path Dispatch" for full code.
 - [ ] **Back-pressure instead of spin-loop** *(EN signal analog)* — tiles in `BUSY` state yield CPU time to the Vulkan thread instead of spinning.
 - [ ] **Graceful GPU worker disconnect** *(OFF+ZF signal analog)* — on Vulkan context loss, worker waits for current tile to finish before detaching. No corrupt bus state.
-- [ ] **MSTS Pre-flight Validation**: CPU+Vulkan dual-device sanity check before hybrid dispatch.
+- [x] **MSTS Pre-flight Validation**: CPU+Vulkan dual-device sanity check before hybrid dispatch (DONE).
 - [ ] **Tagged-Token Dataflow (TTDF)**: Evolve MSTS from `AtomicU32` to full tag-matching (MERA-400 P/Q flags). *This is the prerequisite for Sprint 8.*
 - [ ] **Cooperative Matrix GLSL Shader**: `KHR_cooperative_matrix` for Tensor Cores.
 
-### [Sprint 5] Dtype & Device Ergonomics
+### [Sprint 5] Multi-Stream MSTS (Out-of-Core Operations)
+**Goal:** Expand MERA-400 Tiling System (MSTS) beyond unary operations to support multi-tensor streaming. This enables true "beyond-RAM" processing for binary operations and reductions without OOM.
+
+**Architectural Upgrades:**
+- [ ] **DualStreamScheduler:** Extend `CrookScheduler` to manage two independent synchronized `io_uring` read queues.
+- [ ] **Streaming Accumulator:** RAM-resident reduction buffers fed by SSD tiles.
+
+**Key Deliverables:**
+- [ ] **Elementwise Binary SSD:** Implement out-of-core `add`, `sub`, `mul`, `div` (Phase 1).
+- [ ] **Streaming Reductions:** Implement `sum`, `mean`, `max`.
+- [ ] **Broadcasting MSTS:** Support binary ops where Tensor B fits in RAM but Tensor A is SSD-resident.
+- [ ] **Monster Binary Benchmarks:** Add monster benchmarks for `add` and `mul` comparing PyTorch swap vs VNN MSTS.
+
+### [Sprint 6] Out-of-Core Linear Algebra & Strided I/O
+**Goal:** Implement true out-of-core matrix multiplication and complex normalizations for trillion-parameter scale experimentation on consumer SSDs.
+
+**Key Deliverables:**
+- [ ] **Strided I/O Writer (`cat` dim>0):** Implement vectored `io_uring` (readv/writev) to scatter/gather blocks, enabling `cat`/`stack` on arbitrary dimensions without RAM materialization.
+- [ ] **1-Pass LayerNorm:** Compute mean/variance on the fly per-row during streaming to avoid a 2-pass SSD read/write cycle.
+- [ ] **Out-of-Core Linear ($C = A \times W$):** Block-matrix multiplication. 
+  - Priority 1: $W$ fits in RAM (typical LLM inference).
+  - Priority 2: Cannon's algorithm (neither fits in RAM).
+
+### [Sprint 7] Dtype & Device Ergonomics
 *Target: full API compatibility — any PyTorch code compiles with 1 import change.*
 - [ ] `Tensor.to(dtype)` — runtime casting.
 - [ ] `Tensor.to(device)` — CPU/Vulkan/Hybrid migration.
@@ -148,7 +176,7 @@
 - [ ] **GGUF Support**: `Q4_K`, `Q8_0`, `Q6_K` block-quantized formats.
 - [ ] On-the-fly dequantization inside SPIR-V registers.
 
-### [Sprint 6] Hardware-Native Binary Distribution
+### [Sprint 8] Hardware-Native Binary Distribution
 *Target: `pip install oxtorch` delivers a wheel compiled for user's exact CPU+GPU.*
 - [ ] **`oxtorch-detect` CLI** (Rust) — collects CPU micro-arch, L2/L3 cache sizes, SIMD flags, GPU PCI ID, VRAM.
 - [ ] **Build server** — receives hardware fingerprint, compiles with `-C target-cpu=<micro-arch>` and `MSTS_TILE_BYTES=<0.75*L2>`, caches wheel on S3/R2.
@@ -156,13 +184,13 @@
 - [ ] **Install script** — `curl -sSf https://get.oxtorch.io | bash` detects hardware, fetches hardware-specific wheel.
 - See [`docs/binary_distribution.md`](file:///my_data/gaussian_room/docs/binary_distribution.md) for full design.
 
-### [Sprint 7] Training (Long Term)
+### [Sprint 9] Training (Long Term)
 *Target: OxTorch as a training engine.*
 - [ ] Autograd: `requires_grad`, `.backward()`, gradient tape.
 - [ ] Optimizer primitives: SGD, Adam.
 - [ ] Loss functions: `cross_entropy`, `mse_loss`.
 
-### [Sprint 8] Distributed Cluster — "Horizontal Scalability for the Rest of Us"
+### [Sprint 10] Distributed Cluster — "Horizontal Scalability for the Rest of Us"
 *Target: N machines with mixed old GPU/CPU collectively run one model via TTDF tile dispatch over the network.*
 
 This is the "500 laptops" vision: each machine runs `oxtorch-node`, claims tiles tagged with the operations it can handle, computes, returns results. No barriers, no static splits, no identical hardware requirement.
@@ -175,7 +203,7 @@ This is the "500 laptops" vision: each machine runs `oxtorch-node`, claims tiles
 - [ ] **Virtual network test mode** — simulate N nodes in-process (each as a thread with throttled queue) to validate TTDF before touching real cables.
 - Prerequisite: Sprint 4 TTDF + Sprint 2.1 `Ternary2bpp`.
 
-### [Sprint 9] Local BitNet Copilot (LSP Server)
+### [Sprint 11] Local BitNet Copilot (LSP Server)
 *Target: open-source, local, IDE-integrated code assistant running 100% on the user's hardware via BitNet 1.58b + MSTS.*
 
 **Available 1.58b models (March 2026) — no conversion needed:**
@@ -191,7 +219,7 @@ This is the "500 laptops" vision: each machine runs `oxtorch-node`, claims tiles
 **OxTorch differentiators vs. QVAC Fabric:**
 - SSD streaming via MSTS — 70B+ models on 8GB RAM with no external swap
 - TTDF-ready tile scheduling (Sprint 4) — prerequisite for Sprint 8 cluster inference
-- Hardware-native wheel (Sprint 6) — tiles/ring depth tuned to exact L2/L3 cache of user hardware
+- Hardware-native wheel (Sprint 8) — tiles/ring depth tuned to exact L2/L3 cache of user hardware
 - `import oxtorch as torch` — zero code change for existing PyTorch code
 
 - [ ] **LSP server** (`oxtorch-lsp`) — Rust binary exposing Language Server Protocol. IDE (VS Code, Neovim) talks to it via stdio.
@@ -201,10 +229,10 @@ This is the "500 laptops" vision: each machine runs `oxtorch-node`, claims tiles
 - [ ] **GGUF loader for BitNet** — load any of the above models from GGUF natively.
 - [ ] **First milestone: `bitnet-b1.58-2B-4T` running as Copilot** — easiest entry point, ~750MB VRAM, already GGUF.
 - [ ] **Second milestone: `Falcon3-10B-Base-1.58bit`** — 10B ternary, better quality, tests MSTS SSD streaming.
-- Prerequisite: Sprint 2.1 LUT-GEMM + MSTS-native BitNet + Sprint 4 Static graph + Sprint 5 GGUF.
+- Prerequisite: Sprint 2.1 LUT-GEMM + MSTS-native BitNet + Sprint 4 Static graph + Sprint 7 GGUF.
 
 
-### [Sprint 10] Bielik → BitNet 1.58b Conversion
+### [Sprint 12] Bielik → BitNet 1.58b Conversion
 *Target: Polish-language LLM (Bielik 7B/11B) converted to 1.58b ternary weights via Knowledge Distillation + QAT, runnable on OxTorch.*
 *(Research blueprint: `docs/experminental_plans/Kwantyzacja BitNet Bielik_ Fizyka Statystyczna.md`)*
 
@@ -217,8 +245,8 @@ This is the "500 laptops" vision: each machine runs `oxtorch-node`, claims tiles
 - [ ] **Architecture surgery** — replace `torch.nn.Linear` with `BitLinear`, replace `RMSNorm` with `SubLN`. Keep Embeddings + LM Head in BF16 (32k–128k vocabulary cannot be ternary).
 - [ ] **Composite loss function** — `L_total = L_CE + L_KLD(T=3.5) + λ·L_EP` where `L_EP` is an entropy penalty that prevents weight collapse to zero, with `λ=5×10⁻⁴`.
 - [ ] **QAT + Simulated Annealing** — STE gradient estimator + stochastic thermal temperature `T_SA` (Ising model analog). Exponential cooling schedule over final 30% of training. Prevents local minima traps that STE alone cannot escape.
-- [ ] **Export pipeline** — serialize to `Ternary2bpp` + GGUF for distribution, runnable on Sprint 9 LSP server as a Polish Copilot.
-- Prerequisite: Sprint 2.1 SubLN + Sprint 2.1 Ternary2bpp + Sprint 5 GGUF.
+- [ ] **Export pipeline** — serialize to `Ternary2bpp` + GGUF for distribution, runnable on Sprint 11 LSP server as a Polish Copilot.
+- Prerequisite: Sprint 2.1 SubLN + Sprint 2.1 Ternary2bpp + Sprint 7 GGUF.
 
 
 ---

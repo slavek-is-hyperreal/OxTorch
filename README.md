@@ -1,4 +1,4 @@
-# OxTorch (v3.7.0 — "The BitNet Leapfrog")
+# OxTorch (v3.7.1 — "MSTS Dual-Path Dispatch & TensorPool")
 
 **Run modern AI inference on hardware that PyTorch left behind.**
 
@@ -71,6 +71,7 @@ import oxtorch as torch
 | `torch.nn.Module.forward()` | ✅ Works | Sub-ops accelerated or fall back |
 | `model.backward()` / autograd | ❌ Not yet | Sprint 7 |
 | `torch.save` / `torch.load` | ❌ Not yet | Sprint 5 |
+| `tensor.save_ssd(path)` | ✅ **Yes — SSD streaming** | Writes to disk, returns MSTS-backed tensor |
 
 ---
 
@@ -191,21 +192,29 @@ GPU backend uses `ash` (raw Vulkan 1.2 bindings) for explicit control over:
 
 Shaders compiled from WGSL/GLSL to SPIR-V at build time via `naga` in `build.rs`.
 
-### MSTS Tile-Pulling Hybrid Dispatch
+### MSTS Tile-Pulling — 3-Path Dispatch (v3.7.1+)
 
-For `device="hybrid"`, work is divided into 256K-element tiles.
-An `Arc<AtomicUsize>` tile counter shared between a GPU thread and CPU thread:
+For `device="ssd"`, dispatch is chosen automatically based on tensor size:
+
+| Path | Size | Threads | Strategy |
+|:---|:---|:---:|:---|
+| **A — Direct** | `< ~3 MB` | 0 | `mmap read_exact` + single AVX loop. Zero thread overhead. |
+| **B — Single-thread** | `< 32 MB` | 1 | 1 IO worker, L2-resident tile, ring depth = 2. |
+| **C — Full CrookScheduler** | `≥ 32 MB` | 2 | 2 workers + `rayon` parallel. SATA DMA saturated. |
+
+Thresholds are compiled in by `build.rs` reading `/sys/devices` L2/L3 values (see Sprint 6 in `binary_distribution.md`).
 
 ```
-total_elements → N tiles of 256K each
-tile_counter = AtomicUsize(0)
+total_elements → determine path A/B/C
 
-Rayon scope:
-  [GPU thread]: loop { tile = tile_counter.fetch_add(1); dispatch to Vulkan }
-  [CPU thread]: loop { tile = tile_counter.fetch_add(1); compute with SIMD }
+Path C (≥32 MB):
+  tile_counter = Arc<AtomicUsize>(0)
+  [IO read worker 1]:  loop { claim tile; io_uring read from SSD }
+  [IO write worker 2]: loop { claim tile; io_uring write to result SSD }
+  [Rayon compute]:     loop { claim tile; AVX relu/gelu/... }
 ```
 
-No locks, no static splits. The faster resource eats more work.
+No locks, no static splits. The TensorPool slab allocator recycles tile buffers between ops.
 GPU dispatched only if `num_elements >= 4M` (Bonaire PCIe latency threshold).
 
 ### SIMD Conversion Matrix

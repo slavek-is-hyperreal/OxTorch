@@ -6,11 +6,11 @@ This document describes the complete testing and benchmarking infrastructure for
 
 ## Overview
 
-OxTorch uses an **Atomized Benchmark Suite** — 141+ individual, self-contained benchmark scripts, each covering exactly one operation / dtype / backend combination. The suite replaced all monolithic benchmark files in v3.7.0.
+OxTorch uses an **Atomized Benchmark Suite** — 144+ individual, self-contained benchmark scripts, each covering exactly one operation / dtype / backend combination. The suite replaced all monolithic benchmark files in v3.7.0.
 
 ```
 tests/
-├── benchmarks/               ← Atomized suite (141+ individual tests)
+├── benchmarks/               ← Atomized suite (144+ individual tests)
 │   ├── base.py               ← BenchmarkBase class (shared harness)
 │   ├── utils.py              ← load_vnn(), check_parity(), save_benchmark_result()
 │   ├── f16/                  ← F16 dtype benchmarks
@@ -22,6 +22,10 @@ tests/
 │   ├── bf16/                 ← BF16 dtype benchmarks
 │   ├── f32/                  ← F32 dtype benchmarks
 │   ├── int8/                 ← INT8 dtype benchmarks
+│   ├── ssd/                  ← MSTS 3-path SSD dispatch benchmarks (v3.7.1+)
+│   │   ├── msts_path_a_relu_f32.py  ← Path A: Direct (<3 MB, zero threads)
+│   │   ├── msts_path_b_relu_f32.py  ← Path B: Single-thread (<32 MB, L2-resident)
+│   │   └── msts_path_c_relu_f32.py  ← Path C: Full CrookScheduler (>=32 MB, rayon)
 │   └── monster/              ← SSD out-of-core benchmarks (16GB+)
 │       └── relu_ssd_f32.py
 ├── results/                  ← Per-benchmark JSON output (gitignored)

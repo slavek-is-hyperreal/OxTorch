@@ -13,7 +13,7 @@ ash = "0.38"
 gpu-allocator = "0.27"
 memmap2 = "0.9"
 numpy = "0.22"
-bytemuck = { version = "1.15", features = ["derive"] }
+bytemuck = { version = "1.15", features = ["derive", "extern_crate_alloc"] }
 libc = "0.2"
 rayon = "1.10"
 matrixmultiply = { version = "0.3", features = ["threading"] }

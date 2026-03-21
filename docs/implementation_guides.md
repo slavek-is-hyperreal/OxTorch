@@ -82,26 +82,125 @@ Fallback to current tiled shader if unsupported.
 
 ---
 
-## Sprint 4 — TensorPool Slab Allocator
+## ✅ DONE (Sprint 4, pulled forward) — MSTS Dual-Path Dispatch + Compile-Time Burn-In
 
-**Problem:** Every binary op (`sub`, `mul`, `div`) allocates a fresh `Vec<u8>` output buffer.
-This causes 2–6× regression vs PyTorch for small-to-medium tensors (PyTorch has C++ memory pool).
+**Problem:** `unary_op_ssd` currently always spawns 2 threads + 8MB ring regardless of tensor size.
+For tensors < ~32 MB this overhead dominates compute time.
 
-**Fix:**
-1. Create `TensorPool` in `src/tensor/pool.rs`:
-   ```rust
-   pub struct TensorPool {
-       // Size classes: 4KB, 64KB, 1MB, 16MB, 256MB
-       buckets: [Vec<Vec<u8>>; 5],
-   }
-   impl TensorPool {
-       pub fn alloc(&mut self, n_bytes: usize) -> Vec<u8> { ... }
-       pub fn free(&mut self, buf: Vec<u8>) { ... }
-   }
-   ```
-2. Thread-local `TENSOR_POOL: RefCell<TensorPool>` — no locking overhead on CPU path.
-3. In `linalg.rs` `execute_binary_op`: replace `vec![0u8; n_bytes]` with `pool.alloc(n_bytes)`.
-4. Return buffer to pool on `Tensor` Drop.
+**Architecture — 3 paths burned in at compile time:**
+
+```
+                  MSTS_DIRECT_MAX (e.g. 4 MB)
+                  ↑
+tensor_bytes ─────┤──── DIRECT PATH (no threads, mmap read_exact, single AVX loop)
+                  │
+                  │  MSTS_SINGLE_MAX (e.g. 32 MB)
+                  ↑
+                  ├──── SINGLETHREAD PATH (1 io_uring read worker, small ring)
+                  │     ring_size = MSTS_RING_DEPTH_SMALL (2 tiles × TILE_SMALL)
+                  │
+                  └──── FULL PATH (2 workers, Rayon parallel compute)
+                        ring_size = MSTS_RING_DEPTH (e.g. 4 tiles × 4 MB)
+```
+
+**Step 1: `build.rs` — emit 5 compile-time constants**
+
+```rust
+fn main() {
+    // Set by build server (binary_distribution.md), or derived from sysfs locally.
+    // See: docs/binary_distribution.md for the full formula table.
+    let l2_kb: usize = read_l2_kb().unwrap_or(256);           // per-core L2
+    let l3_mb: usize = read_l3_mb().unwrap_or(6);             // shared L3
+
+    // Direct path: tensor fits in L3 → pure mmap, no ring
+    let direct_max   = (l3_mb * 1024 * 1024) / 2;             // 50% of L3
+    // Single-thread path: tile fits nicely in L2
+    let tile_small   = (l2_kb * 1024 * 3) / 4;                // 75% of L2
+    let ring_small   = 2usize;                                 // read-ahead 1 tile
+    // Full path: tile for SATA sequential throughput burst
+    let tile_large   = 4 * 1024 * 1024usize;                   // 4 MB
+    let ring_large   = std::cmp::min(l3_mb / 4, 8).max(2);    // up to L3/tile_large
+
+    println!("cargo:rustc-env=MSTS_DIRECT_MAX={}", direct_max);
+    println!("cargo:rustc-env=MSTS_TILE_SMALL={}", tile_small);
+    println!("cargo:rustc-env=MSTS_RING_SMALL={}", ring_small);
+    println!("cargo:rustc-env=MSTS_TILE_BYTES={}", tile_large);   // existing var
+    println!("cargo:rustc-env=MSTS_RING_DEPTH={}", ring_large);   // existing var
+}
+```
+
+For i5-3450 (L2=256KB, L3=6MB) this computes:
+- `MSTS_DIRECT_MAX` = 3 MB (tensor < 3 MB → zero thread overhead)
+- `MSTS_TILE_SMALL` = 192 KB (fits in L2, hot in cache for AVX)
+- `MSTS_RING_SMALL` = 2
+- `MSTS_TILE_BYTES` = 4 MB
+- `MSTS_RING_DEPTH` = min(6/4, 8) = 2
+
+**Step 2: Constants in `msts.rs`**
+
+```rust
+const DIRECT_MAX:  usize = const_parse_env!("MSTS_DIRECT_MAX",  3_145_728);
+const TILE_SMALL:  usize = const_parse_env!("MSTS_TILE_SMALL",    196_608);
+const RING_SMALL:  usize = const_parse_env!("MSTS_RING_SMALL",          2);
+const TILE_LARGE:  usize = const_parse_env!("MSTS_TILE_BYTES",  4_194_304);
+const RING_LARGE:  usize = const_parse_env!("MSTS_RING_DEPTH",          4);
+```
+
+Use a `macro_rules! const_parse_env` helper since `env!()` returns `&str`, not integer.
+
+**Step 3: Dispatch in `unary_op_ssd`**
+
+```rust
+pub fn unary_op_ssd(&self, op: &str, p1: f32, p2: f32) -> PyResult<Tensor> {
+    let total_bytes = self.total_bytes();
+    if total_bytes <= DIRECT_MAX {
+        return self.unary_op_ssd_direct(op, p1, p2);        // Path A
+    } else if total_bytes <= 32 * 1024 * 1024 {
+        return self.unary_op_ssd_single(op, p1, p2,         // Path B
+            TILE_SMALL, RING_SMALL);
+    } else {
+        return self.unary_op_ssd_full(op, p1, p2,           // Path C
+            TILE_LARGE, RING_LARGE);
+    }
+}
+```
+
+**Path A — `unary_op_ssd_direct`:**
+- Read the entire mmap via `engine.read_exact(0, total_bytes, &mut buf)`
+- Single-thread AVX2 compute loop
+- Write result back via `engine_out.write_all()`
+- No thread spawn, no atomics, no spin-loop
+
+**Path B — `unary_op_ssd_single`:**
+- `CrookScheduler::new(RING_SMALL)` with `TILE_SMALL`-sized tiles
+- Only 1 background thread (IO read worker)
+- Compute inline on main thread (no Rayon) → stays in L2
+
+**Path C — `unary_op_ssd_full` (current code, refactored):**
+- `CrookScheduler::new(RING_LARGE)` with `TILE_LARGE`-sized tiles
+- 2 background threads (read + write)
+- `rayon` parallel compute per tile
+
+**Integration with `binary_distribution.md`:**
+
+The build server (`docs/binary_distribution.md` Sprint 6) already passes `MSTS_TILE_BYTES`
+and `MSTS_RING_DEPTH` as env vars. This plan **extends** that by adding 3 new env vars.
+The build server reads the same sysfs sources and emits all 5 at compile time.
+Result: each `.whl` file has thresholds burned in for the exact CPU of the target machine.
+
+---
+
+
+
+## ✅ DONE (Sprint 4, pulled forward) — TensorPool Slab Allocator
+
+**Problem solved:** Every binary op (`sub`, `mul`, `div`) was allocating a fresh `Vec<u8>` output buffer, causing 2–6× regression vs PyTorch for small-to-medium tensors.
+
+**Implemented in `src/tensor/pool.rs`:**
+- 6-bucket thread-local pool: 4KB, 64KB, 1MB, 4MB, 16MB, 64MB
+- Allocates as `Vec<f32>` → guarantees 4-byte alignment (safe for `bytemuck` and `io_uring`)
+- `Storage::drop` returns buffer via manual `Vec::from_raw_parts` reconstruction (avoids `bytemuck::cast_vec` AlignmentMismatch)
+- Wired into `linalg.rs` via `TENSOR_POOL.with(|pool| pool.borrow_mut().alloc(n))` on all output paths
 
 ---
 

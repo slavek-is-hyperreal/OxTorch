@@ -17,8 +17,9 @@ OxTorch (project dir: `vulkannn_rusted`) is built on the philosophy of **asynchr
 - **`src/tensor/access.rs`**: Raw memory access, slicing, zero-copy views. Handles SSD tensor data traversal.
 - **`src/tensor/ops.rs`**: Dispatcher for elementwise operations (Add, Mul, Sub, scalar ops).
 - **`src/tensor/reductions.rs`**: Dispatcher for Sum, Mean, Max, Softmax.
-- **`src/tensor/msts.rs`**: MSTS (Mera Style Tiling System) — tile-based streaming for SSD-resident tensors.
+- **`src/tensor/msts.rs`**: MSTS (Mera Style Tiling System) — 3-path dispatch for SSD-resident tensors. Path A (direct), B (single-thread), C (full CrookScheduler).
 - **`src/tensor/types.rs`**: `DataType` enum (F32, F16, BF16, Int8, Ternary).
+- **`src/tensor/pool.rs`**: Thread-local slab allocator (`TensorPool`) — 6-bucket pool for zero-copy buffer reuse.
 
 ### CPU Backend (`src/cpu/`)
 - **`src/cpu/mod.rs`**: Entry point; re-exports ops and SIMD conversions.
@@ -117,9 +118,19 @@ Each thread independently claims the next tile. No locks. No predetermined split
 
 **GPU threshold**: if `num_elements < 4_194_304` (4M = ~16MB F32), the GPU dispatcher is not spawned. Bonaire PCIe round-trip overhead (~80ms) makes Vulkan uncompetitive on small tensors.
 
-### SSD Streaming (device="ssd")
+### SSD Streaming (device="ssd") — 3-Path Dispatch (v3.7.1+)
 
-A ring of 1MB-aligned `StatefulTile` structures drives disk-to-RAM streaming. Each tile transitions atomically:
+A ring of `AlignedBuffer`-backed `StatefulTile` structures drives disk-to-RAM streaming. Selection is automatic:
+
+| Path | Condition | IO Threads | Compute Mode |
+|:---|:---|:---:|:---|
+| **A — Direct** | `< MSTS_DIRECT_MAX` (≈3 MB) | 0 | Single AVX thread, full mmap |
+| **B — Single-thread** | `< 32 MB` | 1 | Inline, L2-resident tile |
+| **C — Full CrookScheduler** | `≥ 32 MB` | 2 | `rayon` parallel + CAS ring |
+
+The `TensorPool` slab allocator recycles tile buffers between ops — no per-tile allocation in the hot path.
+
+Each tile transitions atomically:
 
 ```
 EMPTY → LOADING → READY_FOR_COMPUTE → COMPUTING → READY_FOR_WRITE → EMPTY

@@ -7,6 +7,7 @@ mod reductions;
 mod linalg;
 mod msts;
 mod fallback;
+mod pool;
 
 pub use types::{DataType, IoEngineType};
 pub use storage::Storage;
@@ -114,6 +115,11 @@ impl Tensor {
          self.bmm(other)
     }
 
+    #[pyo3(name = "save_ssd")]
+    pub fn save_ssd(&self, path: &str) -> PyResult<Tensor> {
+        self.execute_save_ssd(path)
+    }
+
     #[pyo3(name = "layer_norm", signature = (normalized_shape, weight=None, bias=None, eps=1e-5))]
     pub fn py_layer_norm(&self, normalized_shape: Vec<usize>, weight: Option<&Tensor>, bias: Option<&Tensor>, eps: f32) -> PyResult<Tensor> {
          self.layer_norm(normalized_shape, weight, bias, eps)
@@ -164,6 +170,14 @@ impl Tensor {
     pub fn gelu(&self) -> PyResult<Tensor> { self.unary_op("gelu", 0.0, 0.0) }
     pub fn gelu_into(&self, target: &mut Tensor) -> PyResult<()> { self.unary_op_into(target, "gelu", 0.0, 0.0) }
     pub fn tanh(&self) -> PyResult<Tensor> { self.unary_op("tanh", 0.0, 0.0) }
+
+    pub fn unary_op_ssd(&self, op: &str, param1: f32, param2: f32) -> PyResult<Tensor> {
+        self.execute_unary_op_ssd(op, param1, param2)
+    }
+
+    pub fn load_to_f32_vec_msts(&self) -> Vec<f32> {
+        self.execute_load_to_f32_vec_msts()
+    }
 
     pub fn apply_softmax(&self, dim: i64, is_log: bool) -> PyResult<Tensor> {
         self.execute_softmax(dim, is_log)

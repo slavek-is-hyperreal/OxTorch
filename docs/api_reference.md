@@ -89,6 +89,10 @@ Returns a tensor with `device="ssd"`.
 Creates a new file on disk and maps it read-write. Used for out-of-core results
 (e.g., the 16GB Monster ReLU benchmark). Aligned to 1MB ZFS recordsize boundaries.
 
+**`Tensor.save_ssd(path) -> Tensor`** *(new in v3.7.1)*
+
+Writes the tensor's raw bytes to `path` and returns a new SSD-mapped tensor backed by `io_uring`/`O_DIRECT`. Equivalent to calling `Tensor.new_ssd(path, ...)` and writing the data. Returns a tensor with `device="ssd"`.
+
 ---
 
 ### Matrix Operations
@@ -208,6 +212,32 @@ TILE_EMPTY → TILE_LOADING → TILE_READY_FOR_COMPUTE → TILE_COMPUTING → TI
 ```
 
 Workers poll and claim tiles via Compare-And-Swap without any mutex.
+
+### 3-Path Dispatch (v3.7.1+)
+
+`unary_op_ssd` and `save_ssd` automatically select the optimal path based on tensor size:
+
+| Path | Size Threshold | IO Workers | Compute | Tile Size |
+|:---|:---|:---:|:---|:---|
+| **A — Direct** | `< MSTS_DIRECT_MAX` (≈3 MB) | 0 | Single AVX loop | Full tensor |
+| **B — Single-thread** | `< 32 MB` | 1 | Inline main thread | ≈75% L2 (192 KB) |
+| **C — Full CrookScheduler** | `≥ 32 MB` | 2 | `rayon` parallel | 4 MB (SATA burst) |
+
+Thresholds are derived from `build.rs` reading L2/L3 sysfs or compile-time env vars.
+
+### Python API
+
+```python
+import vulkannn_rusted as vnn
+
+# Write RAM tensor to SSD (Path A/B/C auto-selected)
+t = vnn.Tensor(data=my_array, dtype=vnn.DataType.F32, device="cpu")
+ssd_t = t.save_ssd("/tmp/weights.bin")
+
+# Apply in-place MSTS operation and read back as f32
+result_ssd = ssd_t.unary_op_ssd("relu", 0.0, 0.0)
+result_f32  = result_ssd.load_to_f32_vec_msts()  # Vec<f32> → Python list
+```
 
 ---
 

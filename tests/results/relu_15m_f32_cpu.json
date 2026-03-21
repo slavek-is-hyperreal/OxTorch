@@ -1,0 +1,12 @@
+{
+    "name": "ReLU_15M_f32_cpu",
+    "op": "ReLU",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.020370556599664268,
+    "vnn_time": 0.020867109399841866,
+    "ratio": 1.024376005522882,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 46.0
+}

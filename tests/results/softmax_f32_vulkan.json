@@ -1,0 +1,12 @@
+{
+    "name": "Softmax_f32_vulkan",
+    "op": "Softmax",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.01313908834999893,
+    "vnn_time": 0.01514615425003285,
+    "ratio": 1.1527553393789367,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 45.0
+}

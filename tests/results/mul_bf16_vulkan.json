@@ -1,0 +1,12 @@
+{
+    "name": "Mul_bf16_vulkan",
+    "op": "Mul",
+    "dtype": "bf16",
+    "mode": "vulkan",
+    "pt_time": 0.007793047499944805,
+    "vnn_time": 0.016494953500296106,
+    "ratio": 2.1166242731630898,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 51.0
+}

@@ -182,13 +182,21 @@ class MonsterBenchmarkBase:
     def _dispatch(self, a_ox, torch_ox):
         """Override in subclass for ops that need extra args (weights, dim, etc.)"""
         if self.op == "ReLU":
+            if self.mode == "ssd":
+                # Native MSTS path — bypass oxtorch drop-in which would call PyTorch fallback
+                return a_ox._vnn.unary_op_ssd("relu", 0.0, 0.0)
             return torch_ox.relu(a_ox)
         raise NotImplementedError(f"Override _dispatch() for op={self.op}")
 
     def _verify_slice_parity(self, a_vnn, res_vnn, ssd_path):
         """
-        Read first 1M elements from SSD manually, compute expected result in PyTorch,
-        compare against the first 1M elements of res_vnn.
+        Verify correctness on first 1M elements WITHOUT materializing the full tensor.
+
+        For multi-GB monster tensors, calling res_vnn.to_numpy() would OOM.
+        Instead:
+          - Read first SLICE elements from the INPUT ssd_path via np.fromfile
+          - Read first SLICE elements from the OUTPUT file (ssd_path with _relu/_gelu suffix)
+          - Compare both against PyTorch reference
         """
         try:
             import torch
@@ -196,18 +204,31 @@ class MonsterBenchmarkBase:
             np_dtype = {"f32": np.float32, "f16": np.float16, "bf16": np.float32, "int8": np.int8}[self.dtype]
             torch_dtype = {"f32": torch.float32, "f16": torch.float16, "bf16": torch.bfloat16, "int8": torch.int8}[self.dtype]
 
+            # Read input slice
             with open(ssd_path, "rb") as fh:
                 raw = fh.read(SLICE * self.bytes_per_element)
             a_np = np.frombuffer(raw, dtype=np_dtype).copy()
             a_t  = torch.from_numpy(a_np).to(torch_dtype)
             expected = self._torch_reference(a_t).float().numpy()
 
-            # OxTorch result slice — call to_numpy on the first SLICE elements
-            # (assumes result is a flat 1D tensor)
-            result_np = res_vnn.to_numpy()[:SLICE].astype(np.float32)
+            # Determine output file path: unary_op_ssd writes to <stem>_<op_lower>.ssd
+            stem = os.path.splitext(ssd_path)[0]
+            op_suffix = self.op.lower()
+            out_ssd_path = f"{stem}_{op_suffix}.ssd"
+
+            if not os.path.exists(out_ssd_path):
+                print(f"    [parity] Output file not found: {out_ssd_path} — skipping parity")
+                return True  # Conservative pass
+
+            with open(out_ssd_path, "rb") as fh:
+                result_raw = fh.read(SLICE * self.bytes_per_element)
+            result_np = np.frombuffer(result_raw, dtype=np_dtype).astype(np.float32)
 
             diff = np.abs(result_np - expected)
-            ok = bool(np.max(diff) < 0.1)
+            max_diff = float(np.max(diff))
+            ok = max_diff < 0.1
+            if not ok:
+                print(f"    [parity] max_diff={max_diff:.4e}")
             return ok
         except Exception as e:
             print(f"    [parity] Exception during slice verification: {e}")

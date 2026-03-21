@@ -1,0 +1,12 @@
+{
+    "name": "MSTS_PathB_ReLU_F32_SSD",
+    "op": "ReLU",
+    "dtype": "f32",
+    "mode": "ssd",
+    "pt_time": 0.10309046250404208,
+    "vnn_time": 0.08694795200062799,
+    "ratio": 0.8434141227877298,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 0.0
+}

@@ -1,4 +1,4 @@
-use crate::buf_pool::BufPool;
+
 
 /// Backbone data storage for the Tensor engine.
 /// Encapsulates the multi-precision vectors (F32, F16, BF16) or SSD-mapped handles.
@@ -14,13 +14,49 @@ pub enum Storage {
 
 impl Drop for Storage {
     fn drop(&mut self) {
-        match self {
-            Storage::F32(v) => BufPool::put(std::mem::take(v)),
-            Storage::F16(v) => BufPool::put_f16(std::mem::take(v)),
-            Storage::BF16(v) => BufPool::put_bf16(std::mem::take(v)),
-            Storage::Int8(v) => BufPool::put_i8(std::mem::take(v)),
-            Storage::Ternary(v) => BufPool::put_i8(std::mem::take(v)),
-            _ => {}
+        if let Storage::None = self { return; }
+        
+        let old = std::mem::replace(self, Storage::None);
+        let mut old = std::mem::ManuallyDrop::new(old);
+        
+        // Safety: We are essentially doing what bytemuck::cast_vec does but manually.
+        // All types (f32, f16, bf16, i8) are PoD and their alignments are 
+        // satisfied by the pooled Vec<u8> (which we ensure is at least 8-byte aligned).
+        let (buf, ptr_val) = match &mut *old {
+            Storage::F32(v) => unsafe {
+                let mut v = std::mem::take(v);
+                let (ptr, _len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
+                std::mem::forget(v);
+                (Vec::from_raw_parts(ptr as *mut u8, cap * 4, cap * 4), ptr as usize)
+            },
+            Storage::F16(v) => unsafe {
+                let mut v = std::mem::take(v);
+                let (ptr, _len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
+                std::mem::forget(v);
+                (Vec::from_raw_parts(ptr as *mut u8, cap * 2, cap * 2), ptr as usize)
+            },
+            Storage::BF16(v) => unsafe {
+                let mut v = std::mem::take(v);
+                let (ptr, _len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
+                std::mem::forget(v);
+                (Vec::from_raw_parts(ptr as *mut u8, cap * 2, cap * 2), ptr as usize)
+            },
+            Storage::Int8(v) | Storage::Ternary(v) => unsafe {
+                let mut v = std::mem::take(v);
+                let (ptr, _len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
+                std::mem::forget(v);
+                (Vec::from_raw_parts(ptr as *mut u8, cap, cap), ptr as usize)
+            },
+            Storage::None => return,
+        };
+        
+        // Critical: Only return to pool if the original pointer is 8-byte aligned.
+        // This ensures that when the buffer is pulled for any typed tensor later,
+        // it satisfies the alignment requirement of the destination type (up to f64).
+        if ptr_val % 8 == 0 {
+            super::pool::TENSOR_POOL.with(|pool| {
+                pool.borrow_mut().free(buf);
+            });
         }
     }
 }

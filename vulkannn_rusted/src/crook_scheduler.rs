@@ -10,25 +10,22 @@ pub const TILE_WRITING_TO_DISK: u32 = 5;
 
 /// MERA-400 CROOK OS Inspired Stateful Tile
 /// Lockless Tagged-Token architecture.
-#[repr(align(4096))]
 pub struct StatefulTile {
     pub state: AtomicU32,
     pub tile_id: AtomicU32,
-    _pad: [u8; 4088], // Pad to 4096 to ensure payload is aligned
-    pub payload: UnsafeCell<[u8; 1048576]>, // Exactly 1MB
+    pub payload: UnsafeCell<crate::io_uring_engine::AlignedBuffer>,
 }
 
 unsafe impl Sync for StatefulTile {}
 unsafe impl Send for StatefulTile {}
 
 impl StatefulTile {
-    /// Constructs a clear, EMPTY Stateful Tile ready for ZFS I/O ingestion.
-    pub fn new() -> Self {
+    /// Constructs a clear, EMPTY Stateful Tile ready for I/O ingestion.
+    pub fn new(size: usize) -> Self {
         Self {
             state: AtomicU32::new(TILE_EMPTY),
             tile_id: AtomicU32::new(0),
-            _pad: [0; 4088],
-            payload: UnsafeCell::new([0; 1048576]),
+            payload: UnsafeCell::new(crate::io_uring_engine::AlignedBuffer::new(size)),
         }
     }
 }
@@ -37,17 +34,21 @@ impl StatefulTile {
 /// reads and writes decoupled from primary execution threads.
 pub struct CrookScheduler {
     pub ring: Vec<Box<StatefulTile>>,
+    pub tile_size: usize,
 }
 
 impl CrookScheduler {
     /// Instantiates a new scheduler holding an allocated continuous circular cache of given size.
     pub fn new(ring_size: usize) -> std::sync::Arc<Self> {
+        Self::new_custom(ring_size, 1048576) // Default 1MB
+    }
+
+    pub fn new_custom(ring_size: usize, tile_size: usize) -> std::sync::Arc<Self> {
         let mut ring = Vec::with_capacity(ring_size);
         for _ in 0..ring_size {
-            // Allocate on heap to avoid stack overflow for 1MB items
-            ring.push(Box::new(StatefulTile::new()));
+            ring.push(Box::new(StatefulTile::new(tile_size)));
         }
-        std::sync::Arc::new(Self { ring })
+        std::sync::Arc::new(Self { ring, tile_size })
     }
     
     /// Starts the autonomous reading worker (Peripheral Processor - PPU).
@@ -71,10 +72,10 @@ impl CrookScheduler {
                     std::hint::spin_loop();
                 }
                 
-                let bytes_to_read = std::cmp::min(1048576, total_bytes - offset);
+                let bytes_to_read = std::cmp::min(scheduler.tile_size as u64, total_bytes - offset);
                 let payload_slice = unsafe { 
-                    let ptr = tile.payload.get();
-                    &mut (&mut *ptr)[0..bytes_to_read as usize]
+                    let buf = &mut *tile.payload.get();
+                    &mut buf.as_mut_slice()[0..bytes_to_read as usize]
                 };
                 
                 engine.read_chunk(offset, payload_slice);
@@ -109,10 +110,10 @@ impl CrookScheduler {
                     std::hint::spin_loop();
                 }
                 
-                let bytes_to_write = std::cmp::min(1048576, total_bytes - offset);
+                let bytes_to_write = std::cmp::min(scheduler.tile_size as u64, total_bytes - offset);
                 let payload_slice = unsafe { 
-                    let ptr = tile.payload.get();
-                    &(&*ptr)[0..bytes_to_write as usize]
+                    let buf = &*tile.payload.get();
+                    &buf.as_slice()[0..bytes_to_write as usize]
                 };
                 
                 engine.write_chunk(offset, payload_slice);
