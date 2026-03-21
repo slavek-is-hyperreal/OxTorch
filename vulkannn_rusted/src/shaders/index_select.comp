@@ -1,0 +1,23 @@
+#version 450
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer Inputs { float in_data[]; };
+layout(set = 0, binding = 1) readonly buffer Indices { int indices[]; };
+layout(set = 0, binding = 2) buffer Output { float out_data[]; };
+
+layout(push_constant) uniform PC {
+    uint num_indices;
+    uint feature_len;
+} pc;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= pc.num_indices * pc.feature_len) return;
+    
+    uint row = idx / pc.feature_len;
+    uint col = idx % pc.feature_len;
+    
+    int target_row = indices[row];
+    
+    out_data[idx] = in_data[target_row * pc.feature_len + col];
+}

@@ -93,6 +93,10 @@ class BenchmarkBase:
             elif self.op in ["LayerNorm", "RMSNorm"]:
                 # Normalization weights are 1D (normalized_shape)
                 b_np = np.random.randn(self.shape[-1]).astype(np.float32)
+            elif self.op == "IndexSelect":
+                vocab_size = self.shape[0]
+                num_indices = self.kwargs.get("num_indices", 1024)
+                b_np = np.random.randint(0, vocab_size, size=(num_indices,)).astype(np.int32)
             elif self.op in ["Cat", "Stack"]:
                 # For Cat/Stack we use two tensors of the same shape
                 b_np = np.random.randn(*self.shape).astype(np.float32)
@@ -107,6 +111,10 @@ class BenchmarkBase:
                 b_torch = 10.0
                 b_ox = 10.0
                 b_vnn = None
+            elif self.op == "IndexSelect":
+                b_torch = torch.from_numpy(b_np).to(torch.int32)
+                # OxTorch parses index tensors natively as F32 before casting into i32 internally
+                b_vnn = self.vnn.Tensor(data=b_np.astype(np.float32), dtype=self.vnn.DataType.F32, device=self.mode)
             else:
                 b_torch = torch.from_numpy(b_np).to(torch_dtype) if self.op not in ["ReLU", "GELU", "Sum", "Softmax", "trunc", "cosh", "erf"] else None
                 b_vnn = self.vnn.Tensor(data=b_np, dtype=vnn_dtype, device=self.mode) if b_torch is not None else None
@@ -135,6 +143,11 @@ class BenchmarkBase:
                     res_torch = torch.layer_norm(a_torch, [self.shape[-1]], weight=b_torch, bias=None, eps=1e-5)
                 elif self.op == "RMSNorm":
                     res_torch = a_torch * torch.rsqrt(a_torch.pow(2).mean(-1, keepdim=True) + 1e-5) * b_torch
+                elif self.op == "IndexSelect":
+                    a_torch_in = a_torch.to(torch.float32) if self.dtype == "int8" else a_torch
+                    res_torch = torch.index_select(a_torch_in, dim=self.kwargs.get("dim", 0), index=b_torch.to(torch.int64))
+                    if self.dtype == "int8":
+                        res_torch = res_torch.to(torch.int8)
                 elif hasattr(torch.nn.functional, _resolved_op):
                     op_func = getattr(torch.nn.functional, _resolved_op)
                     # Hack for INT8: PyTorch doesn't support it for these ops on CPU
@@ -191,6 +204,8 @@ class BenchmarkBase:
                 res_vnn = a_ox.layer_norm([self.shape[-1]], weight=b_ox, bias=None, eps=1e-5)
             elif self.op == "RMSNorm":
                 res_vnn = a_ox.rms_norm([self.shape[-1]], weight=b_ox, eps=1e-5)
+            elif self.op == "IndexSelect":
+                res_vnn = a_ox.index_select(self.kwargs.get("dim", 0), b_ox)
             elif self.op == "Sum":
                 res_vnn = a_ox.sum()
             elif hasattr(torch_ox, _resolved_op):

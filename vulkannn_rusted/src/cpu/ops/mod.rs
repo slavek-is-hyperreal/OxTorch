@@ -7,6 +7,7 @@ pub use matmul::*;
 pub use unary::*;
 pub use binary::*;
 pub use reduction::*;
+
 pub mod bit_linear;
 pub use bit_linear::*;
 
@@ -15,3 +16,6 @@ pub use norm::*;
 
 pub mod sequence;
 pub use sequence::*;
+
+pub mod indexing;
+pub use indexing::*;

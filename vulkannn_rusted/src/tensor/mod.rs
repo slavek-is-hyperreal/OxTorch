@@ -134,6 +134,11 @@ impl Tensor {
         self.execute_transpose()
     }
 
+    #[pyo3(signature = (dim, indices))]
+    pub fn index_select(&self, dim: usize, indices: &Tensor) -> PyResult<Tensor> {
+        self.execute_index_select(dim, indices)
+    }
+
     #[pyo3(name = "__add__")]
     pub fn py_add(&self, other: &Bound<'_, PyAny>) -> PyResult<Tensor> {
         if let Ok(t) = other.extract::<Tensor>() { self.elementwise_op(&t, "add") }

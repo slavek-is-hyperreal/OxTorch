@@ -1,0 +1,12 @@
+{
+    "name": "IndexSelect_int8_cpu",
+    "op": "IndexSelect",
+    "dtype": "int8",
+    "mode": "cpu",
+    "pt_time": 0.064714333799202,
+    "vnn_time": 0.0008310499993967824,
+    "ratio": 0.01284182267834812,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 50.0
+}

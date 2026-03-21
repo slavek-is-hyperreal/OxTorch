@@ -6,15 +6,15 @@
 - [x] **F16 CPU Parallelization**: Performance parity on legacy non-AVX512 hardware.
 - [x] **100% Bit-Perfect BitNet**: Parity verified between CPU and Vulkan backends.
 - [x] **100% PyTorch Fallback Dispatcher**: `import oxtorch as torch` drop-in replacement via `oxtorch/` package.
-- [x] **Phase 6 — Atomized Benchmark Suite**: 105 self-contained benchmark files (BF16/F16/F32/INT8/Monster), each saving results to `tests/results/*.json`. OxTorch faster in **34/53** completed tests. MatMul Vulkan: **4–25x** faster than PyTorch across all dtypes.
+- [x] Phase 6 — Atomized Benchmark Suite: 167 self-contained benchmark files (BF16/F16/F32/INT8/Monster), each saving results to tests/results/*.json. OxTorch faster in **88/167** tests. MatMul CPU (BF16): **400–700x** faster than PyTorch fallback.
 
 
 ## [3.6.0] Strategy: Hardware Acceleration & High-Precision Reductions
 
 ---
 
-## 🚀 Active Development: Sprint 2 "Transformers Ops — LLM Ready"
-*Goal: Run LLaMA/Mistral/Phi mini inference (quantized, SSD-resident). 163/163 benchmarks passing.*
+## 🚀 Active Development: Sprint 2 "Transformers Ops — LLM Ready" [/]
+*Goal: Run LLaMA/Mistral/Phi mini inference (quantized, SSD-resident). 167/167 benchmarks passing.*
 
 ### Status: Sprint 1.6 ✅ COMPLETE
 - [x] **Modular Directory Structure**: `src/{cpu,vulkan}/ops/`.
@@ -23,8 +23,9 @@
 - [x] **163/163 parity tests passing**, 67 OxTorch-faster, MatMul Vulkan up to 700× faster than PyTorch.
 
 ### In Progress
-- [/] **MSTS PyTorch Fallback** — generalize tile-pulling to arbitrary `Callable`, enables SSD streaming for any op.
-- [x] `bmm` (Batch MatMul) [NATIVE], `outer` (RoPE).
+- [x] **MSTS PyTorch Fallback** ✅ — Generalized tile-pulling in `oxtorch/tensor.py`.
+- [x] `bmm` (Batch MatMul) [NATIVE] ✅.
+- [ ] `outer` (RoPE) — (Pending native implementation).
 - [ ] `scaled_dot_product_attention` — [FALLBACK], fused Vulkan mega-kernel pending.
 - [ ] `index_select`, `__getitem__` (slicing), `embedding` lookup — [FALLBACK].
 - [ ] `argmax`, `topk` (decoding ops) — [FALLBACK].
@@ -44,22 +45,23 @@
 - [x] `zeros`, `ones`, `full`, `rand`, `randn` (creators).
 
 ### [Sprint 2] Transformers Ops (LLM Ready) [/]
-*Target: run LLaMA/Mistral/Phi mini inference (quantized, SSD-resident).*
-- [x] **Matrix**: `bmm` (Batch MatMul) ✅, `outer` (RoPE).
+*Target: native implementation of LLaMA/Mistral/Phi inference ops.*
+- [x] **Matrix**: `bmm` ✅. remaining: `outer` (RoPE).
 - [ ] **Fused Linear**: `F.linear(x, W, b)` - mm + bias + relu in one Vulkan dispatch.
 - [x] **Normalization**: `rms_norm` ✅, `layer_norm` ✅.
 - [x] **Sequence**: `cat` ✅, `stack` ✅, `split` ✅, `chunk` ✅.
-- [ ] **Indexing**: `index_select`, `__getitem__` [FALLBACK].
-- [ ] **Embeddings**: `embedding` lookup [FALLBACK].
-- [ ] **Attention**: `scaled_dot_product_attention` [FALLBACK].
-- [ ] **Decoding**: `argmax`, `topk` [FALLBACK].
-- [ ] **Arithmetic**: `div` ✅. remaining: `mod`, `pow`.
-- [x] **MSTS PyTorch Fallback**: `msts_pytorch_apply` ✅ (Streams SSD tiles through PyTorch for all missing ops).
+- [ ] **Indexing**: `index_select`, `__getitem__` (Pending native implementation).
+- [ ] **Embeddings**: `embedding` lookup (Pending native implementation).
+- [ ] **Attention**: `scaled_dot_product_attention` (Pending native implementation).
+- [ ] **Decoding**: `argmax`, `topk` (Pending native implementation).
+- [x] **Arithmetic**: `div`, `sum`, `mean`, `max` ✅. remaining: `mod`, `pow`.
+- [x] **MSTS PyTorch Fallback**: `msts_pytorch_apply` ✅ (Infrastructure only).
 
 **Performance regressions (fixed 2026-03-21):**
 - [x] **`sub_i8_swar` is scalar stub** — implemented SSE2 path in `sub_i8.rs`.
-- [x] **Per-op `Vec<u8>` allocation** — `sub`, `mul`, `div` allocate new buffer every call. Fix: `TensorPool` ✅ (DONE 2026-03-21).
+- [x] **Per-op `Vec<u8>` allocation** — Fixed with `TensorPool` slab allocator ✅.
 - [x] **ScalarAdd/ScalarMul f16 SIMD gap** — vectorized `scalar.rs` with AVX2/F16C. Up to 12x faster.
+- [x] **AlignmentMismatch Crisis** — Eliminated all `bytemuck` panics via `f64` pool + manual `unsafe` casting ✅.
 - [x] **Benchmark artifact: `split` parity overhead** — optimized `base.py` and benchmark params.
 
 **Monster Test Framework** *(validates the core MSTS promise)*:

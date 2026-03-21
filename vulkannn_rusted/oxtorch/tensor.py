@@ -258,6 +258,10 @@ class Tensor:
         w_vnn = weight._vnn if weight is not None else None
         return Tensor(self._vnn.rms_norm(list(normalized_shape), w_vnn, eps))
 
+    def index_select(self, dim, index):
+        idx_tensor = Tensor(index) if not isinstance(index, Tensor) else index
+        return Tensor(self._vnn.index_select(dim, idx_tensor._vnn))
+
     def __getitem__(self, key):
         # Indexing is complex; fallback to PyTorch
         pt_res = self.to_torch().__getitem__(key)

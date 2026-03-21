@@ -45,6 +45,35 @@ When you want to implement a native optimized kernel for an operation that is cu
 
 ---
 
+## Sprint 2 — Faza 1: Indexing (`index_select` / `embedding`)
+*Celem jest natywne zastąpienie PyTorch Fallback dla wczytywania modeli językowych (Emb Layer).*
+
+**Analiza PyTorch**: W PyTorchu `Embedding.cpp` wprost wywołuje `weight.index_select(0, indices)`. Operacja sprowadza się do memory-bandwidth kopiowania całych wierszy z macierzy wag pod adresy wskazane w `indices`.
+
+### Plan Implementacji — Struktura Plików i Architektura Wektoryzacji (Deep Research)
+Zgodnie ze standardem OxTorch, moduł będzie podzielony wg precyzji: `src/cpu/ops/indexing/index_select/` (zawierając `mod.rs`, `index_select_f32.rs`, `index_select_f16.rs`, `index_select_bf16.rs`, `index_select_i8.rs`).
+
+Filozofia wektoryzacji i struktury plików wymusza jawne strażniki na poziomach architektur: `#[cfg(target_arch = "x86_64")]` oraz `#[cfg(target_arch = "aarch64")]`. Dyspozytor w plikach dobiera najszybszą pętlę w zależności od wyników `is_x86_feature_detected!`.
+
+**Techniki oparte na HPC Research:**
+1. **Cache Prefetching:** Z uwagi na drastycznie rozstrzelony odczyt (scattered loads) niszczący prefetchery CPU, w potokach używamy jawnego `_mm_prefetch(..., _MM_HINT_T0)` ze sprawdzonym dystansem, rzutując wiersze wagi bezpośrednio do cache'u L1 przed wejściem sprzętu obróbkowego.
+2. **`x86_64` (Generyczny/SWAR):** Brak skalarnych pętli "for" dla precyzji bajtowych. Precyzje takie jak INT8 używają techniki **SWAR (SIMD Within A Register)** — pakujemy po osiem wartości elementarnych strumienia do natywnego rejestru 64-bitowego (ogólnego przeznaczenia), by symulować zrównoleglony wektor bez istnienia środowiska AVX.
+3. **`x86_64 AVX1/AVX2`:** Zjawienie się wektorów YMM (256-bit). AVX1 ładuje strumienie F32 (za pomocą `_mm256_loadu_ps`).
+4. **`x86_64 AVX-512`:** Niszczycielskie użycie instrukcji Gather (`_mm512_i32gather_ps` dla skoku w indeksach) i/lub ultra-szybkiego kopiowania wierszowego (`_mm512_loadu_ps` / `storeu`). Co ważniejsze: brak ręcznych pętli opadających (tails). Zastosowanie masek zerujących k (`_mm512_maskz_load_ps`) pozwala natywnie uciąć koniec tensorów bez branchingów.
+5. **`aarch64` (ARM NEON):** Bezpośrednie wywołanie intrinsics ARM zastępujące SWAR; wczytanie skalarne przemieszczenie danych na stół rejestrów wierszowych za pomocą `vsetq_lane_f32` (lub instrukcji tablicowych `tbl`, o ile osadzamy bloki w L1).
+
+### Plan Implementacji — Vulkan Compute
+`src/shaders/index_select.comp` (lub `wgsl`).
+* Push constants: `stride_0`, `stride_1`, `num_indices`, `feature_len`.
+* Buffers: `Inputs` (wagi), `Indices` (id tokenów), `Output` (tensor wynikowy).
+* Layout: Wątki GPU organizujemy jako `[N, F]` -> `gl_GlobalInvocationID.y` mapuje na indeks, a `.x` na feature column. Dzięki temu wielokrotne GPU wątki czytają ten sam adres indeksu z Local/L1 cache.
+
+### Zgodność z MSTS (io_uring)
+Dodana w S.O.P funkcja ma szanować obiekty przebywające w obrębie dysku SSD. MSTS korzysta z asynchronicznego API Linuksa **(io_uring)** do karmienia układu 3-drożnego bufora kołowego (`MSTS_RING_DEPTH` / `MSTS_TILE_SMALL`).
+Przez `io_uring` zasysamy docelowe kafelki/indeksy prosto do cache L2/L3, by nasze pętle iteracyjne działały na gorącym RAMie z pominięciem blokad wejścia/wyjścia (Direct Pipeline).
+
+---
+
 ## Sprint 4 — Fused MatMul+Bias+ReLU Mega-Kernel
 *Goal: Eliminate PCIe roundtrip for intermediate results.*
 

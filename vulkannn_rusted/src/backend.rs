@@ -51,6 +51,7 @@ pub struct AshBackend {
     pub pipe_layout_bit_linear: vk::PipelineLayout,
     pub pipe_layout_layer_norm: vk::PipelineLayout,
     pub pipe_layout_rms_norm: vk::PipelineLayout,
+    pub pipe_layout_index_select: vk::PipelineLayout,
     
     #[allow(dead_code)]
     pub pipe_elementwise: vk::Pipeline,
@@ -60,6 +61,7 @@ pub struct AshBackend {
     pub pipe_bit_linear: vk::Pipeline,
     pub pipe_layer_norm: vk::Pipeline,
     pub pipe_rms_norm: vk::Pipeline,
+    pub pipe_index_select: vk::Pipeline,
     pub pipe_sigmoid: vk::Pipeline,
 
     pub pipe_silu: vk::Pipeline,
@@ -87,6 +89,7 @@ pub struct AshBackend {
     pub pool_desc_bit_linear: Mutex<DescriptorSetPool>,
     pub pool_desc_layer_norm: Mutex<DescriptorSetPool>,
     pub pool_desc_rms_norm: Mutex<DescriptorSetPool>,
+    pub pool_desc_index_select: Mutex<DescriptorSetPool>,
     
     pub timeline_semaphore: vk::Semaphore,
     pub timeline_value: AtomicU64,
@@ -304,11 +307,11 @@ pub fn init_backend() {
         // Bug #3 fix: Do NOT use FREE_DESCRIPTOR_SET_BIT.
         // We now use rotating pools of descriptor sets to support asynchronous pipelining.
         let pool_sizes = [
-            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1024),
-            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(256),
+            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(4096),
+            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1024),
         ];
         let pool_info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(512)
+            .max_sets(1024)
             .pool_sizes(&pool_sizes);
         let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None) }.unwrap();
 
@@ -383,6 +386,10 @@ pub fn init_backend() {
         let pc_elementwise_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];
         let pipe_layout_elementwise = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_elementwise]).push_constant_ranges(&pc_elementwise_range), None) }.unwrap();
 
+        let dsl_index_select = dsl_elem;
+        let pc_index_select_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(8)]; // num_indices(4) + feature_len(4) = 8
+        let pipe_layout_index_select = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_index_select]).push_constant_ranges(&pc_index_select_range), None) }.unwrap();
+
 
         let pc_matmul_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(24)];
         let pipe_layout_matmul = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_matmul]).push_constant_ranges(&pc_matmul_range), None) }.unwrap();
@@ -410,6 +417,7 @@ pub fn init_backend() {
         let sm_bit_linear = load_shader(include_bytes!("shaders/bit_linear.comp.spv"));
         let sm_layer_norm = load_shader(include_bytes!("shaders/layer_norm.comp.spv"));
         let sm_rms_norm = load_shader(include_bytes!("shaders/rms_norm.comp.spv"));
+        let sm_index_select = load_shader(include_bytes!("shaders/index_select.comp.spv"));
 
 
         let entry_main = CString::new("main").unwrap();
@@ -439,6 +447,7 @@ pub fn init_backend() {
         let pipe_bit_linear = create_pipe(sm_bit_linear, &entry_main, pipe_layout_bit_linear);
         let pipe_layer_norm = create_pipe(sm_layer_norm, &entry_main, pipe_layout_layer_norm);
         let pipe_rms_norm = create_pipe(sm_rms_norm, &entry_main, pipe_layout_rms_norm);
+        let pipe_index_select = create_pipe(sm_index_select, &entry_main, pipe_layout_index_select);
         let pipe_relu = create_pipe(sm_act, &entry_relu, pipe_layout_act);
         let pipe_sigmoid = create_pipe(sm_act, &entry_sigm, pipe_layout_act);
         let pipe_silu = create_pipe(sm_act, &entry_silu, pipe_layout_act);
@@ -464,6 +473,7 @@ pub fn init_backend() {
             device.destroy_shader_module(sm_bit_linear, None);
             device.destroy_shader_module(sm_layer_norm, None);
             device.destroy_shader_module(sm_rms_norm, None);
+            device.destroy_shader_module(sm_index_select, None);
         }
 
         let compute_cmd_pool_info = vk::CommandPoolCreateInfo::default()
@@ -502,6 +512,7 @@ pub fn init_backend() {
         let pool_desc_bit_linear = create_pool(dsl_bit_linear, 32);
         let pool_desc_layer_norm = create_pool(dsl_layer_norm, 32);
         let pool_desc_rms_norm = create_pool(dsl_rms_norm, 32);
+        let pool_desc_index_select = create_pool(dsl_index_select, 32);
 
         // NEW: Phase 1 VRAM Pool Allocation
         let pool_size = 256 * 1024 * 1024; // 256MB (reduced for compatibility with R7 200 series)
@@ -548,13 +559,16 @@ pub fn init_backend() {
             pipe_layout_bit_linear,
             pipe_layout_layer_norm,
             pipe_layout_rms_norm,
+            pipe_layout_index_select,
             pipe_matmul,
             pipe_bit_linear,
             pipe_layer_norm,
             pipe_rms_norm,
+            pipe_index_select,
             timeline_semaphore,
             timeline_value: AtomicU64::new(0),
             pending_ops: Mutex::new(Vec::new()),
+            pool_desc_index_select: Mutex::new(pool_desc_index_select),
             pool_buffer,
             pool_free_list: Mutex::new(vec![PoolBlock { offset: 0, size: pool_size, used: false }]),
         }
@@ -978,6 +992,109 @@ pub fn execute_elementwise_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], 
         backend_ref.device.wait_semaphores(&wait_info, u64::MAX).unwrap();
         
         download_from_stage(res_raw, &stage_c, dtype); 
+    }
+    
+    poll_async_ops();
+}
+
+/// Executes IndexSelect on the GPU.
+pub fn execute_index_select_into(weight_raw: &[u8], indices_raw: &[u8], out_raw: &mut [u8], num_indices: u32, feature_len: u32, dtype: DataType) {
+    let backend = BACKEND.get().unwrap();
+    let bytes_per_elem = match dtype {
+        DataType::F32  => 4,
+        DataType::Int8 => 1,
+        _ => 2,
+    };
+    
+    let num_weight_elements = weight_raw.len() / bytes_per_elem;
+    let num_weight_bytes_f32 = (num_weight_elements * 4) as vk::DeviceSize;
+    
+    let num_out_elements = (num_indices * feature_len) as usize;
+    let num_out_bytes_f32 = (num_out_elements * 4) as vk::DeviceSize;
+    
+    // Indices are ALWAYS i32 (4 bytes per element)
+    let num_indices_bytes = (num_indices * 4) as vk::DeviceSize;
+
+    // Use mappable buffers (CpuToGpu) for small data, GpuOnly for large.
+    let buf_weight = get_buffer(num_weight_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("IdxSel_Weight"), false);
+    let buf_indices = get_buffer(num_indices_bytes, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, Some("IdxSel_Indices"), false);
+    let buf_out = get_buffer(num_out_bytes_f32, vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST, Some("IdxSel_Out"), false);
+
+    let stage_weight = get_buffer(num_weight_bytes_f32, vk::BufferUsageFlags::TRANSFER_SRC, Some("IdxSel_Stage_W"), true);
+    let stage_indices = get_buffer(num_indices_bytes, vk::BufferUsageFlags::TRANSFER_SRC, Some("IdxSel_Stage_I"), true);
+    let stage_out = get_buffer_readback(num_out_bytes_f32, vk::BufferUsageFlags::TRANSFER_DST, Some("IdxSel_Stage_Out"));
+
+    upload_to_stage(weight_raw, &stage_weight, dtype);
+    upload_to_stage_raw(indices_raw, &stage_indices);
+
+    let cmd = begin_cmd(&backend.device, backend.compute_cmd_pool);
+    unsafe {
+        backend.device.cmd_copy_buffer(cmd, stage_weight.buffer, buf_weight.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_weight.pool_offset.unwrap_or(0), size: num_weight_bytes_f32 }]);
+        backend.device.cmd_copy_buffer(cmd, stage_indices.buffer, buf_indices.buffer, &[vk::BufferCopy { src_offset: 0, dst_offset: buf_indices.pool_offset.unwrap_or(0), size: num_indices_bytes }]);
+        
+        let barriers = [
+            vk::BufferMemoryBarrier::default().buffer(buf_weight.buffer).offset(buf_weight.pool_offset.unwrap_or(0)).size(buf_weight.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+            vk::BufferMemoryBarrier::default().buffer(buf_indices.buffer).offset(buf_indices.pool_offset.unwrap_or(0)).size(buf_indices.size).src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED),
+        ];
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &barriers, &[]);
+
+        let set = backend.pool_desc_index_select.lock().unwrap().next();
+        let info_w = [vk::DescriptorBufferInfo::default().buffer(buf_weight.buffer).offset(buf_weight.pool_offset.unwrap_or(0)).range(buf_weight.size)];
+        let info_i = [vk::DescriptorBufferInfo::default().buffer(buf_indices.buffer).offset(buf_indices.pool_offset.unwrap_or(0)).range(buf_indices.size)];
+        let info_o = [vk::DescriptorBufferInfo::default().buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).range(buf_out.size)];
+        
+        let writes = [
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_w),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_i),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(&info_o),
+        ];
+        backend.device.update_descriptor_sets(&writes, &[]);
+
+        let pc_data = [num_indices, feature_len];
+        let pc_bytes = bytemuck::cast_slice(&pc_data);
+        backend.device.cmd_push_constants(cmd, backend.pipe_layout_index_select, vk::ShaderStageFlags::COMPUTE, 0, pc_bytes);
+
+        backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_index_select);
+        backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_index_select, 0, &[set], &[]);
+        let workgroups = ((num_indices * feature_len) + 255) / 256;
+        backend.device.cmd_dispatch(cmd, workgroups, 1, 1);
+        
+        let barrier_out = vk::BufferMemoryBarrier::default().buffer(buf_out.buffer).offset(buf_out.pool_offset.unwrap_or(0)).size(buf_out.size).src_access_mask(vk::AccessFlags::SHADER_WRITE).dst_access_mask(vk::AccessFlags::TRANSFER_READ).src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
+        backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
+        
+        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: buf_out.pool_offset.unwrap_or(0), dst_offset: 0, size: num_out_bytes_f32 }]);
+        
+        backend.device.end_command_buffer(cmd).unwrap();
+        
+        let wait_val = backend.timeline_value.fetch_add(1, Ordering::SeqCst) + 1;
+        
+        let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default()
+            .signal_semaphore_values(std::slice::from_ref(&wait_val));
+        
+        let cmds = [cmd];
+        let submit_info = vk::SubmitInfo::default()
+            .push_next(&mut timeline_info)
+            .command_buffers(&cmds)
+            .signal_semaphores(std::slice::from_ref(&backend.timeline_semaphore));
+            
+        backend.device.queue_submit(backend.compute_queue, &[submit_info], vk::Fence::null()).unwrap();
+        
+        backend.pending_ops.lock().unwrap().push(AsyncOp {
+            staging_buffers: vec![stage_weight, stage_indices, stage_out.copy_for_async()],
+            device_buffers: vec![buf_weight, buf_indices, buf_out],
+            cmd_buffer: cmd,
+            desc_set: vk::DescriptorSet::null(),
+            wait_id: wait_val,
+        });
+
+        let backend_ref = BACKEND.get().unwrap();
+        let target = wait_val;
+        let wait_info = vk::SemaphoreWaitInfo::default()
+            .semaphores(std::slice::from_ref(&backend_ref.timeline_semaphore))
+            .values(std::slice::from_ref(&target));
+        backend_ref.device.wait_semaphores(&wait_info, u64::MAX).unwrap();
+        
+        download_from_stage(out_raw, &stage_out, dtype); 
     }
     
     poll_async_ops();

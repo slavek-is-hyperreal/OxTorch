@@ -272,4 +272,52 @@ impl Tensor {
             },
         }
     }
+
+    pub fn execute_index_select(&self, dim: usize, indices: &Tensor) -> PyResult<Tensor> {
+        if dim != 0 {
+            return Err(pyo3::exceptions::PyNotImplementedError::new_err("OxTorch native SIMD currently only supports index_select on dim=0"));
+        }
+        
+        // Assert indices is at least 1D
+        if indices.shape.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err("Indices tensor cannot be a scalar"));
+        }
+        
+        let feature_len = self.shape[1..].iter().product::<usize>();
+        let num_indices = indices.shape.iter().product::<usize>();
+        
+        let mut out_shape = indices.shape.clone();
+        out_shape.extend_from_slice(&self.shape[1..]);
+
+        let mut out = Tensor::new_zeros(out_shape, self.dtype.clone(), &self.device)?;
+        
+        // Ensure indices are available as i32
+        let indices_f32 = indices.to_numpy_f32_vec();
+        let indices_i32: Vec<i32> = indices_f32.into_iter().map(|f| f as i32).collect();
+
+        if self.device.starts_with("vulkan") {
+            let indices_u8 = bytemuck::cast_slice::<i32, u8>(&indices_i32);
+            let (weight_raw, _) = self.get_slice_raw_bytes();
+            let (out_raw, _) = out.get_slice_raw_mut_bytes();
+            crate::backend::execute_index_select_into(
+                weight_raw,
+                indices_u8,
+                out_raw,
+                num_indices as u32,
+                feature_len as u32,
+                self.dtype.clone(),
+            );
+            return Ok(out);
+        }
+
+        match self.dtype {
+            DataType::F32 => crate::cpu::index_select_f32(self.get_slice_raw_f32().0, &indices_i32, out.get_slice_raw_mut_f32().0, feature_len),
+            DataType::F16 => crate::cpu::index_select_f16(self.get_slice_raw_f16().0, &indices_i32, out.get_slice_raw_mut_f16().0, feature_len),
+            DataType::BF16 => crate::cpu::index_select_bf16(self.get_slice_raw_bf16().0, &indices_i32, out.get_slice_raw_mut_bf16().0, feature_len),
+            DataType::Int8 => crate::cpu::index_select_i8(self.get_slice_raw_i8().0, &indices_i32, out.get_slice_raw_mut_i8().0, feature_len),
+            DataType::Ternary => return Err(pyo3::exceptions::PyNotImplementedError::new_err("Ternary index_select not implemented")),
+        };
+        
+        Ok(out)
+    }
 }
