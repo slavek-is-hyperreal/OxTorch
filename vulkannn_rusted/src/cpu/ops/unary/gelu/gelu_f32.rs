@@ -104,7 +104,24 @@ unsafe fn gelu_f32_sse2_inplace(buf: &mut [f32]) {
 #[cfg(target_arch = "aarch64")]
 fn gelu_f32_neon(buf: &mut [f32]) {
     use std::arch::aarch64::*;
-    // For Neon, we'll use a slightly simplified version or reuse the scalar path for now
-    // as transcendental ops on Neon (exp, tanh) need a poly approx.
-    gelu_f32_scalar(buf);
+    let vk = vdupq_n_f32(0.7978845608); // sqrt(2/pi)
+    let vc = vdupq_n_f32(0.044715);
+    let vhalf = vdupq_n_f32(0.5);
+    let vone = vdupq_n_f32(1.0);
+    
+    let n4 = (buf.len() / 4) * 4;
+    for i in (0..n4).step_by(4) {
+        unsafe {
+            let x = vld1q_f32(buf.as_ptr().add(i));
+            let x2 = vmulq_f32(x, x);
+            let x3 = vmulq_f32(x2, x);
+            let tmp = vaddq_f32(x, vmulq_f32(vc, x3));
+            let inner = vmulq_f32(vk, tmp);
+            
+            let tanh_v = crate::cpu::ops::math_simd::tanh_ps_neon(inner);
+            let res = vmulq_f32(vhalf, vmulq_f32(x, vaddq_f32(vone, tanh_v)));
+            vst1q_f32(buf.as_mut_ptr().add(i), res);
+        }
+    }
+    gelu_f32_scalar(&mut buf[n4..]);
 }

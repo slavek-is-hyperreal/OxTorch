@@ -244,6 +244,8 @@ Runtime dispatch via `is_x86_feature_detected!()` — no compile-time flags.
 | SSD Streaming | `src/streaming.rs`, `src/io_uring_engine.rs` |
 | MSTS Tile System | `src/crook_scheduler.rs`, `src/tensor/msts.rs` |
 | SIMD Kernels | `src/cpu/ops/` |
+- **`src/tensor/types.rs`**: `DataType` enum (F32, F16, BF16, Int8, Ternary).
+- **`src/tensor/pool.rs`**: Thread-local slab allocator ([TensorPool](tensor_pool.md)) — 6-bucket pool for zero-copy buffer reuse.
 
 ---
 
@@ -264,15 +266,24 @@ without a fixed clock, and without static splits.
 
 ---
 
-## Documentation
+## Documentation Index
 
-- [API Reference](docs/api_reference.md)
-- [Architecture](docs/architecture.md)
-- [How We Test](docs/how_we_test.md)
-- [Performance Guide](docs/performance_guide.md)
-- [Roadmap](docs/roadmap.md)
-- [Changelog](docs/CHANGELOG.md)
-- [Implementation Guides](docs/implementation_guides.md)
+Kompletna dokumentacja architektury i użytkowania OxTorch:
+
+*   **[MSTS Architecture](docs/msts_logic.md)**: Szczegółowy opis Mera Style Tiling System, automat stanów kafelków i 3-drożny dispatcher.
+*   **[Execution Modes](docs/execution_modes.md)**: Charakterystyka trybów CPU, Vulkan GPU, Hybrid oraz SSD Streaming.
+*   **[CPU Backend & SIMD](docs/cpu_backend.md)**: Przewodnik po implementacji kerneli (AVX, NEON, SWAR) oraz Standard Operating Procedure (SOP) dodawania nowych funkcji.
+*   **[SIMD Support Matrix](docs/support_matrix.md)**: Tabela wsparcia instrukcji wektorowych dla F32, F16, BF16 i INT8.
+- [SSD Streaming & MSTS](docs/msts_logic.md) - ring-buffer, io_uring, and work-stealing logic.
+- [Execution Modes](docs/execution_modes.md) - CPU, Vulkan (GPU), Hybrid, and SSD modes.
+- [CPU Backend SOP](docs/cpu_backend.md) - how to add new kernels and SIMD paths.
+- [Support Matrix](docs/support_matrix.md) - detailed SIMD support for F32, F16, BF16, and INT8.
+- [TensorPool Allocator](docs/tensor_pool.md) - zero-copy memory management for hot-path.
+- [OxTorch Package](docs/oxtorch_package.md) - Python glue and fallback mechanism.
+*   **[OxTorch Python Package](docs/oxtorch_package.md)**: Opis mechanizmu dynamicznego fallbacku do PyTorcha i integracji `import oxtorch as torch`.
+*   **[PyTorch Gap Analysis](docs/pytorch_gap_analysis.md)**: Zestawienie zaimplementowanych operacji i lista brakujących funkcjonalności (Roadmap).
+*   **[Implementation Guides](docs/implementation_guides.md)**: Szablony dla deweloperów i plan Fazy 2 (Embeddings).
+*   **[How We Test](docs/how_we_test.md)**: Procedury weryfikacji parytetu i benchmarkowania.
 
 ---
 

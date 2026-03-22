@@ -15,6 +15,9 @@ fn max_f32_serial(buf: &[f32], initial: f32) -> f32 {
     #[cfg(target_arch = "x86_64")] {
         if is_x86_feature_detected!("avx") { return unsafe { max_f32_avx(buf, initial) }; }
     }
+    #[cfg(target_arch = "aarch64")] {
+        return unsafe { max_f32_neon(buf, initial) };
+    }
     buf.iter().fold(initial, |a, &b| a.max(b))
 }
 
@@ -26,4 +29,18 @@ unsafe fn max_f32_avx(buf: &[f32], initial: f32) -> f32 {
     let mut tmp = [0.0f32; 8]; _mm256_storeu_ps(tmp.as_mut_ptr(), max_v);
     let mut m = tmp.iter().fold(initial, |a, &b| a.max(b));
     for &x in &buf[n8..] { m = m.max(x); } m
+}
+
+#[cfg(target_arch = "aarch64")]
+unsafe fn max_f32_neon(buf: &[f32], initial: f32) -> f32 {
+    use std::arch::aarch64::*;
+    let mut max_v = vdupq_n_f32(initial);
+    let n4 = (buf.len() / 4) * 4;
+    for i in (0..n4).step_by(4) {
+        max_v = vmaxq_f32(max_v, vld1q_f32(buf.as_ptr().add(i)));
+    }
+    let m = vmaxvq_f32(max_v);
+    let mut res = initial.max(m);
+    for &x in &buf[n4..] { res = res.max(x); }
+    res
 }

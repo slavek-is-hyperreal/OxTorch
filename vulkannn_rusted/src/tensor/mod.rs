@@ -7,7 +7,7 @@ mod reductions;
 mod linalg;
 mod msts;
 mod fallback;
-mod pool;
+pub mod pool;
 
 pub use types::{DataType, IoEngineType};
 pub use storage::Storage;

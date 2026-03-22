@@ -253,3 +253,13 @@ unsafe fn convert_bf16_to_f32_neon(src: &[half::bf16], dst: &mut [f32]) {
     let rem = (src.len() / 4) * 4;
     for (s, d) in src[rem..].iter().zip(dst[rem..].iter_mut()) { *d = s.to_f32(); }
 }
+
+/// Specialized block conversion for Tiled MatMul (F16 -> F32)
+pub fn convert_block_f16_to_f32(src: &[half::f16], dst: &mut [f32]) {
+    convert_f16_to_f32(src, dst);
+}
+
+/// Specialized block conversion for Tiled MatMul (BF16 -> F32)
+pub fn convert_block_bf16_to_f32(src: &[half::bf16], dst: &mut [f32]) {
+    convert_bf16_to_f32(src, dst);
+}

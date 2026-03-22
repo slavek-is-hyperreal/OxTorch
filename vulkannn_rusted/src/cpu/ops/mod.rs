@@ -19,3 +19,5 @@ pub use sequence::*;
 
 pub mod indexing;
 pub use indexing::*;
+
+pub mod math_simd;

@@ -62,16 +62,24 @@ fn add_i8_neon(a: &[i8], b: &[i8], res: &mut [i8]) {
 /// GPR-based SWAR addition (8 bytes at a time)
 fn add_i8_swar(a: &[i8], b: &[i8], res: &mut [i8]) {
     let n8 = (a.len() / 8) * 8;
-    let mask_low7 = 0x7F7F7F7F7F7F7F7F_u64;
-    let mask_msb  = 0x8080808080808080_u64;
-
     for i in (0..n8).step_by(8) {
         unsafe {
             let x = *(a.as_ptr().add(i) as *const u64);
             let y = *(b.as_ptr().add(i) as *const u64);
-            // Non-saturating SWAR add (wrapping)
-            let sum = ((x & mask_low7).wrapping_add(y & mask_low7)) ^ ((x ^ y) & mask_msb);
-            *(res.as_mut_ptr().add(i) as *mut u64) = sum;
+            
+            // Detect overflow bitwise: (x^sum) & (y^sum) & MSB_MASK
+            let sum = x.wrapping_add(y);
+            let msb_mask = 0x8080808080808080_u64;
+            let overflow = ((x ^ sum) & (y ^ sum)) & msb_mask;
+            
+            if overflow == 0 {
+                *(res.as_mut_ptr().add(i) as *mut u64) = sum;
+            } else {
+                // If any byte overflows, fall back to safe scalar for this 8-byte block
+                for k in 0..8 {
+                    res[i + k] = a[i + k].saturating_add(b[i + k]);
+                }
+            }
         }
     }
     add_i8_scalar(&a[n8..], &b[n8..], &mut res[n8..]);
