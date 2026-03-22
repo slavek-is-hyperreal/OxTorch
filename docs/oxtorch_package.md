@@ -1,38 +1,38 @@
 # OxTorch Python Package & Fallback Mechanism
 
-Paczka `oxtorch` to wysokopoziomowy wrapper Pythona, który sprawia, że OxTorch jest w 100% kompatybilny z API PyTorcha jako drop-in replacement (`import oxtorch as torch`).
+The `oxtorch` package is a high-level Python wrapper that ensures OxTorch is 100% compatible with the PyTorch API as a drop-in replacement (`import oxtorch as torch`).
 
 ---
 
-## 1. Architektura Wrapperów
+## 1. Wrapper Architecture
 
-System składa się z dwóch warstw:
-1.  **`vulkannn_rusted`**: Binarny moduł skompilowany w Rust (PyO3). Zawiera niskopoziomową klasę `Tensor` i kernele SIMD/Vulkan.
-2.  **`oxtorch`**: Czysty moduł Pythona (`vulkannn_rusted/oxtorch/`). Implementuje logikę dyspozycji, proxying oraz fallback do oryginalnego PyTorcha.
+The system consists of two layers:
+1.  **`vulkannn_rusted`**: A binary module compiled in Rust (PyO3). It contains the low-level `Tensor` class and SIMD/Vulkan kernels.
+2.  **`oxtorch`**: A pure Python module (`vulkannn_rusted/oxtorch/`). It implements dispatch logic, proxying, and fallback to the original PyTorch.
 
 ---
 
-## 2. Dynamiczna Dyspozycja (Module-level)
+## 2. Dynamic Dispatch (Module-level)
 
-W `oxtorch/__init__.py` znajduje się funkcja `__getattr__`, która przechwytuje wywołania globalne (np. `torch.relu(t)`):
+In `oxtorch/__init__.py`, there is a `__getattr__` function that intercepts global calls (e.g., `torch.relu(t)`):
 
-1.  **Native Check**: Sprawdza, czy `vulkannn_rusted.Tensor` posiada daną metodę. Jeśli tak, wywołuje ją natywnie.
-2.  **PyTorch Fallback**: Jeśli operacji brakuje w Rust, OxTorch:
-    - Konwertuje argumenty `OxTorchTensor` na `torch.Tensor`.
-    - Wywołuje oryginalną funkcję z zainstalowanego pakietu `torch`.
-    - Pakuje wynik z powrotem w `OxTorchTensor`.
+1.  **Native Check**: It checks if `vulkannn_rusted.Tensor` has the given method. If it does, it calls it natively.
+2.  **PyTorch Fallback**: If the operation is missing in Rust, OxTorch:
+    - Converts the `OxTorchTensor` arguments to `torch.Tensor`.
+    - Calls the original function from the installed `torch` package.
+    - Wraps the result back into an `OxTorchTensor`.
 
 ---
 
 ## 3. Proxy Tensor (`oxtorch/tensor.py`)
 
-Klasa `Tensor` w `oxtorch` jest wrapperem przechowującym natywny obiekt w polu `self._vnn`. Kluczowym mechanizmem jest tutaj `__getattr__` na poziomie klasy:
+The `Tensor` class in `oxtorch` is a wrapper storing the native object in the `self._vnn` field. The key mechanism is class-level `__getattr__`:
 
 ```python
 def __getattr__(self, name):
     # 1. Native?
     if hasattr(self._vnn, name):
-        # ... wywołaj natywny kernel ...
+        # ... call native kernel ...
     
     # 2. SSD Fallback?
     if self.device == "ssd":
@@ -43,30 +43,31 @@ def __getattr__(self, name):
 
 ---
 
-## 4. Inteligentny Fallback SSD (`msts_pytorch_apply`)
+## 4. Intelligent SSD Fallback (`msts_pytorch_apply`)
 
-To unikalna cecha OxTorch. Jeśli wykonujesz operację `erf()` na tensorze 100GB znajdującym się na SSD:
-1.  OxTorch wie, że nie ma natywnego kernela `erf` dla SSD.
-2.  Zamiast rzucać błędem lub wciągać 100GB do RAM (co spowodowałoby OOM), wywołuje `msts_pytorch_apply`.
-3.  Dane są strumieniowane kafelkami (1MB) przez orkiestrację MSTS.
-4.  Każdy kafel jest na chwilę rzutowany do PyTorcha, procesowany i zrzucany z powrotem na SSD.
+This is a unique feature of OxTorch. If you execute an `erf()` operation on a 100GB tensor located on an SSD:
+1.  OxTorch knows there is no native `erf` kernel for SSD.
+2.  Instead of throwing an error or pulling 100GB into RAM (which would cause an OOM), it calls `msts_pytorch_apply`.
+3.  The data is streamed in tiles (1MB) through MSTS orchestration.
+4.  Each tile is temporarily cast to PyTorch, processed, and flushed back to the SSD.
 
-**Efekt**: Pełna funkcjonalność PyTorcha na ogromnych danych przy minimalnym zużyciu RAM.
+**Result**: Full PyTorch functionality on massive data with minimal RAM consumption.
 
 ---
 
-## 5. Konfiguracja Środowiska
+## 5. Environment Configuration
 
-Ponieważ `oxtorch` dostarczany jest jako folder wewnątrz repozytorium (lub wewnątrz wheel), a nie jako samodzielna paczka `pip`, należy poprawnie ustawić ścieżki:
+Since `oxtorch` is delivered as a folder within the repository (or inside a wheel) rather than a standalone `pip` package, paths must be set correctly:
 
 ```bash
-# Wersja deweloperska (lokalna)
-export PYTHONPATH=$PYTHONPATH:/sciezka/do/vulkannn_rusted
+# Developer (local) version
+export PYTHONPATH=$PYTHONPATH:/path/to/vulkannn_rusted
 ```
 
-W kodzie Python wystarczy wtedy:
+In your Python code, you can then simply use:
 ```python
+# The entire change
 import oxtorch as torch
-x = torch.randn(10, 10, device="vulkan") # Natywny OxTorch
-y = torch.erf(x)                        # Fallback do PyTorch
+x = torch.randn(10, 10, device="vulkan") # Native OxTorch
+y = torch.erf(x)                        # Fallback to PyTorch
 ```

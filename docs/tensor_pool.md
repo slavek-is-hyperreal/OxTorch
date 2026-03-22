@@ -1,15 +1,15 @@
-# TensorPool: Slab Allocator dla Hot-Path
+# TensorPool: Hot-Path Slab Allocator
 
-`TensorPool` to wysokowydajny, **Thread-Local Slab Allocator**, zaprojektowany w celu eliminacji systemowych alokacji (`malloc`/`free`) w gorących pętlach obliczeniowych OxTorch.
+`TensorPool` is a high-performance, **Thread-Local Slab Allocator** designed to eliminate system allocations (`malloc`/`free`) in OxTorch's hot loops.
 
-## 1. Dlaczego TensorPool?
-Wiele operacji głębokiego uczenia (np. LayerNorm w F16) wymaga tymczasowych buforów na dane pośrednie (np. konwersja do F32). Wykonywanie alokacji `Vec::with_capacity` dla każdego wiersza tensora (row-wise) powoduje gigantyczny narzut i fragmentację pamięci. `TensorPool` rozwiązuje ten problem poprzez recykling buforów.
+## 1. Why TensorPool?
+Many deep learning operations (e.g., LayerNorm in F16) require temporary buffers for intermediate data (e.g., conversion to F32). Performing `Vec::with_capacity` allocations for every row of a tensor (row-wise) incurs massive overhead and memory fragmentation. `TensorPool` solves this by recycling buffers.
 
-## 2. Architektura
-`TensorPool` jest zaimplementowany jako struktura `ThreadLocal`, co oznacza, że każdy wątek roboczy (np. w Rayon) posiada własną pulę i nie konkuruje o blokady (lock-free access).
+## 2. Architecture
+`TensorPool` is implemented as a `ThreadLocal` structure, meaning each worker thread (e.g., in Rayon) has its own pool and does not compete for locks (lock-free access).
 
-### System Kubłów (Bucketing)
-Pula zarządza 6 pre-alokowanymi kubłami o różnych rozmiarach:
+### Bucketing System
+The pool manages 6 pre-allocated buckets of varying sizes:
 - **Tiny**: < 4 KB
 - **Small**: < 64 KB
 - **Medium**: < 1 MB
@@ -17,28 +17,28 @@ Pula zarządza 6 pre-alokowanymi kubłami o różnych rozmiarach:
 - **X-Large**: < 256 MB
 - **Massive**: > 256 MB
 
-## 3. Użycie w kodzie (Rust)
+## 3. Usage in Code (Rust)
 
-Aby pobrać tymczasowy bufor z puli:
+To retrieve a temporary buffer from the pool:
 
 ```rust
 use crate::tensor::pool::TensorPool;
 
 fn my_kernel(data: &[f16]) {
-    // Pobierz bufor f32 o wymaganym rozmiarze
+    // Get an f32 buffer of the required size
     let mut workspace = TensorPool::get_f32_buffer(data.len());
     
-    // Wykonaj obliczenia...
+    // Perform computations...
     for i in 0..data.len() { workspace[i] = data[i].to_f32(); }
     
-    // Bufor jest ZWRACANY do puli automatycznie, gdy 'workspace' wyjdzie poza zakres (Drop trait)
+    // The buffer is automatically RETURNED to the pool when 'workspace' finishes (Drop trait)
 }
 ```
 
-## 4. Zasady Bezpieczeństwa
-1. **Zero-Copy**: `TensorPool` zwraca `&mut [T]` lub inteligentny wskaźnik, który gwarantuje, że dane nie są kopiowane podczas pobierania z puli.
-2. **Alignment**: Wszystkie bufory są wyrównane do granic 64-bajtowych, co jest wymagane dla instrukcji AVX-512.
-3. **Hot-Swap**: Jeśli wymagany rozmiar przekracza aktualną pojemność kubła, `TensorPool` dokona jednorazowej alokacji systemowej i zachowa ją w puli na przyszłość.
+## 4. Safety Rules
+1. **Zero-Copy**: `TensorPool` returns a `&mut [T]` or a smart pointer, ensuring that data is not copied when being retrieved from the pool.
+2. **Alignment**: All buffers are aligned to 64-byte boundaries, as required for AVX-512 instructions.
+3. **Hot-Swap**: If the required size exceeds the current bucket capacity, `TensorPool` performs a one-time system allocation and keeps it in the pool for future use.
 
 ## 5. MSTS Integration
-Podczas pracy w trybie **SSD Streaming (MSTS Path C)**, kafelki danych są ładowane bezpośrednio do buforów pochodzących z `TensorPool`. Dzięki temu proces strumieniowania 16GB modelu może odbyć się przy stałym śladzie pamięci RAM rzędu kilkuset megabajtów.
+When operating in **SSD Streaming (MSTS Path C)** mode, data tiles are loaded directly into buffers sourced from `TensorPool`. This allows a 16GB model streaming process to run with a constant RAM footprint in the range of a few hundred megabytes.

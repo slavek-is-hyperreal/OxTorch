@@ -268,22 +268,22 @@ without a fixed clock, and without static splits.
 
 ## Documentation Index
 
-Kompletna dokumentacja architektury i użytkowania OxTorch:
+Complete documentation for OxTorch architecture and usage:
 
-*   **[MSTS Architecture](docs/msts_logic.md)**: Szczegółowy opis Mera Style Tiling System, automat stanów kafelków i 3-drożny dispatcher.
-*   **[Execution Modes](docs/execution_modes.md)**: Charakterystyka trybów CPU, Vulkan GPU, Hybrid oraz SSD Streaming.
-*   **[CPU Backend & SIMD](docs/cpu_backend.md)**: Przewodnik po implementacji kerneli (AVX, NEON, SWAR) oraz Standard Operating Procedure (SOP) dodawania nowych funkcji.
-*   **[SIMD Support Matrix](docs/support_matrix.md)**: Tabela wsparcia instrukcji wektorowych dla F32, F16, BF16 i INT8.
-- [SSD Streaming & MSTS](docs/msts_logic.md) - ring-buffer, io_uring, and work-stealing logic.
-- [Execution Modes](docs/execution_modes.md) - CPU, Vulkan (GPU), Hybrid, and SSD modes.
-- [CPU Backend SOP](docs/cpu_backend.md) - how to add new kernels and SIMD paths.
-- [Support Matrix](docs/support_matrix.md) - detailed SIMD support for F32, F16, BF16, and INT8.
-- [TensorPool Allocator](docs/tensor_pool.md) - zero-copy memory management for hot-path.
-- [OxTorch Package](docs/oxtorch_package.md) - Python glue and fallback mechanism.
-*   **[OxTorch Python Package](docs/oxtorch_package.md)**: Opis mechanizmu dynamicznego fallbacku do PyTorcha i integracji `import oxtorch as torch`.
-*   **[PyTorch Gap Analysis](docs/pytorch_gap_analysis.md)**: Zestawienie zaimplementowanych operacji i lista brakujących funkcjonalności (Roadmap).
-*   **[Implementation Guides](docs/implementation_guides.md)**: Szablony dla deweloperów i plan Fazy 2 (Embeddings).
-*   **[How We Test](docs/how_we_test.md)**: Procedury weryfikacji parytetu i benchmarkowania.
+*   **[Documentation GPS (Index)](docs/doc_index.md)**: Start here for a summarized overview of all documentation files.
+*   **[MSTS Architecture](docs/msts_logic.md)**: Detailed description of the Mera Style Tiling System, tile state machine, and 3-path dispatcher.
+*   **[MSTS Visualization](docs/msts_visualization.md)**: Diagrams and state transitions of the MSTS CrookScheduler.
+*   **[Vulkan Internals](docs/vulkan_internals.md)**: Low-level details of the Ash (Vulkan 1.2) backend and async execution.
+*   **[SSD Binary Format](docs/ssd_format.md)**: Specification of the binary `.ssd` format and direct I/O requirements.
+*   **[New Op Tutorial](docs/new_op_tutorial.md)**: Step-by-step guide for developers adding new operations.
+*   **[Execution Modes](docs/execution_modes.md)**: Characteristics of CPU, Vulkan GPU, Hybrid, and SSD Streaming modes.
+*   **[CPU Backend & SIMD](docs/cpu_backend.md)**: Guide to kernel implementation (AVX, NEON, SWAR) and Standard Operating Procedure (SOP) for adding new functions.
+*   **[SIMD Support Matrix](docs/support_matrix.md)**: Support table for vector instructions (F32, F16, BF16, and INT8).
+*   **[TensorPool Allocator](docs/tensor_pool.md)**: Zero-copy memory management for hot-path.
+*   **[OxTorch Python Package](docs/oxtorch_package.md)**: Description of the dynamic fallback mechanism to PyTorch and `import oxtorch as torch` integration.
+*   **[PyTorch Gap Analysis](docs/pytorch_gap_analysis.md)**: Comparison of implemented operations and a list of missing functionalities (Roadmap).
+*   **[Implementation Guides](docs/implementation_guides.md)**: Developer templates and Phase 2 (Embeddings) plan.
+*   **[How We Test](docs/how_we_test.md)**: Parity verification procedures and benchmarking infrastructure.
 
 ---
 

@@ -1,75 +1,75 @@
 # CPU Backend & SIMD Architecture
 
-Backend CPU w OxTorch został zaprojektowany pod kątem wysokiej wydajności na architekturach x86_64 oraz aarch64, ze szczególnym uwzględnieniem maszyn bez instrukcji AVX-512 (np. Ivy Bridge, Haswell).
+The CPU backend in OxTorch is designed for high performance on x86_64 and aarch64 architectures, with a specific focus on machines without AVX-512 instructions (e.g., Ivy Bridge, Haswell).
 
 ---
 
-## 1. Struktura Folderów
+## 1. Folder Structure
 
-Kernele CPU są ściśle uporządkowane według kategorii operacji i precyzji:
+CPU kernels are strictly organized by operation category and precision:
 
 ```text
 vulkannn_rusted/src/cpu/ops/
-├── binary/          # Operacje na dwóch tensorach (add, sub, mul, div)
-├── unary/           # Operacje na jednym tensorze (relu, gelu, exp, sigmoid)
-├── matmul/          # Mnożenie macierzy (f32, f16, bf16, i8)
+├── binary/          # Operations on two tensors (add, sub, mul, div)
+├── unary/           # Operations on one tensor (relu, gelu, exp, sigmoid)
+├── matmul/          # Matrix multiplication (f32, f16, bf16, i8)
 ├── indexing/        # index_select, embedding
 ├── reduction/       # sum, mean, max, softmax
 ├── sequence/        # cat, stack, split, chunk
 └── norm/            # layer_norm, rms_norm
 ```
 
-Każda operacja (np. `relu`) posiada własny folder, a w nim pliki dla konkretnych typów danych: `f32.rs`, `f16.rs`, `bf16.rs`, `i8.rs`.
+Each operation (e.g., `relu`) has its own folder, containing files for specific data types: `f32.rs`, `f16.rs`, `bf16.rs`, `i8.rs`.
 
 ---
 
-## 2. Manual S.O.P: Dodawanie nowej funkcji
+## 2. Manual S.O.P: Adding a New Function
 
-Aby dodać nową operację procesorową (np. `abs`), postępuj zgodnie z poniższą listą:
+To add a new CPU operation (e.g., `abs`), follow the procedure below:
 
-### Krok 1: Tworzenie struktury
-Stwórz folder `src/cpu/ops/unary/abs/` i dodaj pliki `mod.rs`, `f32.rs`, `f16.rs`, `bf16.rs`, `i8.rs`. Zarejestruj moduł w `src/cpu/ops/unary/mod.rs`.
+### Step 1: Create the Structure
+Create the folder `src/cpu/ops/unary/abs/` and add the files `mod.rs`, `f32.rs`, `f16.rs`, `bf16.rs`, `i8.rs`. Register the module in `src/cpu/ops/unary/mod.rs`.
 
-### Krok 2: Implementacja Kerneli (SIMD -> Fallback)
-W każdym pliku implementuj funkcję z jawną specjalizacją. Przykład dla `f32.rs`:
-- `abs_f32_avx()` – wykorzystujące `_mm256_andnot_ps` (maskowanie bitu znaku).
-- `abs_f32_sse()` – dla starszych procesorów.
-- `abs_f32_neon()` – dla ARM.
-- `abs_f32_scalar()` – obowiązkowy fallback dla pozostałych architektur.
+### Step 2: Implement Kernels (SIMD -> Fallback)
+In each file, implement a function with explicit specialization. Example for `f32.rs`:
+- `abs_f32_avx()` – using `_mm256_andnot_ps` (sign bit masking).
+- `abs_f32_sse()` – for older processors.
+- `abs_f32_neon()` – for ARM.
+- `abs_f32_scalar()` – mandatory fallback for all other architectures.
 
-### Krok 3: Integracja z Python API (Odpięcie Fallbacku)
-1.  Dodaj metodę `execute_abs` do `vulkannn_rusted/src/tensor/ops.rs`.
-2.  W `vulkannn_rusted/oxtorch/tensor.py` dodaj metodę:
-    ```python
-    def abs(self):
-        return self._vnn.execute_abs()
-    ```
-Dodanie tej metody do klasy `Tensor` w Pythonie automatycznie "nadpisuje" mechanizm `__getattr__`, tym samym odpinając wolny fallback PyTorcha.
+### Step 3: Integrate with Python API (Detaching the Fallback)
+1. Add the `execute_abs` method to `vulkannn_rusted/src/tensor/ops.rs`.
+2. In `vulkannn_rusted/oxtorch/tensor.py`, add the method:
+   ```python
+   def abs(self):
+       return self._vnn.execute_abs()
+   ```
+Adding this method to the `Tensor` class in Python automatically "overrides" the `__getattr__` mechanism, thereby detaching the slow PyTorch fallback.
 
-### Krok 4: Testy i Parity
-Stwórz benchmark w `tests/benchmarks/f32/abs_cpu.py` (dziedzicząc po `BenchmarkBase`). Uruchom go, aby sprawdzić "bit-perfect" parity z PyTorchem.
+### Step 4: Testing and Parity
+Create a benchmark in `tests/benchmarks/f32/abs_cpu.py` (inheriting from `BenchmarkBase`). Run it to verify "bit-perfect" parity with PyTorch.
 
-### Krok 5: Regresja Całościowa
-**BARDZO WAŻNE**: Przed wysłaniem PR, uruchom **WSZYSTKIE** testy:
+### Step 5: Full Regression
+**VERY IMPORTANT**: Before submitting a PR, run **ALL** benchmarks:
 ```bash
 python tests/run_all_benchmarks.py
 ```
-Należy upewnić się, że nowa implementacja nie wpłynęła na stabilność alokacji w `TensorPool` lub nie zepsuła orkiestracji MSTS.
+Ensure the new implementation does not affect `TensorPool` allocation stability or break MSTS orchestration.
 
 ---
 
-## 3. Współpraca z MSTS (Wielowątkowość)
+## 3. Interaction with MSTS (Multi-threading)
 
-Kernele CPU w OxTorch **nie powinny** same w sobie używać wielowątkowości (np. wewnętrznej pętli `par_iter`). Są one orkiestrowane przez system MSTS na poziomie wyższym:
+CPU kernels in OxTorch **should not** use multi-threading themselves (e.g., internal `par_iter`). They are orchestrated by the MSTS system at a higher level:
 
-*   **Path A (Direct)**: Kernel jest wołany raz na całościowym buforze. Wykorzystuje 1 rdzeń (maksymalna kontrola cache).
-*   **Path B (Single-mode)**: Kernel przetwarza kafelki 1MB sekwencyjnie. Dane idealnie mieszczą się w L2, zapewniając zero cache misses.
-*   **Path C (Full Parallel)**: `MSTS` używa `Rayon` do wysłania różnych kafelek na różne rdzenie. Każdy rdzeń wykonuje **jednowątkowy** kernel na swoim kaflu. Dzięki temu unikamy walki o cache między wątkami (False Sharing).
+*   **Path A (Direct)**: The kernel is called once on the entire buffer. It uses 1 core (maximum cache control).
+*   **Path B (Single-mode)**: The kernel processes 1MB tiles sequentially. Data fits perfectly in L2, ensuring zero cache misses.
+*   **Path C (Full Parallel)**: `MSTS` uses `Rayon` to dispatch different tiles to different cores. Each core executes a **single-threaded** kernel on its tile. This avoids cache contention between threads (False Sharing).
 
 ---
 
-## 4. Zasady implementacji SIMD
+## 4. SIMD Implementation Rules
 
-1.  **Alignment**: Zawsze zakładaj, że dane mogą nie być wyrównane do 32-bajtów (używaj `_mm256_loadu_ps` zamiast `load_ps`).
-2.  **Tails**: Jeśli rozmiar tensora nie jest wielokrotnością szerokości rejestru (np. 8 dla AVX), zawsze obsłuż "ogon" pętlą skalarną lub maskowaną (`AVX-512`).
-3.  **No Exceptions**: Kod kernela musi być `panic-free`.
+1. **Alignment**: Always assume data might not be 32-byte aligned (use `_mm256_loadu_ps` instead of `load_ps`).
+2. **Tails**: If the tensor size is not a multiple of the register width (e.g., 8 for AVX), always handle the "tail" with a scalar loop or masked store (`AVX-512`).
+3. **No Exceptions**: Kernel code must be `panic-free`.
