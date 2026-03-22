@@ -86,7 +86,7 @@ fn main() {
     let direct_max = (l3_mb * 1024 * 1024) / 2;                // 50% of L3
     let tile_small = (l2_kb * 1024 * 3) / 4;                   // 75% of L2
     let ring_small = 2usize;                                   // ping-pong buffer
-    let tile_large = 2 * 1024 * 1024usize;                      // 2MB (conservative for SATA)
+    let tile_large = 8 * 1024 * 1024usize;                      // 8MB (for high-speed RAID/NVMe)
     let ring_large = std::cmp::min(l3_mb / 2, 8).max(2);       // bound by L3
 
     // Allow override via ENV (for build server)

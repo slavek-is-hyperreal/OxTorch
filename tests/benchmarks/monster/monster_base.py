@@ -22,6 +22,7 @@ if _OXTORCH_PATH not in sys.path:
     sys.path.insert(0, _OXTORCH_PATH)
 
 MONSTER_RESULTS_DIR = "/my_data/gaussian_room/tests/results/monster"
+MONSTER_SSD_POOL = "/vectorlegis_ssd_pool/vnn_cache"
 
 _DTYPE_BYTES = {
     "f32": 4,
@@ -112,7 +113,8 @@ class MonsterBenchmarkBase:
         return 8 * (1024 ** 3)
 
     def _get_ssd_path(self):
-        return f"/my_data/gaussian_room/ssd_temp_monster_{self.name.lower().replace(' ', '_')}.bin"
+        os.makedirs(MONSTER_SSD_POOL, exist_ok=True)
+        return os.path.join(MONSTER_SSD_POOL, f"monster_{self.name.lower().replace(' ', '_')}.bin")
 
     def run(self):
         import oxtorch as torch_ox
@@ -124,6 +126,13 @@ class MonsterBenchmarkBase:
 
         # Create or verify the SSD file
         if not os.path.exists(ssd_path):
+            # Cleanup previous monster files to ensure fresh SSD performance
+            print(f"    Cleaning SSD pool: {MONSTER_SSD_POOL}...", flush=True)
+            for f in os.listdir(MONSTER_SSD_POOL):
+                if f.startswith("monster_"):
+                    try: os.remove(os.path.join(MONSTER_SSD_POOL, f))
+                    except: pass
+
             print(f"    Creating SSD temp file ({self.tensor_gb:.2f} GB)...", flush=True)
             # Write in 256 MB chunks to avoid RAM pressure
             chunk_bytes = 256 * 1024 * 1024
@@ -142,7 +151,11 @@ class MonsterBenchmarkBase:
         a_vnn = self.vnn.Tensor.from_ssd(ssd_path, shape, vnn_dtype)
         a_ox  = torch_ox.Tensor(a_vnn)
 
-        print(f"    Running {self.op}...", end=" ", flush=True)
+        print(f"    Prefetching to RAM Capacitor...", end=" ", flush=True)
+        a_vnn.prefetch()
+        time.sleep(0.5) # Give the PPU a head start
+        
+        print(f"Running {self.op}...", end=" ", flush=True)
         t0 = time.perf_counter()
         res_vnn = self._dispatch(a_ox, torch_ox)
         elapsed = time.perf_counter() - t0

@@ -12,7 +12,6 @@ pub struct AsyncOp {
     pub staging_buffers: Vec<CachedBuffer>,
     pub device_buffers: Vec<CachedBuffer>,
     pub cmd_buffer: vk::CommandBuffer,
-    pub desc_set: vk::DescriptorSet,
     pub wait_id: u64,
 }
 
@@ -42,7 +41,8 @@ pub struct AshBackend {
     pub _transfer_family: u32,
     pub allocator: Mutex<Allocator>,
     
-    pub desc_pool: Mutex<vk::DescriptorPool>,
+    #[allow(dead_code)]
+    pub desc_pools: Mutex<Vec<vk::DescriptorPool>>,
     #[allow(dead_code)]
     pub pipe_layout_act: vk::PipelineLayout,
     pub pipe_layout_reduce: vk::PipelineLayout,
@@ -136,6 +136,44 @@ impl CachedBuffer {
             mapped_ptr: self.mapped_ptr,
             pool_offset: self.pool_offset,
         }
+    }
+}
+
+impl AshBackend {
+    /// Allocates descriptor sets from the managed pools.
+    /// If all current pools are exhausted (VK_ERROR_OUT_OF_POOL_MEMORY), 
+    /// it automatically allocates a new hardware descriptor pool on the fly.
+    #[allow(dead_code)]
+    pub fn allocate_descriptor_sets(&self, layouts: &[vk::DescriptorSetLayout]) -> Vec<vk::DescriptorSet> {
+        let mut pools = self.desc_pools.lock().unwrap();
+        
+        // Try to allocate from existing pools (starting from the last/warmest one)
+        for pool in pools.iter().rev() {
+            let alloc_info = vk::DescriptorSetAllocateInfo::default()
+                .descriptor_pool(*pool)
+                .set_layouts(layouts);
+            if let Ok(sets) = unsafe { self.device.allocate_descriptor_sets(&alloc_info) } {
+                return sets;
+            }
+        }
+        
+        // If we reach here, all pools are exhausted or none exist.
+        // Lazy-allocate a new pool to support large models/heavy async load.
+        println!("[VNN] Descriptor Pool exhausted (limit reached). Creating new dynamic pool...");
+        let pool_sizes = [
+            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(4096),
+            vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1024),
+        ];
+        let pool_info = vk::DescriptorPoolCreateInfo::default()
+            .max_sets(512)
+            .pool_sizes(&pool_sizes);
+        let new_pool = unsafe { self.device.create_descriptor_pool(&pool_info, None) }.unwrap();
+        pools.push(new_pool);
+        
+        let alloc_info = vk::DescriptorSetAllocateInfo::default()
+            .descriptor_pool(new_pool)
+            .set_layouts(layouts);
+        unsafe { self.device.allocate_descriptor_sets(&alloc_info) }.expect("CRITICAL: Failed to allocate descriptor sets even after pool expansion")
     }
 }
 
@@ -311,7 +349,7 @@ pub fn init_backend() {
             vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1024),
         ];
         let pool_info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(1024)
+            .max_sets(512) // Lower initial limit for compatibility, we expand dynamically
             .pool_sizes(&pool_sizes);
         let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None) }.unwrap();
 
@@ -495,24 +533,48 @@ pub fn init_backend() {
         // Bug #3 fix: Allocate 3 permanent descriptor sets once at startup.
         // From this point on, ops call UpdateDescriptorSets to re-point them at new buffers.
         // Initialize Descriptor Set Pools
-        let create_pool = |layout: vk::DescriptorSetLayout, count: usize| -> DescriptorSetPool {
+        // Initialize Descriptor Set Pools using the dynamic expansion logic
+        let mut descriptor_pools = vec![desc_pool];
+        let create_pool = |device: &ash::Device, pools: &mut Vec<vk::DescriptorPool>, layout: vk::DescriptorSetLayout, count: usize| -> DescriptorSetPool {
             let layouts = vec![layout; count];
+            
+            // Try to allocate from existing pools (starting from the last/warmest one)
+            for pool in pools.iter().rev() {
+                let alloc_info = vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(*pool)
+                    .set_layouts(&layouts);
+                if let Ok(sets) = unsafe { device.allocate_descriptor_sets(&alloc_info) } {
+                    return DescriptorSetPool { sets, current: 0 };
+                }
+            }
+            
+            // Lazy-allocate a new pool if needed during init (unlikely but safe)
+            let pool_sizes = [
+                vk::DescriptorPoolSize::default().ty(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(4096),
+                vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1024),
+            ];
+            let pool_info = vk::DescriptorPoolCreateInfo::default()
+                .max_sets(512)
+                .pool_sizes(&pool_sizes);
+            let new_pool = unsafe { device.create_descriptor_pool(&pool_info, None) }.unwrap();
+            pools.push(new_pool);
+            
             let alloc_info = vk::DescriptorSetAllocateInfo::default()
-                .descriptor_pool(desc_pool)
+                .descriptor_pool(new_pool)
                 .set_layouts(&layouts);
-            let sets = unsafe { device.allocate_descriptor_sets(&alloc_info) }.expect("Failed to allocate descriptor set pool");
+            let sets = unsafe { device.allocate_descriptor_sets(&alloc_info) }.expect("Failed to allocate descriptor pool during init");
             DescriptorSetPool { sets, current: 0 }
         };
 
-        let pool_desc_act = create_pool(dsl_act, 128);
-        let pool_desc_reduce = create_pool(dsl_reduce, 64);
-        let pool_desc_elementwise = create_pool(dsl_elementwise, 64);
-        let pool_desc_linear = create_pool(dsl_linear, 64);
-        let pool_desc_matmul = create_pool(dsl_matmul, 64);
-        let pool_desc_bit_linear = create_pool(dsl_bit_linear, 32);
-        let pool_desc_layer_norm = create_pool(dsl_layer_norm, 32);
-        let pool_desc_rms_norm = create_pool(dsl_rms_norm, 32);
-        let pool_desc_index_select = create_pool(dsl_index_select, 32);
+        let pool_desc_act = create_pool(&device, &mut descriptor_pools, dsl_act, 128);
+        let pool_desc_reduce = create_pool(&device, &mut descriptor_pools, dsl_reduce, 64);
+        let pool_desc_elementwise = create_pool(&device, &mut descriptor_pools, dsl_elementwise, 64);
+        let pool_desc_linear = create_pool(&device, &mut descriptor_pools, dsl_linear, 64);
+        let pool_desc_matmul = create_pool(&device, &mut descriptor_pools, dsl_matmul, 64);
+        let pool_desc_bit_linear = create_pool(&device, &mut descriptor_pools, dsl_bit_linear, 32);
+        let pool_desc_layer_norm = create_pool(&device, &mut descriptor_pools, dsl_layer_norm, 32);
+        let pool_desc_rms_norm = create_pool(&device, &mut descriptor_pools, dsl_rms_norm, 32);
+        let pool_desc_index_select = create_pool(&device, &mut descriptor_pools, dsl_index_select, 32);
 
         // NEW: Phase 1 VRAM Pool Allocation
         let pool_size = 256 * 1024 * 1024; // 256MB (reduced for compatibility with R7 200 series)
@@ -540,7 +602,7 @@ pub fn init_backend() {
             compute_queue, _compute_family: compute_family,
             transfer_queue, _transfer_family: transfer_family,
             allocator: Mutex::new(allocator),
-            desc_pool: Mutex::new(desc_pool),
+            desc_pools: Mutex::new(descriptor_pools),
             pipe_layout_act, pipe_layout_reduce, pipe_layout_elementwise, 
             pipe_elementwise, pipe_relu, pipe_softmax, pipe_sigmoid, pipe_silu,
             pipe_gelu, pipe_leaky_relu, pipe_elu, pipe_tanh, pipe_clamp,
@@ -589,9 +651,8 @@ pub fn poll_async_ops() {
             
             unsafe {
                 backend.device.free_command_buffers(backend.compute_cmd_pool, &[op.cmd_buffer]);
-                if op.desc_set != vk::DescriptorSet::null() {
-                    backend.device.free_descriptor_sets(*backend.desc_pool.lock().unwrap(), &[op.desc_set]).unwrap();
-                }
+                // Removed: device.free_descriptor_sets. 
+                // We use rotating pools and pool-resetting logic (no FREE_BIT) for memory efficiency.
             }
             false 
         } else {
@@ -980,7 +1041,6 @@ pub fn execute_elementwise_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], 
             staging_buffers: vec![stage_a, stage_b, stage_c.copy_for_async()],
             device_buffers: vec![buf_a, buf_b, buf_c],
             cmd_buffer: cmd,
-            desc_set: vk::DescriptorSet::null(),
             wait_id: wait_val,
         });
 
@@ -1083,7 +1143,6 @@ pub fn execute_index_select_into(weight_raw: &[u8], indices_raw: &[u8], out_raw:
             staging_buffers: vec![stage_weight, stage_indices, stage_out.copy_for_async()],
             device_buffers: vec![buf_weight, buf_indices, buf_out],
             cmd_buffer: cmd,
-            desc_set: vk::DescriptorSet::null(),
             wait_id: wait_val,
         });
 
@@ -1208,7 +1267,6 @@ pub fn execute_reduce(input_raw: &[u8], op: &str, dtype: DataType) -> Vec<f32> {
             staging_buffers: vec![stage_in, stage_out.copy_for_async()],
             device_buffers: vec![buf_in, buf_out],
             cmd_buffer: cmd,
-            desc_set: vk::DescriptorSet::null(),
             wait_id: wait_val,
         });
 
@@ -1315,7 +1373,6 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
             staging_buffers: vec![stage_in, async_stage_out],
             device_buffers: vec![buf_in, buf_out],
             cmd_buffer: cmd,
-            desc_set: vk::DescriptorSet::null(),
             wait_id,
         };
         backend.pending_ops.lock().unwrap().push(op_info);
@@ -1396,7 +1453,6 @@ pub fn execute_softmax_into(input_raw: &[u8], output_raw: &mut [u8], width: u32,
             staging_buffers: vec![stage_in, stage_out.copy_for_async()],
             device_buffers: vec![buf_in, buf_out],
             cmd_buffer: cmd,
-            desc_set: set,
             wait_id: wait_val,
         });
 
@@ -1490,7 +1546,6 @@ pub fn execute_layer_norm_into(x_raw: &[u8], w_raw: &[u8], b_raw: &[u8], out_raw
             device_buffers: vec![buf_x, buf_w, buf_b, buf_y],
             cmd_buffer: cmd,
             wait_id: wait_val,
-            desc_set: vk::DescriptorSet::null(),
         });
 
         poll_async_ops_until(wait_val);
@@ -1570,7 +1625,6 @@ pub fn execute_rms_norm_into(x_raw: &[u8], w_raw: &[u8], out_raw: &mut [u8], n: 
             device_buffers: vec![buf_x, buf_w, buf_y],
             cmd_buffer: cmd,
             wait_id: wait_val,
-            desc_set: vk::DescriptorSet::null(),
         });
 
         poll_async_ops_until(wait_val);
@@ -1658,7 +1712,6 @@ pub fn execute_linear_into(a_raw: &[u8], b_raw: &[u8], bias_raw: &[u8], res_raw:
             staging_buffers: vec![stage_a, stage_b, stage_bias, stage_c.copy_for_async()],
             device_buffers: vec![buf_a, buf_b, buf_bias, buf_c],
             cmd_buffer: cmd,
-            desc_set: set,
             wait_id: wait_val,
         });
 
@@ -1737,7 +1790,6 @@ pub fn execute_matmul_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], batch
             staging_buffers: vec![stage_a, stage_b, stage_c.copy_for_async()],
             device_buffers: vec![buf_a, buf_b, buf_c],
             cmd_buffer: cmd,
-            desc_set: set,
             wait_id: wait_val,
         });
 
@@ -1834,7 +1886,6 @@ pub fn execute_bit_linear_into(a_raw: &[u8], b_raw: &[u8], s_raw: &[u8], bias_ra
             staging_buffers: vec![stage_a, stage_b, stage_s, stage_bias, stage_out.copy_for_async()],
             device_buffers: vec![buf_a, buf_b, buf_s, buf_bias, buf_out],
             cmd_buffer: cmd,
-            desc_set: set,
             wait_id: wait_val,
         });
 

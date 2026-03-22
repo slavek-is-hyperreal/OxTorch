@@ -1,4 +1,5 @@
 mod types;
+pub mod capacitor;
 mod storage;
 mod constructors;
 mod access;
@@ -10,6 +11,7 @@ mod fallback;
 pub mod pool;
 
 pub use types::{DataType, IoEngineType};
+pub use capacitor::GiantCapacitor;
 pub use storage::Storage;
 
 use pyo3::prelude::*;
@@ -246,6 +248,10 @@ impl Tensor {
     
     pub fn to_numpy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, numpy::PyArrayDyn<f32>>> {
         self.execute_to_numpy(py)
+    }
+
+    pub fn prefetch(&self) {
+        self.prefetch_ssd();
     }
 }
 

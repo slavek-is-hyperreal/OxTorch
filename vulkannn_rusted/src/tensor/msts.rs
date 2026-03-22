@@ -78,8 +78,8 @@ impl Tensor {
         let total_elements = self.shape.iter().product::<usize>();
         let total_bytes = (total_elements * bytes_per_elem) as u64;
         
-        // MSTS Scheduler with generic ring/tile size
-        let scheduler = crate::crook_scheduler::CrookScheduler::new_custom(ring_size, tile_size);
+        let cap = Some(crate::tensor::capacitor::get_capacitor());
+        let scheduler = crate::crook_scheduler::CrookScheduler::new_custom(ring_size, tile_size, cap);
         let r_sched = scheduler.clone();
         let w_sched = scheduler.clone();
         let r_handle = crate::crook_scheduler::CrookScheduler::start_read_worker(r_sched, engine_in, total_bytes);
@@ -99,11 +99,11 @@ impl Tensor {
             }
             
             let bytes_in_tile = std::cmp::min(tile_size, (total_bytes - offset) as usize);
-            let payload = unsafe { &mut *tile.payload.get() };
+            let payload = tile.get_data_mut(bytes_in_tile);
             
             match self.dtype {
                 DataType::F32 => {
-                    let slice = bytemuck::cast_slice_mut::<u8, f32>(&mut payload.as_mut_slice()[..bytes_in_tile]);
+                    let slice = bytemuck::cast_slice_mut::<u8, f32>(payload);
                     if parallel {
                         Self::act_into_raw_parallel_f32(slice, op, param1, param2);
                     } else {
@@ -114,7 +114,7 @@ impl Tensor {
                     }
                 },
                 DataType::F16 => {
-                    let slice = bytemuck::cast_slice_mut::<u8, half::f16>(&mut payload.as_mut_slice()[..bytes_in_tile]);
+                    let slice = bytemuck::cast_slice_mut::<u8, half::f16>(payload);
                     if parallel {
                         slice.par_iter_mut().for_each(|x| { if op == "relu" && x.to_f32() < 0.0 { *x = half::f16::ZERO; } });
                     } else {
@@ -122,7 +122,7 @@ impl Tensor {
                     }
                 },
                 DataType::BF16 => {
-                    let slice = bytemuck::cast_slice_mut::<u8, half::bf16>(&mut payload.as_mut_slice()[..bytes_in_tile]);
+                    let slice = bytemuck::cast_slice_mut::<u8, half::bf16>(payload);
                     if parallel {
                         slice.par_iter_mut().for_each(|x| { if op == "relu" && x.to_f32() < 0.0 { *x = half::bf16::ZERO; } });
                     } else {
@@ -130,7 +130,7 @@ impl Tensor {
                     }
                 },
                 DataType::Int8 => {
-                    let slice = bytemuck::cast_slice_mut::<u8, i8>(&mut payload.as_mut_slice()[..bytes_in_tile]);
+                    let slice = bytemuck::cast_slice_mut::<u8, i8>(payload);
                     if parallel {
                         slice.par_iter_mut().for_each(|x| { if op == "relu" && *x < 0 { *x = 0; } });
                     } else {
@@ -138,7 +138,7 @@ impl Tensor {
                     }
                 },
                 DataType::Ternary => {
-                    let slice = bytemuck::cast_slice_mut::<u8, i8>(&mut payload.as_mut_slice()[..bytes_in_tile]);
+                    let slice = bytemuck::cast_slice_mut::<u8, i8>(payload);
                     if parallel {
                         slice.par_iter_mut().for_each(|x| { if op == "relu" && *x < 0 { *x = 0; } });
                     } else {
@@ -173,7 +173,8 @@ impl Tensor {
         };
         let total_bytes = (total_elems * bytes_per_elem) as u64;
         
-        let scheduler = crate::crook_scheduler::CrookScheduler::new(8); // 8MB ring
+        let cap = Some(crate::tensor::capacitor::get_capacitor());
+        let scheduler = crate::crook_scheduler::CrookScheduler::new_custom(8, 8388608, cap); // 64MB ring (8x8MB)
         let io_handle = crate::crook_scheduler::CrookScheduler::start_read_worker(scheduler.clone(), engine, total_bytes);
         
         let mut offset = 0;
@@ -192,32 +193,32 @@ impl Tensor {
                 std::hint::spin_loop();
             }
             
-            let bytes_in_tile = std::cmp::min(1048576, (total_bytes - offset) as usize);
-            let payload = unsafe { &*tile.payload.get() };
+            let bytes_in_tile = std::cmp::min(8388608, (total_bytes - offset) as usize);
+            let payload = tile.get_data(bytes_in_tile);
             
             match self.dtype {
                 DataType::F32 => {
-                    let slice = bytemuck::cast_slice::<u8, f32>(&payload.as_slice()[..bytes_in_tile]);
+                    let slice = bytemuck::cast_slice::<u8, f32>(payload);
                     let start_idx = (offset / 4) as usize;
                     out[start_idx..start_idx + slice.len()].copy_from_slice(slice);
                 },
                 DataType::F16 => {
-                    let slice = bytemuck::cast_slice::<u8, half::f16>(&payload.as_slice()[..bytes_in_tile]);
+                    let slice = bytemuck::cast_slice::<u8, half::f16>(payload);
                     let start_idx = (offset / 2) as usize;
                     crate::cpu::convert_f16_to_f32(slice, &mut out[start_idx..start_idx + slice.len()]);
                 },
                 DataType::BF16 => {
-                    let slice = bytemuck::cast_slice::<u8, half::bf16>(&payload.as_slice()[..bytes_in_tile]);
+                    let slice = bytemuck::cast_slice::<u8, half::bf16>(payload);
                     let start_idx = (offset / 2) as usize;
                     crate::cpu::convert_bf16_to_f32(slice, &mut out[start_idx..start_idx + slice.len()]);
                 },
                 DataType::Int8 => {
-                    let slice = bytemuck::cast_slice::<u8, i8>(&payload.as_slice()[..bytes_in_tile]);
+                    let slice = bytemuck::cast_slice::<u8, i8>(payload);
                     let start_idx = offset as usize;
                     for (i, val) in slice.iter().enumerate() { out[start_idx + i] = *val as f32; }
                 },
                 DataType::Ternary => {
-                    let slice = bytemuck::cast_slice::<u8, i8>(&payload.as_slice()[..bytes_in_tile]);
+                    let slice = bytemuck::cast_slice::<u8, i8>(payload);
                     let start_idx = offset as usize;
                     for (i, val) in slice.iter().enumerate() { out[start_idx + i] = *val as f32; }
                 }
@@ -255,7 +256,8 @@ impl Tensor {
         let total_bytes = (total_elements * bytes_per_elem) as u64;
 
         let ring_size = 8;
-        let scheduler = crate::crook_scheduler::CrookScheduler::new(ring_size);
+        let cap = Some(crate::tensor::capacitor::get_capacitor());
+        let scheduler = crate::crook_scheduler::CrookScheduler::new_custom(ring_size, 8388608, cap);
         
         let r_sched = scheduler.clone();
         let w_sched = scheduler.clone();
@@ -278,9 +280,8 @@ impl Tensor {
                 std::hint::spin_loop();
             }
 
-            let bytes_in_tile = std::cmp::min(1048576, (total_bytes - offset) as usize);
-            let payload = unsafe { &mut *tile.payload.get() };
-            let slice = &mut payload.as_mut_slice()[..bytes_in_tile];
+            let bytes_in_tile = std::cmp::min(8388608, (total_bytes - offset) as usize);
+            let slice = tile.get_data_mut(bytes_in_tile);
 
             // Create NumPy array from slice (safe copy)
             let np_array = match self.dtype {
@@ -353,7 +354,8 @@ impl Tensor {
         let total_bytes = (total_elems * bytes_per_elem) as u64;
 
         let ring_size = 8;
-        let scheduler = crate::crook_scheduler::CrookScheduler::new(ring_size);
+        let cap = Some(crate::tensor::capacitor::get_capacitor());
+        let scheduler = crate::crook_scheduler::CrookScheduler::new_custom(ring_size, 8388608, cap);
         let io_handle = crate::crook_scheduler::CrookScheduler::start_read_worker(
             scheduler.clone(), engine, total_bytes,
         );
@@ -375,8 +377,7 @@ impl Tensor {
             }
 
             let bytes_in_tile = std::cmp::min(1_048_576, (total_bytes - src_offset) as usize);
-            let payload = unsafe { &*tile.payload.get() };
-            let src_slice = &payload.as_slice()[..bytes_in_tile];
+            let src_slice = tile.get_data(bytes_in_tile);
 
             // Direct copy into destination window — no intermediate Vec
             let dst_start = (dest_offset_bytes + src_offset) as usize;
@@ -437,5 +438,48 @@ impl Tensor {
                 crate::tensor::Storage::Int8(Vec::from_raw_parts(ptr as *mut i8, len, cap))
             },
         })
+    }
+    /// Proactively pulls SSD data into the Global RAM Capacitor in a background thread.
+    /// This eliminates I/O wait times for subsequent MSTS operations.
+    pub fn prefetch_ssd(&self) {
+        let engine = match &self.mmap_data {
+            Some(IoEngineType::ReadOnly(e)) => e.clone(),
+            Some(IoEngineType::ReadWrite(e)) => e.clone(),
+            None => return,
+        };
+        
+        let bytes_per_elem = self.dtype.size();
+        let total_elements = self.shape.iter().product::<usize>();
+        let total_bytes = (total_elements * bytes_per_elem) as u64;
+        let capacitor = crate::tensor::capacitor::get_capacitor();
+        
+        std::thread::spawn(move || {
+            let mut offset = 0;
+            let mut chunk_id = 0;
+            let chunk_size = 8388608; // 8MB chunks for better SATA/NVMe utilization
+            let max_in_flight = 16;   // Keep up to 128MB in flight
+            let mut pending = std::collections::HashMap::new();
+            
+            while offset < total_bytes || !pending.is_empty() {
+                // 1. Submit new requests if we have space in the flight window
+                while offset < total_bytes && pending.len() < max_in_flight {
+                    let size = std::cmp::min(chunk_size as u64, total_bytes - offset) as usize;
+                    let cap_offset = engine.submit_read_to_capacitor(offset, size, &capacitor, chunk_id);
+                    pending.insert(chunk_id, (cap_offset, size));
+                    
+                    offset += size as u64;
+                    chunk_id += 1;
+                }
+                
+                // 2. Poll for completions
+                engine.poll_completions(&capacitor, &mut pending);
+                
+                // 3. Sleep if we are still waiting (prevent busy-looping/mutex-hammering)
+                if !pending.is_empty() {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+            println!("[VNN] SSD Parallel Prefetching complete for {} chunks.", chunk_id);
+        });
     }
 }

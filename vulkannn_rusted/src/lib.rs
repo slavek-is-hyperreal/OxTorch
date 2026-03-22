@@ -16,14 +16,21 @@ fn rust_greeting(name: &str) -> PyResult<String> {
     Ok(format!("Hello from OxTorch, {}! The Iron Age has begun.", name))
 }
 
+#[pyfunction]
+fn get_available_ram_bytes() -> PyResult<usize> {
+    Ok(crate::streaming::get_available_ram())
+}
+
 /// The main entry point for the `vulkannn_rusted` Python extension module.
 #[pymodule]
 fn vulkannn_rusted(m: &Bound<'_, PyModule>) -> PyResult<()> {
     backend::init_backend();
     streaming::init_budgets();
     streaming::init_prefetcher();
+    let _ = crate::tensor::capacitor::get_capacitor(); // Eager allocation
 
     m.add_function(wrap_pyfunction!(rust_greeting, m)?)?;
+    m.add_function(wrap_pyfunction!(get_available_ram_bytes, m)?)?;
     m.add_class::<DataType>()?;
     m.add_class::<Tensor>()?;
     Ok(())
