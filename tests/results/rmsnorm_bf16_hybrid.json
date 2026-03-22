@@ -1,0 +1,12 @@
+{
+    "name": "RMSNorm_bf16_hybrid",
+    "op": "RMSNorm",
+    "dtype": "bf16",
+    "mode": "hybrid",
+    "pt_time": 0.014292679400023189,
+    "vnn_time": 0.0039319423998676935,
+    "ratio": 0.27510183988744014,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 49.0
+}

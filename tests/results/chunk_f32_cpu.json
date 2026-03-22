@@ -1,0 +1,12 @@
+{
+    "name": "Chunk_f32_cpu",
+    "op": "Chunk",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 1.8264350001118145e-05,
+    "vnn_time": 0.0010693964500205766,
+    "ratio": 58.55102699822923,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 43.0
+}
