@@ -1,7 +1,7 @@
 """
 Monster ReLU F32 SSD
 
-Tensor size = available_ram × 1.2 (always exceeds RAM).
+Tensor size = available_ram × 5.0 (always exceeds RAM).
 Uses unary_op_ssd() directly → guaranteed Path C (Full CrookScheduler).
 
 Note: mode="ssd" here means "this tensor lives on SSD, not a device type".

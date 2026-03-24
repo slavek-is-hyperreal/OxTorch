@@ -1,7 +1,7 @@
 """
 Monster GELU F32 SSD
 
-Tensor size = available_ram × 1.2 (always exceeds RAM).
+Tensor size = available_ram × 5.0 (always exceeds RAM).
 Uses unary_op_ssd("gelu") directly → Path C (Full CrookScheduler, ≥32MB).
 GELU uses the tanh approximation: 0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715x³)))
 """

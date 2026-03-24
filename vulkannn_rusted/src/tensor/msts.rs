@@ -456,8 +456,8 @@ impl Tensor {
         std::thread::spawn(move || {
             let mut offset = 0;
             let mut chunk_id = 0;
-            let chunk_size = 8388608; // 8MB chunks for better SATA/NVMe utilization
-            let max_in_flight = 16;   // Keep up to 128MB in flight
+            let chunk_size = 8388608; // 8MB chunks
+            let max_in_flight = 64;   // Keep up to 512MB in flight (Aggressive for ZFS Stripe)
             let mut pending = std::collections::HashMap::new();
             
             while offset < total_bytes || !pending.is_empty() {
@@ -474,9 +474,9 @@ impl Tensor {
                 // 2. Poll for completions
                 engine.poll_completions(&capacitor, &mut pending);
                 
-                // 3. Sleep if we are still waiting (prevent busy-looping/mutex-hammering)
+                // 3. Yield to keep CPU free for workers, but check often
                 if !pending.is_empty() {
-                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    std::thread::yield_now();
                 }
             }
             println!("[VNN] SSD Parallel Prefetching complete for {} chunks.", chunk_id);

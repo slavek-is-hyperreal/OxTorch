@@ -3,12 +3,12 @@
   "op": "GELU",
   "dtype": "f32",
   "mode": "ssd",
-  "vnn_time": 38.27102663500045,
+  "vnn_time": 246.97839145200123,
   "pt_time": 0.0,
   "ratio": 0.0,
-  "tensor_gb": 8.57207702472806,
-  "throughput_mbs": 229.3590646793327,
+  "tensor_gb": 44.689998626708984,
+  "throughput_mbs": 185.28972646031536,
   "parity": true,
   "max_diff": 0.0,
-  "cpu_temp": 41.0
+  "cpu_temp": 39.0
 }

@@ -3,7 +3,7 @@ monster_base.py — Base class for Monster benchmarks.
 
 Monster benchmarks differ from regular benchmarks in one critical way:
 the tensor size is computed AT RUNTIME from the available RAM reported
-by the OxTorch runtime, and is deliberately set to available_ram × 1.2
+by the OxTorch runtime, and is deliberately set to available_ram × 5.0
 so that it NEVER fits in memory — MSTS must stream it through SSD.
 
 Result JSON includes 'throughput_mbs' and 'tensor_gb' instead of ratio.
@@ -51,14 +51,14 @@ class MonsterBenchmarkBase:
     """
     Base for out-of-RAM benchmark tests.
 
-    Tensor size = available_ram_bytes × overflow_factor (default 1.2).
+    Tensor size = available_ram_bytes × overflow_factor (default 5.0).
     This guarantees the tensor never fits in RAM on any machine.
 
     Parity is verified on a small slice (first + last 1M elements) against
     a matching PyTorch computation — holding the full result is not possible.
     """
 
-    def __init__(self, name, op, dtype="f32", mode="cpu", overflow_factor=1.2):
+    def __init__(self, name, op, dtype="f32", mode="cpu", overflow_factor=5.0):
         self.name = name
         self.op = op
         self.dtype = dtype.lower()
