@@ -2,6 +2,8 @@
 @group(0) @binding(1) var<storage, read_write> out_data: array<f32>;
 
 struct PushConstants {
+    num_elements: f32,
+    reserved: f32,
     param1: f32,
     param2: f32,
 }
@@ -105,5 +107,27 @@ fn clamp_main(
     if (index < arrayLength(&out_data)) {
         let x = in_data[index];
         out_data[index] = clamp(x, pc.param1, pc.param2);
+    }
+}
+
+@compute @workgroup_size(256)
+fn neg_main(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let index = global_id.y * (num_workgroups.x * 256u) + global_id.x;
+    if (index < arrayLength(&out_data)) {
+        out_data[index] = -in_data[index];
+    }
+}
+
+@compute @workgroup_size(256)
+fn pow_main(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let index = global_id.y * (num_workgroups.x * 256u) + global_id.x;
+    if (index < arrayLength(&out_data)) {
+        out_data[index] = pow(in_data[index], pc.param1);
     }
 }

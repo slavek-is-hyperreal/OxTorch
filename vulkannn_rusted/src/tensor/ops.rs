@@ -15,7 +15,29 @@ impl Tensor {
             dtype: self.dtype, 
             device: self.device.clone(), 
             name: format!("{}_reshaped", self.name),
-            is_transposed: self.is_transposed,
+            is_transposed: true, // Mark as potentially non-contiguous
+            mmap_data: self.mmap_data.clone(),
+        })
+    }
+
+    pub fn execute_transpose_dims(&self, dim1: usize, dim2: usize) -> PyResult<Tensor> {
+        if dim1 >= self.shape.len() || dim2 >= self.shape.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err("transpose: Dimension out of range"));
+        }
+        let mut new_shape = self.shape.clone();
+        let mut new_strides = self.strides.clone();
+        new_shape.swap(dim1, dim2);
+        new_strides.swap(dim1, dim2);
+        
+        Ok(Tensor {
+            shape: new_shape,
+            strides: new_strides,
+            offset: self.offset,
+            device: self.device.clone(),
+            dtype: self.dtype,
+            storage: self.storage.clone(),
+            name: format!("{}_transposed", self.name),
+            is_transposed: true,
             mmap_data: self.mmap_data.clone(),
         })
     }
@@ -36,6 +58,7 @@ impl Tensor {
     }
 
     pub fn execute_squeeze(&self, dim: Option<usize>) -> PyResult<Tensor> {
+        // ... (existing implementation)
         let mut new_shape = Vec::new();
         match dim {
             Some(d) => {
@@ -60,6 +83,92 @@ impl Tensor {
              new_shape.push(1);
         }
         self.execute_reshape(new_shape)
+    }
+
+    pub fn execute_narrow(&self, dim: usize, start: usize, len: usize) -> PyResult<Tensor> {
+        if dim >= self.shape.len() { return Err(pyo3::exceptions::PyValueError::new_err("narrow: Dim out of range")); }
+        if start + len > self.shape[dim] { return Err(pyo3::exceptions::PyValueError::new_err("narrow: Invalid range")); }
+        
+        let mut new_shape = self.shape.clone();
+        new_shape[dim] = len;
+        
+        let new_offset = self.offset + start * self.strides[dim];
+        
+        Ok(Tensor {
+            shape: new_shape,
+            strides: self.strides.clone(),
+            offset: new_offset,
+            device: self.device.clone(),
+            dtype: self.dtype,
+            storage: self.storage.clone(),
+            name: format!("{}_narrow", self.name),
+            is_transposed: self.is_transposed,
+            mmap_data: self.mmap_data.clone(),
+        })
+    }
+
+    pub fn execute_neg(&self) -> PyResult<Tensor> {
+        let mut out = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
+        if self.device == "cpu" {
+            match self.dtype {
+                DataType::F32 => {
+                    let (v_in, _) = self.get_slice_raw_f32();
+                    let (v_out, _) = out.get_slice_raw_mut_f32();
+                    crate::cpu::neg_f32(v_in, v_out);
+                },
+                DataType::F16 => {
+                    let (v_in, _) = self.get_slice_raw_f16();
+                    let (v_out, _) = out.get_slice_raw_mut_f16();
+                    crate::cpu::neg_f16(v_in, v_out);
+                },
+                DataType::BF16 => {
+                    let (v_in, _) = self.get_slice_raw_bf16();
+                    let (v_out, _) = out.get_slice_raw_mut_bf16();
+                    crate::cpu::neg_bf16(v_in, v_out);
+                },
+                _ => return Err(pyo3::exceptions::PyValueError::new_err("neg not supported for this dtype")),
+            }
+        } else {
+            let (input_raw, _) = self.get_slice_raw_bytes();
+            let (out_raw, _) = out.get_slice_raw_mut_bytes();
+            crate::backend::execute_activation_into(input_raw, "neg", 0.0, 0.0, out_raw, self.dtype, false, false);
+        }
+        Ok(out)
+    }
+
+    pub fn execute_pow(&self, exponent: f32) -> PyResult<Tensor> {
+        let mut out = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
+        if self.device == "cpu" {
+             match self.dtype {
+                 DataType::F32 => {
+                     let (v_in, _) = self.get_slice_raw_f32();
+                     let (v_out, _) = out.get_slice_raw_mut_f32();
+                     crate::cpu::pow_f32(v_in, v_out, exponent);
+                 },
+                 _ => return Err(pyo3::exceptions::PyValueError::new_err("pow only supported for F32 on CPU")),
+             }
+        } else {
+             let (input_raw, _) = self.get_slice_raw_bytes();
+             let (out_raw, _) = out.get_slice_raw_mut_bytes();
+             crate::backend::execute_activation_into(input_raw, "pow", exponent, 0.0, out_raw, self.dtype, false, false);
+        }
+        Ok(out)
+    }
+
+    pub fn execute_repeat_interleave(&self, repeats: usize, dim: usize) -> PyResult<Tensor> {
+        let mut out_shape = self.shape.clone();
+        out_shape[dim] *= repeats;
+        let mut out = Tensor::new_zeros(out_shape, self.dtype, &self.device)?;
+        
+        if self.device == "cpu" {
+             let (in_raw, _) = self.get_slice_raw_bytes();
+             let (out_raw, _) = out.get_slice_raw_mut_bytes();
+             crate::cpu::repeat_interleave_cpu(in_raw, out_raw, &self.shape, repeats, dim, self.dtype);
+        } else {
+             // TODO: Vulkan repeat_interleave
+             return Err(pyo3::exceptions::PyValueError::new_err("repeat_interleave not yet supported on Vulkan"));
+        }
+        Ok(out)
     }
 
     pub fn elementwise_op(&self, other: &Tensor, op: &str) -> PyResult<Tensor> {
@@ -115,7 +224,7 @@ impl Tensor {
                         _ => {},
                     }
                 },
-                DataType::Ternary => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for Ternary")); }
+                DataType::BitNet2 | DataType::BitNet1_6 => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for BitNet")); }
             }
         } else {
             let (a_raw, _) = self.get_slice_raw_bytes();
@@ -157,8 +266,8 @@ impl Tensor {
                 let (v_out, _) = out.get_slice_raw_mut_i8();
                 crate::cpu::scalar_op_i8(v_in, scalar as i8, v_out, op);
             },
-            DataType::Ternary => {
-                return Err(pyo3::exceptions::PyValueError::new_err("Scalar ops not supported for Ternary"));
+            DataType::BitNet2 | DataType::BitNet1_6 => {
+                return Err(pyo3::exceptions::PyValueError::new_err("Scalar ops not supported for BitNet"));
             }
         }
         Ok(out)
@@ -210,7 +319,7 @@ impl Tensor {
                         _ => {},
                     }
                 },
-                DataType::Ternary => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for Ternary")); }
+                DataType::BitNet2 | DataType::BitNet1_6 => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for BitNet")); }
             }
         } else if self.dtype == DataType::Int8 && op == "gelu" {
             // INT8 GELU has no Vulkan kernel — the shader lacks the dequant step.
@@ -272,7 +381,7 @@ impl Tensor {
                         _ => {},
                     }
                 },
-                DataType::Ternary => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for Ternary")); }
+                DataType::BitNet2 | DataType::BitNet1_6 => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for BitNet")); }
              }
         } else {
              let (input_raw, _) = self.get_slice_raw_bytes();

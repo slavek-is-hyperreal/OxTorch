@@ -137,8 +137,16 @@ impl Tensor {
                         for x in slice.iter_mut() { if op == "relu" && *x < 0 { *x = 0; } }
                     }
                 },
-                DataType::Ternary => {
-                    let slice = bytemuck::cast_slice_mut::<u8, i8>(payload);
+                DataType::BitNet2 => {
+                    let slice = bytemuck::cast_slice_mut::<u8, i8>(payload); // BitNet2 is 2-bit, stored as i8
+                    if parallel {
+                        slice.par_iter_mut().for_each(|x| { if op == "relu" && *x < 0 { *x = 0; } });
+                    } else {
+                        for x in slice.iter_mut() { if op == "relu" && *x < 0 { *x = 0; } }
+                    }
+                },
+                DataType::BitNet1_6 => {
+                    let slice = bytemuck::cast_slice_mut::<u8, i8>(payload); // BitNet1_6 is 1.6-bit, stored as i8
                     if parallel {
                         slice.par_iter_mut().for_each(|x| { if op == "relu" && *x < 0 { *x = 0; } });
                     } else {
@@ -217,10 +225,12 @@ impl Tensor {
                     let start_idx = offset as usize;
                     for (i, val) in slice.iter().enumerate() { out[start_idx + i] = *val as f32; }
                 },
-                DataType::Ternary => {
-                    let slice = bytemuck::cast_slice::<u8, i8>(payload);
+                DataType::BitNet2 | DataType::BitNet1_6 => {
+                    // Dequantizing BitNet to F32 for CPU feedback
+                    let slice = payload; 
                     let start_idx = offset as usize;
-                    for (i, val) in slice.iter().enumerate() { out[start_idx + i] = *val as f32; }
+                    // Slow fallback for de-serialization if needed, or just leave as is
+                    for (i, &val) in slice.iter().enumerate() { out[start_idx + i] = val as f32; }
                 }
             }
             
@@ -311,7 +321,7 @@ impl Tensor {
                     let s = bytemuck::cast_slice_mut::<u8, f32>(slice);
                     s.copy_from_slice(&res_vec);
                 },
-                DataType::Int8 | DataType::Ternary => {
+                DataType::Int8 | DataType::BitNet2 | DataType::BitNet1_6 => {
                     let res_array: Bound<'_, PyArray1<i8>> = res_obj.extract(py)?;
                     let res_vec = res_array.to_vec()?;
                     let s = bytemuck::cast_slice_mut::<u8, i8>(slice);
@@ -430,7 +440,7 @@ impl Tensor {
                 std::mem::forget(raw);
                 crate::tensor::Storage::BF16(Vec::from_raw_parts(ptr as *mut half::bf16, len, cap))
             },
-            DataType::Int8 | DataType::Ternary => unsafe {
+            DataType::Int8 | DataType::BitNet2 | DataType::BitNet1_6 => unsafe {
                 let ptr = raw.as_ptr();
                 let len = raw.len();
                 let cap = raw.capacity();

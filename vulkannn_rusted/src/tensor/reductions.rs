@@ -6,7 +6,9 @@ impl Tensor {
     pub fn execute_softmax(&self, dim: i64, is_log: bool) -> PyResult<Tensor> {
         let d_usize = if dim < 0 { (self.shape.len() as i64 + dim) as usize } else { dim as usize };
         if d_usize >= self.shape.len() { return Err(pyo3::exceptions::PyValueError::new_err("Invalid dimension")); }
-        if self.dtype == DataType::Ternary { return Err(pyo3::exceptions::PyValueError::new_err("Softmax not supported for Ternary")); }
+        if self.dtype == DataType::BitNet2 || self.dtype == DataType::BitNet1_6 { 
+            return Err(pyo3::exceptions::PyValueError::new_err("Softmax not supported for BitNet")); 
+        }
         
         if self.device != "cpu" {
              let (a_raw, _) = self.get_slice_raw_bytes();
@@ -78,7 +80,9 @@ impl Tensor {
     }
 
     pub fn execute_reduce(&self, op: &str, dim: Option<i64>) -> PyResult<Tensor> {
-        if self.dtype == DataType::Ternary { return Err(pyo3::exceptions::PyValueError::new_err("Reduction not supported for Ternary")); }
+        if self.dtype == DataType::BitNet2 || self.dtype == DataType::BitNet1_6 { 
+            return Err(pyo3::exceptions::PyValueError::new_err("Reduction not supported for BitNet")); 
+        }
         if self.device != "cpu" && dim.is_none() {
             let (a_raw, _) = self.get_slice_raw_bytes();
             let blocks = crate::backend::execute_reduce(a_raw, op, self.dtype);
@@ -173,7 +177,10 @@ impl Tensor {
                                 DataType::F16 => row.push(unsafe { (*(in_raw.as_ptr().add((row_base + j * inner) * 2) as *const half::f16)).to_f32() }),
                                 DataType::BF16 => row.push(unsafe { (*(in_raw.as_ptr().add((row_base + j * inner) * 2) as *const half::bf16)).to_f32() }),
                                 DataType::Int8 => row.push(unsafe { *(in_raw.as_ptr().add(row_base + j * inner) as *const i8) as f32 }),
-                                DataType::Ternary => row.push(unsafe { *(in_raw.as_ptr().add(row_base + j * inner) as *const i8) as f32 }),
+                                DataType::BitNet2 | DataType::BitNet1_6 => {
+                            // Dequantizing for reduction (slow fallback)
+                            row.push(0.0f32); // Placeholder or implement dequant
+                        },
                             }
                         }
                         let acc = match op {
@@ -193,5 +200,40 @@ impl Tensor {
             }
         }
         Ok(out_t)
+    }
+
+    pub fn execute_argmax(&self, dim: i64) -> PyResult<Tensor> {
+        let d_usize = if dim < 0 { (self.shape.len() as i64 + dim) as usize } else { dim as usize };
+        if d_usize >= self.shape.len() { return Err(pyo3::exceptions::PyValueError::new_err("Invalid dimension")); }
+        
+        let mut out_shape = self.shape.clone();
+        out_shape[d_usize] = 1;
+        if self.device == "cpu" {
+            let mut out_t = Tensor::new_zeros(out_shape, DataType::F32, "cpu")?;
+            let stride = self.shape[d_usize..].iter().product::<usize>();
+            let outer = self.shape[..d_usize].iter().product::<usize>();
+            let dim_size = self.shape[d_usize];
+            let inner = stride / dim_size;
+            
+            match self.dtype {
+                DataType::F32 => {
+                    let (in_raw, _) = self.get_slice_raw_f32();
+                    let (out_raw, _) = out_t.get_slice_raw_mut_f32();
+                    crate::cpu::argmax_f32(in_raw, out_raw, outer, dim_size, inner);
+                },
+                DataType::F16 => {
+                    let (in_raw, _) = self.get_slice_raw_f16();
+                    let (out_raw, _) = out_t.get_slice_raw_mut_f32();
+                    crate::cpu::argmax_f16(in_raw, out_raw, outer, dim_size, inner);
+                },
+                _ => return Err(pyo3::exceptions::PyValueError::new_err("argmax not supported for this dtype")),
+            }
+            Ok(out_t)
+        } else {
+            let (a_raw, _) = self.get_slice_raw_bytes();
+            let res = crate::backend::execute_reduce(a_raw, "argmax", self.dtype);
+            let val = res[0];
+            Ok(Tensor::new_from_vec(vec![val], out_shape, DataType::F32, "cpu", "argmax_vulkan")?)
+        }
     }
 }

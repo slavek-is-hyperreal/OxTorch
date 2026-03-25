@@ -1,7 +1,7 @@
 use crate::tensor::{Tensor, DataType, Storage};
 
 pub fn cat_i8(tensors: &[&Tensor], dim: usize) -> Vec<i8> {
-    debug_assert!(tensors[0].dtype == DataType::Int8 || tensors[0].dtype == DataType::Ternary);
+    debug_assert!(tensors[0].dtype == DataType::Int8 || tensors[0].dtype == DataType::BitNet2 || tensors[0].dtype == DataType::BitNet1_6);
     let mut out_shape = tensors[0].shape.clone();
     let total_dim: usize = tensors.iter().map(|t| t.shape[dim]).sum();
     out_shape[dim] = total_dim;
@@ -27,10 +27,13 @@ pub fn cat_i8(tensors: &[&Tensor], dim: usize) -> Vec<i8> {
                 let src_start = outer_idx * t_stride_dim;
                 let dst_start = outer_idx * out_stride_dim + dim_offsets[i] * inner_size;
                 out_data[dst_start..dst_start + t_stride_dim].copy_from_slice(&v[src_start..src_start + t_stride_dim]);
-            } else if let Storage::Ternary(v) = &t.storage {
+            } else if let Storage::BitNet(v) = &t.storage {
+                // For packed BitNet, concatenation is only valid if not slicing the packed dimension incorrectly.
+                // Assuming dim is NOT the packed dimension for now as a fallback.
                 let src_start = outer_idx * t_stride_dim;
                 let dst_start = outer_idx * out_stride_dim + dim_offsets[i] * inner_size;
-                out_data[dst_start..dst_start + t_stride_dim].copy_from_slice(&v[src_start..src_start + t_stride_dim]);
+                let dst_slice = bytemuck::cast_slice_mut::<i8, u8>(&mut out_data[dst_start..dst_start + t_stride_dim]);
+                dst_slice.copy_from_slice(&v[src_start..src_start + t_stride_dim]);
             }
         }
     }

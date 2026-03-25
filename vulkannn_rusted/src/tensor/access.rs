@@ -33,10 +33,34 @@ impl Tensor {
                     slice.iter().map(|&x| x as f32).collect()
                 }
             },
-            DataType::Ternary => {
+            DataType::BitNet2 | DataType::BitNet1_6 => {
                 if self.is_ssd() { self.load_to_f32_vec_msts() } else {
-                    let (slice, _) = self.get_slice_raw_ternary();
-                    slice.iter().map(|&x| x as f32).collect()
+                    let (slice, _) = self.get_slice_raw_bitnet();
+                    // Basic dequantizer for NumPy export (slow but correct)
+                    let mut vec = Vec::with_capacity(self.shape.iter().product());
+                    if self.dtype == DataType::BitNet2 {
+                        for &byte in slice {
+                            for shift in (0..8).step_by(2) {
+                                let val = (byte >> shift) & 0x03;
+                                vec.push((val as i8 - 1) as f32); // 0->-1, 1->0, 2->1
+                                if vec.len() == vec.capacity() { break; }
+                            }
+                            if vec.len() == vec.capacity() { break; }
+                        }
+                    } else {
+                        // BitNet 1.6: 5 trits per byte (Base-3)
+                        for &byte in slice {
+                            let mut b = byte;
+                            for _ in 0..5 {
+                                let trit = b % 3;
+                                vec.push((trit as i8 - 1) as f32);
+                                b /= 3;
+                                if vec.len() == vec.capacity() { break; }
+                            }
+                            if vec.len() == vec.capacity() { break; }
+                        }
+                    }
+                    vec
                 }
             }
         };
@@ -64,9 +88,31 @@ impl Tensor {
                     let (s, _) = self.get_slice_raw_i8();
                     s.iter().map(|&x| x as f32).collect()
                 },
-                DataType::Ternary => {
-                    let (s, _) = self.get_slice_raw_ternary();
-                    s.iter().map(|&x| x as f32).collect()
+                DataType::BitNet2 | DataType::BitNet1_6 => {
+                    let (s, _) = self.get_slice_raw_bitnet();
+                    let total = self.shape.iter().product::<usize>();
+                    let mut vec = Vec::with_capacity(total);
+                    if self.dtype == DataType::BitNet2 {
+                        for &byte in s {
+                            for shift in (0..8).step_by(2) {
+                                let val = (byte >> shift) & 0x03;
+                                vec.push((val as i8 - 1) as f32);
+                                if vec.len() == total { break; }
+                            }
+                            if vec.len() == total { break; }
+                        }
+                    } else {
+                        for &byte in s {
+                            let mut b = byte;
+                            for _ in 0..5 {
+                                vec.push(((b % 3) as i8 - 1) as f32);
+                                b /= 3;
+                                if vec.len() == total { break; }
+                            }
+                            if vec.len() == total { break; }
+                        }
+                    }
+                    vec
                 }
             }
         }
@@ -164,23 +210,33 @@ impl Tensor {
         }
     }
 
-    pub fn get_slice_raw_ternary(&self) -> (&[i8], usize) {
+    pub fn get_slice_raw_bitnet(&self) -> (&[u8], usize) {
         match &self.storage {
-            Storage::Ternary(v) => {
-                let size = self.shape.iter().product::<usize>();
-                let end = std::cmp::min(self.offset + size, v.len());
+            Storage::BitNet(v) => {
+                // For packed types, offset is in bytes.
+                // We assume offset is already correctly calculated for packing.
+                let size_bytes = match self.dtype {
+                    DataType::BitNet2 => (self.shape.iter().product::<usize>() + 3) / 4,
+                    DataType::BitNet1_6 => (self.shape.iter().product::<usize>() + 4) / 5,
+                    _ => 0,
+                };
+                let end = std::cmp::min(self.offset + size_bytes, v.len());
                 (&v[self.offset..end], end - self.offset)
             },
             _ => (&[], 0),
         }
     }
 
-    pub fn get_slice_raw_mut_ternary(&mut self) -> (&mut [i8], usize) {
+    pub fn get_slice_raw_mut_bitnet(&mut self) -> (&mut [u8], usize) {
         let offset = self.offset;
-        let size = self.shape.iter().product::<usize>();
+        let size_bytes = match self.dtype {
+            DataType::BitNet2 => (self.shape.iter().product::<usize>() + 3) / 4,
+            DataType::BitNet1_6 => (self.shape.iter().product::<usize>() + 4) / 5,
+            _ => 0,
+        };
         match &mut self.storage {
-            Storage::Ternary(v) => {
-                let end = std::cmp::min(offset + size, v.len());
+            Storage::BitNet(v) => {
+                let end = std::cmp::min(offset + size_bytes, v.len());
                 (&mut v[offset..end], end - offset)
             },
             _ => (&mut [], 0),
@@ -193,7 +249,8 @@ impl Tensor {
         let _bpe = match self.dtype {
             DataType::F32 => 4,
             DataType::F16 | DataType::BF16 => 2,
-            DataType::Int8 | DataType::Ternary => 1,
+            DataType::Int8 => 1,
+            DataType::BitNet2 | DataType::BitNet1_6 => 0,
         };
         match &self.storage {
             Storage::F32(v) => {
@@ -212,9 +269,10 @@ impl Tensor {
                 let end = std::cmp::min(offset + size, v.len());
                 (bytemuck::cast_slice(&v[offset..end]), end - offset)
             },
-            Storage::Ternary(v) => {
-                let end = std::cmp::min(offset + size, v.len());
-                (bytemuck::cast_slice(&v[offset..end]), end - offset)
+            Storage::BitNet(v) => {
+                let size_bytes = if self.dtype == DataType::BitNet2 { (size + 3) / 4 } else { (size + 4) / 5 };
+                let end = std::cmp::min(offset + size_bytes, v.len());
+                (&v[offset..end], end - offset)
             },
             Storage::None => (&[], 0),
         }
@@ -240,9 +298,10 @@ impl Tensor {
                 let end = std::cmp::min(offset + size, v.len());
                 (bytemuck::cast_slice_mut(&mut v[offset..end]), end - offset)
             },
-            Storage::Ternary(v) => {
-                let end = std::cmp::min(offset + size, v.len());
-                (bytemuck::cast_slice_mut(&mut v[offset..end]), end - offset)
+            Storage::BitNet(v) => {
+                let size_bytes = if self.dtype == DataType::BitNet2 { (size + 3) / 4 } else { (size + 4) / 5 };
+                let end = std::cmp::min(offset + size_bytes, v.len());
+                (&mut v[offset..end], end - offset)
             },
             Storage::None => (&mut [], 0),
         }
@@ -266,9 +325,8 @@ impl Tensor {
                 let v_i8 = std::slice::from_raw_parts(raw.as_ptr() as *const i8, raw.len());
                 Storage::Int8(v_i8.to_vec())
             },
-            DataType::Ternary => unsafe {
-                let v_i8 = std::slice::from_raw_parts(raw.as_ptr() as *const i8, raw.len());
-                Storage::Ternary(v_i8.to_vec())
+            DataType::BitNet2 | DataType::BitNet1_6 => {
+                Storage::BitNet(raw.to_vec())
             },
         }
     }
@@ -315,7 +373,7 @@ impl Tensor {
             DataType::F16 => crate::cpu::index_select_f16(self.get_slice_raw_f16().0, &indices_i32, out.get_slice_raw_mut_f16().0, feature_len),
             DataType::BF16 => crate::cpu::index_select_bf16(self.get_slice_raw_bf16().0, &indices_i32, out.get_slice_raw_mut_bf16().0, feature_len),
             DataType::Int8 => crate::cpu::index_select_i8(self.get_slice_raw_i8().0, &indices_i32, out.get_slice_raw_mut_i8().0, feature_len),
-            DataType::Ternary => return Err(pyo3::exceptions::PyNotImplementedError::new_err("Ternary index_select not implemented")),
+            DataType::BitNet2 | DataType::BitNet1_6 => return Err(pyo3::exceptions::PyNotImplementedError::new_err("BitNet index_select not implemented")),
         };
         
         Ok(out)

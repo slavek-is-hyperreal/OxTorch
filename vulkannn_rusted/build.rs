@@ -15,6 +15,11 @@ fn main() {
         }
 
         println!("cargo:rerun-if-changed={}", path);
+        let log_msg = format!("Processing shader: {}\n", path);
+        let mut file = std::fs::OpenOptions::new().append(true).create(true).open("/tmp/vnn_build.log").unwrap();
+        use std::io::Write;
+        file.write_all(log_msg.as_bytes()).unwrap();
+        
         let source = fs::read_to_string(path).unwrap();
         
         let module = if path.ends_with(".wgsl") {
@@ -30,7 +35,12 @@ fn main() {
             };
             match parser.parse(&options, &source) {
                 Ok(m) => m,
-                Err(e) => panic!("Failed to parse GLSL {}: {:?}", path, e),
+                Err(e) => {
+                    let err_msg = format!("NAGA PARSE ERROR in {}: {:?}\n", path, e);
+                    let mut file = std::fs::OpenOptions::new().append(true).create(true).open("/tmp/vnn_build.log").unwrap();
+                    file.write_all(err_msg.as_bytes()).unwrap();
+                    panic!("Failed to parse GLSL {}: {:?}", path, e);
+                }
             }
         } else {
             panic!("Unsupported shader extension: {}", path);

@@ -15,7 +15,8 @@ pub enum DataType {
     F16,
     BF16,
     Int8,
-    Ternary, // BitNet 1.58b: {-1, 0, 1}
+    BitNet2,   // 2-bit packing: 4 trits per byte (Shannon limit ~79% efficient)
+    BitNet1_6, // 1.6-bit packing: 5 trits per byte (Shannon limit ~99.1% efficient)
 }
 
 impl DataType {
@@ -23,7 +24,9 @@ impl DataType {
         match self {
             DataType::F32 => 4,
             DataType::F16 | DataType::BF16 => 2,
-            DataType::Int8 | DataType::Ternary => 1,
+            DataType::Int8 => 1,
+            DataType::BitNet2 => 0, // Packed type: size depends on shape, handled in storage
+            DataType::BitNet1_6 => 0, // Packed type
         }
     }
 }

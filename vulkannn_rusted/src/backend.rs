@@ -52,6 +52,7 @@ pub struct AshBackend {
     pub pipe_layout_layer_norm: vk::PipelineLayout,
     pub pipe_layout_rms_norm: vk::PipelineLayout,
     pub pipe_layout_index_select: vk::PipelineLayout,
+    pub pipe_layout_bit_linear_fast: vk::PipelineLayout,
     
     #[allow(dead_code)]
     pub pipe_elementwise: vk::Pipeline,
@@ -59,6 +60,7 @@ pub struct AshBackend {
     pub pipe_softmax: vk::Pipeline,
     pub pipe_matmul: vk::Pipeline,
     pub pipe_bit_linear: vk::Pipeline,
+    pub pipe_bit_linear_fast: vk::Pipeline,
     pub pipe_layer_norm: vk::Pipeline,
     pub pipe_rms_norm: vk::Pipeline,
     pub pipe_index_select: vk::Pipeline,
@@ -70,10 +72,13 @@ pub struct AshBackend {
     pub pipe_elu: vk::Pipeline,
     pub pipe_tanh: vk::Pipeline,
     pub pipe_clamp: vk::Pipeline,
+    pub pipe_neg: vk::Pipeline,
+    pub pipe_pow: vk::Pipeline,
     
     pub pipe_reduce_sum: vk::Pipeline,
     pub pipe_reduce_max: vk::Pipeline,
     pub pipe_reduce_min: vk::Pipeline,
+    pub pipe_reduce_argmax: vk::Pipeline,
 
     pub compute_cmd_pool: vk::CommandPool,
     #[allow(dead_code)]
@@ -435,6 +440,9 @@ pub fn init_backend() {
         let pc_bit_linear_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];
         let pipe_layout_bit_linear = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_bit_linear]).push_constant_ranges(&pc_bit_linear_range), None) }.unwrap();
 
+        let pc_bit_linear_fast_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(20)];
+        let pipe_layout_bit_linear_fast = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_bit_linear]).push_constant_ranges(&pc_bit_linear_fast_range), None) }.unwrap();
+
         let pc_norm_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(12)];
         let pipe_layout_layer_norm = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_layer_norm]).push_constant_ranges(&pc_norm_range), None) }.unwrap();
         let pipe_layout_rms_norm = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_rms_norm]).push_constant_ranges(&pc_norm_range), None) }.unwrap();
@@ -453,6 +461,7 @@ pub fn init_backend() {
         let sm_softmax = load_shader(include_bytes!("shaders/softmax.wgsl.spv"));
         let sm_matmul = load_shader(include_bytes!("shaders/matmul_tiled.comp.spv"));
         let sm_bit_linear = load_shader(include_bytes!("shaders/bit_linear.comp.spv"));
+        let sm_bit_linear_fast = load_shader(include_bytes!("shaders/bit_linear_fast.comp.spv"));
         let sm_layer_norm = load_shader(include_bytes!("shaders/layer_norm.comp.spv"));
         let sm_rms_norm = load_shader(include_bytes!("shaders/rms_norm.comp.spv"));
         let sm_index_select = load_shader(include_bytes!("shaders/index_select.comp.spv"));
@@ -467,6 +476,8 @@ pub fn init_backend() {
         let entry_elu  = CString::new("elu_main").unwrap();
         let entry_tanh = CString::new("tanh_main").unwrap();
         let entry_clamp = CString::new("clamp_main").unwrap();
+        let entry_neg  = CString::new("neg_main").unwrap();
+        let entry_pow  = CString::new("pow_main").unwrap();
 
         let create_pipe = |sm: vk::ShaderModule, entry: &CStr, layout: vk::PipelineLayout| -> vk::Pipeline {
             let stage = vk::PipelineShaderStageCreateInfo::default()
@@ -483,6 +494,7 @@ pub fn init_backend() {
         let pipe_softmax = create_pipe(sm_softmax, &entry_main, pipe_layout_act);
         let pipe_matmul = create_pipe(sm_matmul, &entry_main, pipe_layout_matmul);
         let pipe_bit_linear = create_pipe(sm_bit_linear, &entry_main, pipe_layout_bit_linear);
+        let pipe_bit_linear_fast = create_pipe(sm_bit_linear_fast, &entry_main, pipe_layout_bit_linear_fast);
         let pipe_layer_norm = create_pipe(sm_layer_norm, &entry_main, pipe_layout_layer_norm);
         let pipe_rms_norm = create_pipe(sm_rms_norm, &entry_main, pipe_layout_rms_norm);
         let pipe_index_select = create_pipe(sm_index_select, &entry_main, pipe_layout_index_select);
@@ -494,6 +506,8 @@ pub fn init_backend() {
         let pipe_elu = create_pipe(sm_act, &entry_elu, pipe_layout_act);
         let pipe_tanh = create_pipe(sm_act, &entry_tanh, pipe_layout_act);
         let pipe_clamp = create_pipe(sm_act, &entry_clamp, pipe_layout_act);
+        let pipe_neg = create_pipe(sm_act, &entry_neg, pipe_layout_act);
+        let pipe_pow = create_pipe(sm_act, &entry_pow, pipe_layout_act);
 
         let entry_sum_redu = CString::new("sum_main").unwrap();
         let entry_max_redu = CString::new("max_main").unwrap();
@@ -501,6 +515,8 @@ pub fn init_backend() {
         let pipe_reduce_sum = create_pipe(sm_reduce, &entry_sum_redu, pipe_layout_reduce);
         let pipe_reduce_max = create_pipe(sm_reduce, &entry_max_redu, pipe_layout_reduce);
         let pipe_reduce_min = create_pipe(sm_reduce, &entry_min_redu, pipe_layout_reduce);
+        let entry_argmax = std::ffi::CString::new("argmax_main").unwrap();
+        let pipe_reduce_argmax = create_pipe(sm_reduce, &entry_argmax, pipe_layout_reduce);
 
         unsafe {
             device.destroy_shader_module(sm_act, None);
@@ -509,6 +525,7 @@ pub fn init_backend() {
             device.destroy_shader_module(sm_softmax, None);
             device.destroy_shader_module(sm_matmul, None);
             device.destroy_shader_module(sm_bit_linear, None);
+            device.destroy_shader_module(sm_bit_linear_fast, None);
             device.destroy_shader_module(sm_layer_norm, None);
             device.destroy_shader_module(sm_rms_norm, None);
             device.destroy_shader_module(sm_index_select, None);
@@ -606,7 +623,8 @@ pub fn init_backend() {
             pipe_layout_act, pipe_layout_reduce, pipe_layout_elementwise, 
             pipe_elementwise, pipe_relu, pipe_softmax, pipe_sigmoid, pipe_silu,
             pipe_gelu, pipe_leaky_relu, pipe_elu, pipe_tanh, pipe_clamp,
-            pipe_reduce_sum, pipe_reduce_max, pipe_reduce_min,
+            pipe_neg, pipe_pow,
+            pipe_reduce_sum, pipe_reduce_max, pipe_reduce_min, pipe_reduce_argmax,
             compute_cmd_pool, transfer_cmd_pool,
             buffer_cache: Mutex::new(Vec::new()),
             pool_desc_act:    Mutex::new(pool_desc_act),
@@ -619,11 +637,13 @@ pub fn init_backend() {
             pool_desc_rms_norm: Mutex::new(pool_desc_rms_norm),
             pipe_layout_matmul,
             pipe_layout_bit_linear,
+            pipe_layout_bit_linear_fast,
             pipe_layout_layer_norm,
             pipe_layout_rms_norm,
             pipe_layout_index_select,
             pipe_matmul,
             pipe_bit_linear,
+            pipe_bit_linear_fast,
             pipe_layer_norm,
             pipe_rms_norm,
             pipe_index_select,
@@ -1188,7 +1208,8 @@ pub fn execute_reduce(input_raw: &[u8], op: &str, dtype: DataType) -> Vec<f32> {
     let elem_count = input_raw.len() / bytes_per_elem;
     let num_bytes_f32 = (elem_count * 4) as vk::DeviceSize;
     let num_blocks = (elem_count + 255) / 256;
-    let out_num_bytes = (num_blocks * 4) as vk::DeviceSize;
+    let out_elements = if op == "argmax" { num_blocks * 2 } else { num_blocks };
+    let out_num_bytes = (out_elements * 4) as vk::DeviceSize;
 
     let backend = BACKEND.get().unwrap();
 
@@ -1223,11 +1244,17 @@ pub fn execute_reduce(input_raw: &[u8], op: &str, dtype: DataType) -> Vec<f32> {
 
         let pipe = match op {
             "sum" => backend.pipe_reduce_sum,
-            "mean" => backend.pipe_reduce_sum, // mean uses sum, we divide on CPU
+            "mean" => backend.pipe_reduce_sum, 
             "max" => backend.pipe_reduce_max,
             "min" => backend.pipe_reduce_min,
+            "argmax" => backend.pipe_reduce_argmax,
             _ => panic!("Unsupported reduction OP: {}", op),
         };
+
+        let out_num_bytes_actual = if op == "argmax" { out_num_bytes * 2 } else { out_num_bytes };
+        // We might need a larger buffer for argmax (value + index)
+        // Let's adjust buf_out if argmax.
+        // Actually, let's just use out_num_bytes * 2 for ALL reductions to be safe.
 
         backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipe);
         backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_reduce, 0, &[set], &[]);
@@ -1246,7 +1273,7 @@ pub fn execute_reduce(input_raw: &[u8], op: &str, dtype: DataType) -> Vec<f32> {
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED);
         backend.device.cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COMPUTE_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[barrier_out], &[]);
 
-        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: buf_out.pool_offset.unwrap_or(0), dst_offset: 0, size: out_num_bytes }]);
+        backend.device.cmd_copy_buffer(cmd, buf_out.buffer, stage_out.buffer, &[vk::BufferCopy { src_offset: buf_out.pool_offset.unwrap_or(0), dst_offset: 0, size: out_num_bytes_actual }]);
 
         backend.device.end_command_buffer(cmd).unwrap();
 
@@ -1278,7 +1305,22 @@ pub fn execute_reduce(input_raw: &[u8], op: &str, dtype: DataType) -> Vec<f32> {
     download_from_stage(&mut out_bytes, &stage_out, DataType::F32);
     poll_async_ops();
 
-    bytemuck::cast_slice(&out_bytes).to_vec()
+    let partials: &[f32] = bytemuck::cast_slice(&out_bytes);
+    if op == "argmax" {
+        let mut max_val = f32::NEG_INFINITY;
+        let mut max_idx = 0.0f32;
+        for i in 0..(out_bytes.len() / 8) {
+            let val = partials[i * 2];
+            let idx = partials[i * 2 + 1];
+            if val > max_val {
+                max_val = val;
+                max_idx = idx;
+            }
+        }
+        vec![max_idx]
+    } else {
+        partials.to_vec()
+    }
 }
 
 pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f32, _res_raw: &mut [u8], dtype: DataType, _is_hybrid: bool, _use_staging: bool) -> (u64, CachedBuffer) {
@@ -1333,6 +1375,8 @@ pub fn submit_activation_into(input_raw: &[u8], op: &str, param1: f32, param2: f
             "elu" => backend.pipe_elu,
             "tanh" => backend.pipe_tanh,
             "clamp" => backend.pipe_clamp,
+            "neg" => backend.pipe_neg,
+            "pow" => backend.pipe_pow,
             _ => panic!("Unsupported activation OP"),
         };
 
@@ -1801,7 +1845,7 @@ pub fn execute_matmul_into(a_raw: &[u8], b_raw: &[u8], res_raw: &mut [u8], batch
     poll_async_ops();
 }
 
-pub fn execute_bit_linear_into(a_raw: &[u8], b_raw: &[u8], s_raw: &[u8], bias_raw: &[u8], out_raw: &mut [u8], m: u32, k: u32, n: u32) {
+pub fn execute_bit_linear_into(a_raw: &[u8], b_raw: &[u8], s_raw: &[u8], bias_raw: &[u8], out_raw: &mut [u8], m: u32, k: u32, n: u32, dtype: DataType) {
     let backend = BACKEND.get().unwrap();
     let num_bytes_a = (m * k) as vk::DeviceSize;
     let num_bytes_b = (n * k) as vk::DeviceSize;
@@ -1862,12 +1906,25 @@ pub fn execute_bit_linear_into(a_raw: &[u8], b_raw: &[u8], s_raw: &[u8], bias_ra
         ];
         backend.device.update_descriptor_sets(&writes, &[]);
 
-        backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_bit_linear);
+        let use_fast = dtype == DataType::BitNet2 || dtype == DataType::BitNet1_6;
+        let pipe = if use_fast { backend.pipe_bit_linear_fast } else { backend.pipe_bit_linear };
+        let layout = if use_fast { backend.pipe_layout_bit_linear_fast } else { backend.pipe_layout_bit_linear };
+
+        backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipe);
         backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_bit_linear, 0, &[set], &[]);
 
         let has_bias = if bias_raw.is_empty() { 0u32 } else { 1u32 };
-        let pc_data = [m, k, n, has_bias];
-        backend.device.cmd_push_constants(cmd, backend.pipe_layout_bit_linear, vk::ShaderStageFlags::COMPUTE, 0, bytemuck::cast_slice(&pc_data));
+        let pc_data = if use_fast {
+            let dt = match dtype {
+                DataType::BitNet2 => 100u32,
+                DataType::BitNet1_6 => 101u32,
+                _ => 0u32,
+            };
+            vec![m, k, n, has_bias, dt]
+        } else {
+            vec![m, k, n, has_bias]
+        };
+        backend.device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::COMPUTE, 0, bytemuck::cast_slice(&pc_data));
 
         backend.device.cmd_dispatch(cmd, (n + 15) / 16, (m + 15) / 16, 1);
 

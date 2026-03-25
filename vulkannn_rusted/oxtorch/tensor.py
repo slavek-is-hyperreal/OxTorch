@@ -14,12 +14,23 @@ class Tensor:
     Automatically falls back to original PyTorch for any unimplemented operations.
     """
     def __init__(self, data=None, shape=None, dtype=vnn.DataType.F32, device="cpu", name="tensor"):
+        if isinstance(dtype, str):
+            dtype_map = {
+                "f32": vnn.DataType.F32,
+                "f16": vnn.DataType.F16,
+                "bf16": vnn.DataType.BF16,
+                "int8": vnn.DataType.Int8,
+                "bitnet2": vnn.DataType.BitNet2,
+                "bitnet1.6": vnn.DataType.BitNet1_6,
+            }
+            dtype = dtype_map.get(dtype.lower(), vnn.DataType.F32)
+
         if isinstance(data, vnn.Tensor):
             self._vnn = data
         elif isinstance(data, (np.ndarray, list)):
             if isinstance(data, list):
                 data = np.array(data, dtype=np.float32)
-            self._vnn = vnn.Tensor(data=data, dtype=dtype, device=device, name=name)
+            self._vnn = vnn.Tensor(data=data, shape=shape, dtype=dtype, device=device, name=name)
         elif shape is not None:
             self._vnn = vnn.Tensor(shape=shape, dtype=dtype, device=device, name=name)
         else:
@@ -95,16 +106,26 @@ class Tensor:
         return f"OxTorch.Tensor({self.shape}, dtype={self.dtype}, device={self.device})"
 
     def to(self, *args, **kwargs):
-        # If it's a device change that VNN supports (cpu/vulkan)
+        # If it's a device change that VNN supports (cpu/vulkan/hybrid)
         if len(args) > 0 and isinstance(args[0], str):
-            if args[0] in ["cpu", "vulkan", "hybrid"]:
-                # VNN currently handles device via .device property (settable)
-                # But it's better to create a copy with the new device if needed.
-                # For now, let's just update the proxy if consistent.
-                # Actually, native VNN Tensor has no .to() method yet.
-                # Let's fallback to PT for complex device/dtype casting.
-                pass
-        return self.to_torch().to(*args, **kwargs) # Fallback
+            device = args[0]
+            if device in ["cpu", "vulkan", "hybrid", "ssd", "vga"]:
+                return Tensor(self._vnn.to(device))
+        
+        # Fallback to PyTorch for anything else (dtype changes, etc.)
+        pt_res = self.to_torch().to(*args, **kwargs)
+        if isinstance(pt_res, torch.Tensor):
+            return Tensor.from_torch(pt_res)
+        return pt_res
+
+    def to_bitnet(self, dtype):
+        if isinstance(dtype, str):
+            dtype_map = {
+                "bitnet2": vnn.DataType.BitNet2,
+                "bitnet1.6": vnn.DataType.BitNet1_6,
+            }
+            dtype = dtype_map.get(dtype.lower(), vnn.DataType.BitNet2)
+        return Tensor(self._vnn.to_bitnet(dtype))
 
     def cpu(self):
         return self # We are already on CPU or mapped
@@ -276,3 +297,9 @@ class Tensor:
         pt_tensor.__setitem__(key, val)
         # Update our underlying storage
         self._vnn = Tensor.from_torch(pt_tensor)._vnn
+
+    def bit_linear(self, weight, scale, bias=None):
+        w_vnn = weight._vnn if isinstance(weight, Tensor) else weight
+        s_vnn = scale._vnn if isinstance(scale, Tensor) else scale
+        b_vnn = bias._vnn if (bias is not None and isinstance(bias, Tensor)) else bias
+        return Tensor(self._vnn.bit_linear(w_vnn, s_vnn, b_vnn))

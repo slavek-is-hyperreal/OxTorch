@@ -8,6 +8,7 @@ mod reductions;
 mod linalg;
 mod msts;
 mod fallback;
+mod conversion;
 pub mod pool;
 
 pub use types::{DataType, IoEngineType};
@@ -60,15 +61,20 @@ impl Tensor {
         device: &str,
         name: &str,
     ) -> PyResult<Self> {
-        if let Some(d) = data {
-            let shape = d.shape().to_vec();
-            // Use readonly() to get an array view, then convert to vec
-            let vec = d.readonly().to_owned_array().into_raw_vec();
-            Self::new_from_vec(vec, shape, dtype, device, name)
-        } else if let Some(s) = shape {
-            Self::new(s, dtype, device, name)
-        } else {
-            Err(pyo3::exceptions::PyValueError::new_err("Either shape or data must be provided"))
+        match (shape, data) {
+            (Some(s), Some(d)) => {
+                let vec = d.readonly().to_owned_array().into_raw_vec();
+                Self::new_from_vec_with_shape(vec, s, dtype, device, name)
+            },
+            (None, Some(d)) => {
+                let shape = d.shape().to_vec();
+                let vec = d.readonly().to_owned_array().into_raw_vec();
+                Self::new_from_vec(vec, shape, dtype, device, name)
+            },
+            (Some(s), None) => {
+                Self::new(s, dtype, device, name)
+            },
+            _ => Err(pyo3::exceptions::PyValueError::new_err("Either shape or data must be provided"))
         }
     }
 
@@ -178,6 +184,27 @@ impl Tensor {
     pub fn gelu_into(&self, target: &mut Tensor) -> PyResult<()> { self.unary_op_into(target, "gelu", 0.0, 0.0) }
     pub fn tanh(&self) -> PyResult<Tensor> { self.unary_op("tanh", 0.0, 0.0) }
 
+    pub fn narrow(&self, dim: usize, start: usize, length: usize) -> PyResult<Tensor> {
+        self.execute_narrow(dim, start, length)
+    }
+
+    pub fn neg(&self) -> PyResult<Tensor> { self.execute_neg() }
+    pub fn neg_into(&self, target: &mut Tensor) -> PyResult<()> { self.unary_op_into(target, "neg", 0.0, 0.0) }
+
+    pub fn py_pow(&self, exponent: f32) -> PyResult<Tensor> { self.execute_pow(exponent) }
+    pub fn pow(&self, exponent: f32) -> PyResult<Tensor> { self.execute_pow(exponent) }
+    pub fn pow_into(&self, target: &mut Tensor, exponent: f32) -> PyResult<()> { self.unary_op_into(target, "pow", exponent, 0.0) }
+
+    #[pyo3(signature = (dim=0))]
+    pub fn argmax(&self, dim: i64) -> PyResult<Tensor> {
+        self.execute_argmax(dim)
+    }
+
+    #[pyo3(signature = (repeats, dim=0))]
+    pub fn repeat_interleave(&self, repeats: usize, dim: usize) -> PyResult<Tensor> {
+        self.execute_repeat_interleave(repeats, dim)
+    }
+
     pub fn unary_op_ssd(&self, op: &str, param1: f32, param2: f32) -> PyResult<Tensor> {
         self.execute_unary_op_ssd(op, param1, param2)
     }
@@ -250,8 +277,18 @@ impl Tensor {
         self.execute_to_numpy(py)
     }
 
+    pub fn to_bitnet(&self, dtype: DataType) -> PyResult<Tensor> {
+        self.execute_to_bitnet(dtype)
+    }
+
     pub fn prefetch(&self) {
         self.prefetch_ssd();
+    }
+
+    pub fn to(&self, device: &str) -> PyResult<Self> {
+        let mut new_tensor = self.clone();
+        new_tensor.device = device.to_owned();
+        Ok(new_tensor)
     }
 }
 

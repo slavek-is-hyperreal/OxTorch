@@ -9,6 +9,7 @@ struct PushConstants {
 var<push_constant> pc: PushConstants;
 
 var<workgroup> sdata: array<f32, 256>;
+var<workgroup> sidx: array<u32, 256>;
 
 @compute @workgroup_size(256)
 fn sum_main(
@@ -127,5 +128,45 @@ fn min_main(
             let block_idx = group_id.y * num_workgroups.x + group_id.x;
             out_data[block_idx] = res;
         }
+    }
+}
+
+@compute @workgroup_size(256)
+fn argmax_main(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>,
+    @builtin(workgroup_id) group_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>,
+) {
+    let index = global_id.y * (num_workgroups.x * 256u) + global_id.x;
+    let tid = local_id.x;
+
+    var val: f32 = -3.402823466e+38; 
+    var arg: u32 = 0u;
+    if (index < pc.total_elements) {
+        val = in_data[index];
+        arg = index;
+    }
+    
+    sdata[tid] = val;
+    sidx[tid] = arg;
+    workgroupBarrier();
+
+    // Standard shared memory reduction
+    for (var s: u32 = 128u; s > 0u; s >>= 1u) {
+        if (tid < s) {
+            if (sdata[tid + s] > sdata[tid]) {
+                sdata[tid] = sdata[tid + s];
+                sidx[tid] = sidx[tid + s];
+            }
+        }
+        workgroupBarrier();
+    }
+
+    if (tid == 0u) {
+        let block_idx = group_id.y * num_workgroups.x + group_id.x;
+        // Output two floats: max_val and max_idx
+        out_data[block_idx * 2u] = sdata[0];
+        out_data[block_idx * 2u + 1u] = f32(sidx[0]);
     }
 }

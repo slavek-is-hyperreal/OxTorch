@@ -7,6 +7,7 @@ pub mod io_uring_engine;
 pub mod crook_scheduler;
 pub mod cpu;
 pub mod prng;
+pub mod models;
 
 use pyo3::prelude::*;
 
@@ -33,5 +34,6 @@ fn vulkannn_rusted(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_available_ram_bytes, m)?)?;
     m.add_class::<DataType>()?;
     m.add_class::<Tensor>()?;
+    m.add_class::<models::bitnet::BitNetModel>()?;
     Ok(())
 }
