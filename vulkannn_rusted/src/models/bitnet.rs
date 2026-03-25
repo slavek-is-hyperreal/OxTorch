@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 use safetensors::SafeTensors;
 use std::fs::File;
 use std::io::Read;
-use crate::tensor::{Tensor, DataType, Storage};
-use rayon::prelude::*;
+use crate::tensor::{Tensor, DataType};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BitNetConfig {
@@ -37,45 +36,13 @@ pub struct BitLinear {
 
 impl BitLinear {
     pub fn forward(&self, x: &Tensor) -> PyResult<Tensor> {
-        // x must be Int8 for BitLinear
-        // Typically x is normalized and then quantized to Int8 per-token
-        let x_q = self.quantize_activation(x)?;
-        Tensor::execute_bit_linear(&x_q, &self.weight, &self.scale, self.bias.as_ref())
-    }
-
-    fn quantize_activation(&self, x: &Tensor) -> PyResult<Tensor> {
-        // symmetric per-token quantization (absmax)
-        // For now, doing it on CPU/Rayon or via a shader if available
-        // VNN currently doesn't have a fused quant kernel in execute_bit_linear,
-        // so we do it here.
-        
-        let shape = x.shape.clone();
-        let m = shape[0];
-        let k = shape[1];
-        
-        // This is a slow path if it's not a kernel. 
-        // TODO: Move per-token quantization into a VNN kernel.
-        let mut res = Tensor::new_zeros(shape, DataType::Int8, &x.device)?;
-        
-        if x.device == "cpu" {
-             let (src, _) = x.get_slice_raw_f32();
-             let (dst, _) = res.get_slice_raw_mut_i8();
-             
-             dst.par_chunks_mut(k).enumerate().for_each(|(i, row)| {
-                 let src_row = &src[i * k .. (i+1) * k];
-                 let mut max_abs = 0.0f32;
-                 for &val in src_row {
-                     let abs = val.abs();
-                     if abs > max_abs { max_abs = abs; }
-                 }
-                 let scale = 127.0 / max_abs.max(1e-5);
-                 for j in 0..k {
-                     row[j] = (src_row[j] * scale).round().clamp(-128.0, 127.0) as i8;
-                 }
-             });
-        }
-        
-        Ok(res)
+        let (x_q, s_a) = x.execute_quantize_per_token()?;
+        // Weight shape is [N/4, K] (packed), logical N = weight.shape[0] * 4
+        let logical_n = self.weight.shape[0] * 4;
+        let mut y = Tensor::execute_bit_linear_with_n(&x_q, &self.weight, logical_n, &self.scale, self.bias.as_ref())?;
+        // Apply activation scale
+        y = y.execute_mul_broadcast(&s_a)?;
+        Ok(y)
     }
 }
 
@@ -101,16 +68,17 @@ impl BitNetLayer {
         let residual = x.clone();
         let x_norm = self.input_layernorm.forward(x)?;
         
-        // 1. Attention
-        let q = self.q_proj.forward(&x_norm)?.execute_reshape(vec![1, 0, self.n_heads, self.head_dim])?;
-        let k = self.k_proj.forward(&x_norm)?.execute_reshape(vec![1, 0, self.n_kv_heads, self.head_dim])?;
-        let v = self.v_proj.forward(&x_norm)?.execute_reshape(vec![1, 0, self.n_kv_heads, self.head_dim])?;
+        let seq_len = x_norm.shape[0]; // actual tokens this forward pass
+        // 1. Attention — reshape to [1, seq_len, n_heads, head_dim] (batch=1)
+        let q = self.q_proj.forward(&x_norm)?.execute_reshape(vec![1, seq_len, self.n_heads, self.head_dim])?;
+        let k = self.k_proj.forward(&x_norm)?.execute_reshape(vec![1, seq_len, self.n_kv_heads, self.head_dim])?;
+        let v = self.v_proj.forward(&x_norm)?.execute_reshape(vec![1, seq_len, self.n_kv_heads, self.head_dim])?;
         
         // RoPE
         let q = self.apply_rope(&q, cos, sin)?;
         let k = self.apply_rope(&k, cos, sin)?;
 
-        // KV Cache update
+        // KV Cache update — cat along seq dim (1)
         let (k, v) = match (past_k, past_v) {
             (Some(pk), Some(pv)) => {
                 let new_k = Tensor::execute_cat(&[pk, &k], 1)?;
@@ -120,7 +88,7 @@ impl BitNetLayer {
             _ => (k, v)
         };
         
-        // GQA Repeat if needed
+        // GQA Repeat if needed: k/v are [1, kv_seq, n_kv_heads, head_dim]
         let (k_rep, v_rep) = if self.n_kv_heads < self.n_heads {
             let kr = k.execute_repeat_interleave(self.n_heads / self.n_kv_heads, 2)?;
             let vr = v.execute_repeat_interleave(self.n_heads / self.n_kv_heads, 2)?;
@@ -129,16 +97,17 @@ impl BitNetLayer {
             (k.clone(), v.clone())
         };
         
-        // SDPA: (bs, n_heads, seq_len, head_dim)
+        // SDPA: transpose to (bs=1, n_heads, seq, head_dim)
         let q_tp = q.execute_transpose_dims(1, 2)?;
         let k_tp = k_rep.execute_transpose_dims(1, 2)?;
         let v_tp = v_rep.execute_transpose_dims(1, 2)?;
         
         let mut attn_out = self.scaled_dot_product_attention(&q_tp, &k_tp, &v_tp)?;
         
-        // Transpose back: (bs, seq_len, n_heads, head_dim)
+        // Transpose back: (1, n_heads, seq, head_dim) → (1, seq, n_heads, head_dim)
         attn_out = attn_out.execute_transpose_dims(1, 2)?;
-        let attn_out_flat = attn_out.execute_reshape(vec![1, 0, self.n_heads * self.head_dim])?;
+        // Flatten to [seq_len, n_heads*head_dim]
+        let attn_out_flat = attn_out.execute_reshape(vec![seq_len, self.n_heads * self.head_dim])?;
         
         // SubLN + Output Projection
         let attn_norm = self.attn_sub_norm.forward(&attn_out_flat)?;
@@ -152,7 +121,7 @@ impl BitNetLayer {
         let up = self.up_proj.forward(&x_norm_mlp)?;
         
         // ReLU^2: (gate.relu()^2) * up
-        let gate_act = gate.relu()?.execute_pow(2.0)?;
+        let gate_act = gate.execute_relu2()?;
         let inner = self.ffn_sub_norm.forward(&gate_act.elementwise_op(&up, "mul")?)?;
         
         x = residual_mlp.elementwise_op(&self.down_proj.forward(&inner)?, "add")?;
@@ -161,18 +130,22 @@ impl BitNetLayer {
     }
 
     fn apply_rope(&self, x: &Tensor, cos: &Tensor, sin: &Tensor) -> PyResult<Tensor> {
-        // x: (1, seq_len, n_heads, head_dim)
-        // cos, sin: (1, seq_len, 1, head_dim)
-        // rotate_half: cat(-x2, x1)
-        let half = self.head_dim / 2;
-        let x1 = x.execute_narrow(3, 0, half)?;
-        let x2 = x.execute_narrow(3, half, half)?;
+        // x: [1, seq_len, n_heads, head_dim]
+        // cos/sin: [1, seq_len, 1, head_dim] — expand n_heads dim to match x
+        let n_heads_x = x.shape[2]; // n_heads or n_kv_heads depending on caller
+        let cos_exp = cos.execute_repeat_interleave(n_heads_x, 2)?;
+        let sin_exp = sin.execute_repeat_interleave(n_heads_x, 2)?;
         
+        let half = self.head_dim / 2;
+        let x1 = x.execute_narrow(3, 0, half)?;       // first half of head_dim
+        let x2 = x.execute_narrow(3, half, half)?;    // second half of head_dim
+        
+        // rotate_half: cat(-x2, x1) along dim 3
         let x_rotated = Tensor::execute_cat(&[&x2.execute_neg()?, &x1], 3)?;
         
         // (x * cos) + (x_rotated * sin)
-        let term1 = x.elementwise_op(cos, "mul")?;
-        let term2 = x_rotated.elementwise_op(sin, "mul")?;
+        let term1 = x.elementwise_op(&cos_exp, "mul")?;
+        let term2 = x_rotated.elementwise_op(&sin_exp, "mul")?;
         term1.elementwise_op(&term2, "add")
     }
 
@@ -219,7 +192,6 @@ pub struct BitNetModel {
 impl BitNetModel {
     #[new]
     pub fn new(path: &str, device: &str) -> PyResult<Self> {
-        // ... (loading logic remains same)
         let config_path = format!("{}/config.json", path);
         let mut config_file = File::open(config_path)?;
         let mut config_str = String::new();
@@ -227,52 +199,71 @@ impl BitNetModel {
         let config: BitNetConfig = serde_json::from_str(&config_str).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         let model_path = format!("{}/model.safetensors", path);
-        let bytes = std::fs::read(model_path)?;
-        let tensors = SafeTensors::deserialize(&bytes).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        // Map file for efficiency
+        let file = File::open(model_path)?;
+        let buffer = unsafe { memmap2::MmapOptions::new().map(&file)? };
+        let tensors = SafeTensors::deserialize(&buffer).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        let device_str = device.to_string();
+        let device_str = if device == "vga" || device == "vulkan" { "vulkan" } else { "cpu" };
         
-        // Loader logic...
-        // For each layer, unpack and repack
+        println!("[BitNet] Loading {} layers on {}...", config.num_hidden_layers, device_str);
+        
+        // Dynamically determine dimensions from embed tensor
+        let embed_data = tensors.tensor("model.embed_tokens.weight").map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let real_hidden_size = embed_data.shape()[1];
+        let vocab_size = embed_data.shape()[0];
+        println!("[BitNet] Detected dimensions: hidden_size={}, vocab_size={}", real_hidden_size, vocab_size);
+
+        let embed_vec = Tensor::from_raw_bytes(embed_data.data().to_vec(), vec![vocab_size, real_hidden_size], DataType::BF16, "cpu")?.to_numpy_f32_vec();
+        let embed_tensor = Tensor::new_from_vec(embed_vec, vec![vocab_size, real_hidden_size], DataType::F32, "cpu", "embed")?;
+
         let mut layers = Vec::new();
         for i in 0..config.num_hidden_layers {
             let p = format!("model.layers.{}", i);
+            
+            // Proj sizes are determined by safe-open in load_bitlinear
+            let q_proj = Self::load_bitlinear(&tensors, &format!("{}.self_attn.q_proj", p), device_str)?;
+            let k_proj = Self::load_bitlinear(&tensors, &format!("{}.self_attn.k_proj", p), device_str)?;
+            let v_proj = Self::load_bitlinear(&tensors, &format!("{}.self_attn.v_proj", p), device_str)?;
+            let o_proj = Self::load_bitlinear(&tensors, &format!("{}.self_attn.o_proj", p), device_str)?;
+
+            let gate_proj = Self::load_bitlinear(&tensors, &format!("{}.mlp.gate_proj", p), device_str)?;
+            let up_proj = Self::load_bitlinear(&tensors, &format!("{}.mlp.up_proj", p), device_str)?;
+            let down_proj = Self::load_bitlinear(&tensors, &format!("{}.mlp.down_proj", p), device_str)?;
+
             layers.push(BitNetLayer {
-                q_proj: Self::load_bitlinear(&tensors, &format!("{}.self_attn.q_proj", p), config.hidden_size, config.hidden_size, device)?,
-                k_proj: Self::load_bitlinear(&tensors, &format!("{}.self_attn.k_proj", p), (config.num_key_value_heads * config.hidden_size) / config.num_attention_heads, config.hidden_size, device)?,
-                v_proj: Self::load_bitlinear(&tensors, &format!("{}.self_attn.v_proj", p), (config.num_key_value_heads * config.hidden_size) / config.num_attention_heads, config.hidden_size, device)?,
-                o_proj: Self::load_bitlinear(&tensors, &format!("{}.self_attn.o_proj", p), config.hidden_size, config.hidden_size, device)?,
-                gate_proj: Self::load_bitlinear(&tensors, &format!("{}.mlp.gate_proj", p), config.intermediate_size, config.hidden_size, device)?,
-                up_proj: Self::load_bitlinear(&tensors, &format!("{}.mlp.up_proj", p), config.intermediate_size, config.hidden_size, device)?,
-                down_proj: Self::load_bitlinear(&tensors, &format!("{}.mlp.down_proj", p), config.hidden_size, config.intermediate_size, device)?,
+                q_proj, k_proj, v_proj, o_proj,
+                gate_proj, up_proj, down_proj,
                 input_layernorm: Self::load_norm(&tensors, &format!("{}.input_layernorm", p), config.rms_norm_eps)?,
                 post_attention_layernorm: Self::load_norm(&tensors, &format!("{}.post_attention_layernorm", p), config.rms_norm_eps)?,
                 attn_sub_norm: Self::load_norm(&tensors, &format!("{}.self_attn.attn_sub_norm", p), config.rms_norm_eps)?,
                 ffn_sub_norm: Self::load_norm(&tensors, &format!("{}.mlp.ffn_sub_norm", p), config.rms_norm_eps)?,
                 n_heads: config.num_attention_heads,
                 n_kv_heads: config.num_key_value_heads,
-                head_dim: config.hidden_size / config.num_attention_heads,
+                head_dim: real_hidden_size / config.num_attention_heads,
             });
         }
 
-        let embed_data = tensors.tensor("model.embed_tokens.weight").map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        let embed = Tensor::from_raw_bytes(embed_data.data().to_vec(), vec![config.vocab_size, config.hidden_size], DataType::F32, "cpu")?;
-
         let norm = Self::load_norm(&tensors, "model.norm", config.rms_norm_eps)?;
         
-        let lm_head = if let Ok(data) = tensors.tensor("lm_head.weight") {
-            Tensor::from_raw_bytes(data.data().to_vec(), vec![config.vocab_size, config.hidden_size], DataType::F32, "cpu")?
+        let lm_head_t = if let Ok(data) = tensors.tensor("lm_head.weight") {
+            let t = Tensor::from_raw_bytes(data.data().to_vec(), vec![vocab_size, real_hidden_size], DataType::BF16, "cpu")?.to_numpy_f32_vec();
+            Tensor::new_from_vec(t, vec![vocab_size, real_hidden_size], DataType::F32, "cpu", "lm_head")?
         } else {
-            embed.clone()
+            embed_tensor.clone()
         };
 
         Ok(BitNetModel {
-            config,
+            config: BitNetConfig {
+                hidden_size: real_hidden_size,
+                vocab_size,
+                ..config
+            },
             layers,
-            embed,
+            embed: embed_tensor,
             norm,
-            lm_head,
-            device: device_str,
+            lm_head: lm_head_t,
+            device: device_str.to_string(),
         })
     }
 
@@ -282,31 +273,27 @@ impl BitNetModel {
         
         // Precompute RoPE (max context 4096)
         let (cos_table, sin_table) = self.get_rope_cos_sin(4096, head_dim)?;
+        let cos_table = cos_table.to(&self.device)?;
+        let sin_table = sin_table.to(&self.device)?;
         
         let mut kv_caches: Vec<Option<(Tensor, Tensor)>> = vec![None; self.layers.len()];
         
-        for i in 0..max_tokens {
+        for _i in 0..max_tokens {
             let seq_len = generated.len();
             
-            // 1. Determine if we are in prefill or decode
-            // Prefill: first iteration, process all prompt tokens
-            // Decode: subsequent iterations, process only the last token
-            let (tokens_to_process, start_pos) = if i == 0 {
+            // Prefill vs Decode
+            let (tokens_to_process, start_pos) = if _i == 0 {
                 (generated.clone(), 0)
             } else {
                 (vec![*generated.last().unwrap()], seq_len - 1)
             };
 
             let current_len = tokens_to_process.len();
-            
-            // 2. Embedding Lookup
             let mut x = self.index_select_embed(&tokens_to_process)?;
             
-            // 3. RoPE Slicing
             let cos = cos_table.execute_narrow(1, start_pos, current_len)?;
             let sin = sin_table.execute_narrow(1, start_pos, current_len)?;
             
-            // 4. Layers with KV Cache
             for (idx, layer) in self.layers.iter().enumerate() {
                 let (new_x, new_k, new_v) = match &kv_caches[idx] {
                     Some((pk, pv)) => layer.forward(&x, &cos, &sin, Some(pk), Some(pv))?,
@@ -316,15 +303,15 @@ impl BitNetModel {
                 kv_caches[idx] = Some((new_k, new_v));
             }
             
-            // 5. Final Norm + LM Head (last token only)
-            let x_last = x.execute_narrow(1, current_len - 1, 1)?.py_rms_norm(vec![self.config.hidden_size], Some(&self.norm.weight), self.norm.eps)?;
+            // Final Norm + LM Head
+            let x_last = x.execute_narrow(1, current_len - 1, 1)?.rms_norm(vec![self.config.hidden_size], Some(&self.norm.weight), self.norm.eps)?;
             let logits = x_last.__matmul__(&self.lm_head.execute_transpose()?)?;
             
-            // 6. Argmax
             let next_id = logits.execute_argmax(2)?.to_numpy_f32_vec()[0] as u32;
             generated.push(next_id);
             
-            // TODO: Stop on EOS
+            // Llama-3 EOS: 128001 / 128009
+            if next_id == 128001 || next_id == 128009 { break; }
         }
         
         Ok(generated)
@@ -332,6 +319,69 @@ impl BitNetModel {
 }
 
 impl BitNetModel {
+    fn load_bitlinear(tensors: &SafeTensors, prefix: &str, device: &str) -> PyResult<BitLinear> {
+        let w_data = tensors.tensor(&format!("{}.weight", prefix)).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let shape = w_data.shape();
+        
+        // Weight is stored with PACKED shape [N/4, K] matching actual byte count
+        // Kernel computes logical N = shape[0] * 4 internally via execute_bit_linear_with_n
+        let packed_rows = shape[0];  // = N/4
+        let n = packed_rows * 4;     // logical output channels
+        let k = shape[1];
+
+        println!("[BitNet] Loading {}: packed [{}, {}] -> logical {}x{}", prefix, packed_rows, k, n, k);
+
+        // Load raw bytes with packed shape [N/4, K] — byte count matches exactly
+        let weight = Tensor::from_raw_bytes(w_data.data().to_vec(), vec![packed_rows, k], DataType::BitNet2, "cpu")?;
+        
+        let s_data = tensors.tensor(&format!("{}.weight_scale", prefix)).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let s_raw = s_data.data();
+
+        let s_dtype = if s_raw.len() >= n * 4 { DataType::F32 }
+                     else if s_raw.len() >= n * 2 { DataType::BF16 }
+                     else if s_raw.len() == 4 { DataType::F32 }
+                     else { DataType::BF16 }; // shape=[1] BF16 = 2 bytes
+
+        let s_logical_shape = if s_raw.len() >= n * 2 { vec![n] } else { vec![1] };
+        let mut scale_vec = Tensor::from_raw_bytes(s_raw.to_vec(), s_logical_shape, s_dtype, "cpu")?.to_numpy_f32_vec();
+        
+        if scale_vec.len() == 1 {
+            scale_vec = vec![scale_vec[0]; n];
+        } else if scale_vec.len() < n {
+             scale_vec.resize(n, 1.0);
+        }
+        let scale = Tensor::new_from_vec(scale_vec, vec![n], DataType::F32, "cpu", "scale")?;
+        
+        let bias = if let Ok(data) = tensors.tensor(&format!("{}.bias", prefix)) {
+            let b_raw = data.data();
+            let b_dtype = if b_raw.len() >= n * 4 { DataType::F32 } else { DataType::BF16 };
+            let b_shape = if b_raw.len() >= n * 2 { vec![n] } else { vec![1] };
+            let mut b_vec = Tensor::from_raw_bytes(b_raw.to_vec(), b_shape, b_dtype, "cpu")?.to_numpy_f32_vec();
+            b_vec.resize(n, 0.0);
+            Some(Tensor::new_from_vec(b_vec, vec![n], DataType::F32, "cpu", "bias")?)
+        } else {
+            None
+        };
+
+        if device == "vulkan" {
+            Ok(BitLinear {
+                weight: weight.to_device("vulkan")?,
+                scale: scale.to_device("vulkan")?,
+                bias: bias.map(|b| b.to_device("vulkan")).transpose()?,
+            })
+        } else {
+            Ok(BitLinear { weight, scale, bias })
+        }
+    }
+
+    fn load_norm(tensors: &SafeTensors, prefix: &str, eps: f32) -> PyResult<BitNetRMSNorm> {
+        let w_data = tensors.tensor(&format!("{}.weight", prefix)).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        // Norm weights are BF16 in the safetensors file, convert to F32
+        let weight = Tensor::from_raw_bytes(w_data.data().to_vec(), vec![w_data.shape()[0]], DataType::BF16, "cpu")?;
+        let w_f32 = weight.to_numpy_f32_vec();
+        let weight_f32 = Tensor::new_from_vec(w_f32, vec![w_data.shape()[0]], DataType::F32, "cpu", "norm_w")?;
+        Ok(BitNetRMSNorm { weight: weight_f32, eps })
+    }
 
     fn get_rope_cos_sin(&self, max_seq: usize, dim: usize) -> PyResult<(Tensor, Tensor)> {
         let theta = self.config.rope_theta;
@@ -355,56 +405,16 @@ impl BitNetModel {
             }
         }
         
-        let cos = Tensor::new_from_vec(cos_data, vec![1, max_seq, 1, dim], DataType::F32, &self.device, "cos")?;
-        let sin = Tensor::new_from_vec(sin_data, vec![1, max_seq, 1, dim], DataType::F32, &self.device, "sin")?;
+        let cos = Tensor::new_from_vec(cos_data, vec![1, max_seq, 1, dim], DataType::F32, "cpu", "cos")?;
+        let sin = Tensor::new_from_vec(sin_data, vec![1, max_seq, 1, dim], DataType::F32, "cpu", "sin")?;
         Ok((cos, sin))
     }
 
     fn index_select_embed(&self, ids: &[u32]) -> PyResult<Tensor> {
-        let n = ids.len();
-        let h = self.config.hidden_size;
-        let mut data = vec![0.0f32; n * h];
+        let ids_vec: Vec<f32> = ids.iter().map(|&x| x as f32).collect();
+        let ids_tensor = Tensor::new_from_vec(ids_vec, vec![ids.len()], DataType::F32, "cpu", "indices")?;
         
-        let (embed_raw, _) = self.embed.get_slice_raw_f32();
-        
-        data.par_chunks_mut(h).enumerate().for_each(|(i, row)| {
-            let id = ids[i] as usize;
-            if id < self.config.vocab_size {
-                let start = id * h;
-                row.copy_from_slice(&embed_raw[start..start + h]);
-            }
-        });
-        
-        Tensor::new_from_vec(data, vec![1, n, h], DataType::F32, &self.device, "embed_lookup")
-    }
-
-    fn load_bitlinear(tensors: &SafeTensors, prefix: &str, m: usize, k: usize, device: &str) -> PyResult<BitLinear> {
-        let w_data = tensors.tensor(&format!("{}.weight", prefix)).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        let weight = Tensor::from_raw_bytes(w_data.data().to_vec(), vec![m, k], DataType::BitNet2, "cpu")?;
-        
-        let s_data = tensors.tensor(&format!("{}.weight_scale", prefix)).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        let scale = Tensor::from_raw_bytes(s_data.data().to_vec(), vec![m], DataType::F32, "cpu")?;
-        
-        let bias = if let Ok(data) = tensors.tensor(&format!("{}.bias", prefix)) {
-            Some(Tensor::from_raw_bytes(data.data().to_vec(), vec![m], DataType::F32, "cpu")?)
-        } else {
-            None
-        };
-
-        if device == "vulkan" {
-             Ok(BitLinear {
-                 weight: weight.to_device(device)?,
-                 scale: scale.to_device(device)?,
-                 bias: if let Some(b) = bias { Some(b.to_device(device)?) } else { None },
-             })
-        } else {
-             Ok(BitLinear { weight, scale, bias })
-        }
-    }
-
-    fn load_norm(tensors: &SafeTensors, prefix: &str, eps: f32) -> PyResult<BitNetRMSNorm> {
-        let w_data = tensors.tensor(&format!("{}.weight", prefix)).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        let weight = Tensor::from_raw_bytes(w_data.data().to_vec(), vec![w_data.shape()[0]], DataType::F32, "cpu")?;
-        Ok(BitNetRMSNorm { weight, eps })
+        let res = self.embed.index_select(0, &ids_tensor)?;
+        res.to(&self.device)
     }
 }

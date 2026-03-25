@@ -263,6 +263,31 @@ impl Tensor {
         }
         Ok(res)
     }
+    pub fn subln(&self, normalized_shape: Vec<usize>, weight: Option<&Tensor>, eps: f32) -> PyResult<Tensor> {
+        let mut d = 1;
+        for dim in &normalized_shape { d *= dim; }
+        let total = self.shape.iter().product::<usize>();
+        if total % d != 0 {
+            return Err(PyValueError::new_err("Invalid normalized_shape for subln"));
+        }
+        let n = total / d;
+        let mut res = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
+
+        if self.device == "cpu" {
+             match self.dtype {
+                 DataType::F32 => {
+                     let (x_raw, _) = self.get_slice_raw_f32();
+                     let w_raw = if let Some(w) = weight { Some(w.get_slice_raw_f32().0) } else { None };
+                     let (out_raw, _) = res.get_slice_raw_mut_f32();
+                     crate::cpu::ops::norm::sub_layer_norm::f32::sub_layer_norm_f32(x_raw, w_raw, eps, &normalized_shape, out_raw)?;
+                 },
+                 _ => return Err(PyValueError::new_err(format!("Unsupported dtype {:?} for subln on CPU", self.dtype))),
+             }
+        } else {
+             return Err(PyValueError::new_err("subln not implemented yet for GPU"));
+        }
+        Ok(res)
+    }
 
     pub fn rms_norm(&self, normalized_shape: Vec<usize>, weight: Option<&Tensor>, eps: f32) -> PyResult<Tensor> {
         let mut d = 1;
@@ -342,6 +367,47 @@ impl Tensor {
             let (out_raw, _) = res.get_slice_raw_mut_bytes();
             
             crate::backend::execute_bit_linear_into(a_raw, b_raw, s_raw, bias_raw, out_raw, m as u32, k as u32, n as u32, weight.dtype);
+        }
+        
+        Ok(res)
+    }
+
+    /// Like execute_bit_linear but with explicit logical N (for weights stored as [N/4, K]).
+    pub fn execute_bit_linear_with_n(input: &Tensor, weight: &Tensor, logical_n: usize, scale: &Tensor, bias: Option<&Tensor>) -> PyResult<Tensor> {
+        // Input can be [M, K] or [K] for single token
+        let k = *input.shape.last().unwrap();
+        let m: usize = input.shape[..input.shape.len().saturating_sub(1)].iter().product::<usize>().max(1);
+        
+        if input.dtype != DataType::Int8 { return Err(PyValueError::new_err("BitLinear input must be Int8")); }
+        if weight.dtype != DataType::BitNet2 && weight.dtype != DataType::BitNet1_6 {
+            return Err(PyValueError::new_err("BitLinear weights must be BitNet2 or BitNet1_6"));
+        }
+        
+        // Output shape mirrors input shape but last dim becomes logical_n
+        let mut out_shape = if input.shape.len() > 1 { input.shape[..input.shape.len()-1].to_vec() } else { vec![1] };
+        out_shape.push(logical_n);
+        let mut res = Tensor::new_zeros(out_shape, DataType::F32, &input.device)?;
+        
+        if input.device == "cpu" {
+            let (a, _) = input.get_slice_raw_i8();
+            let (b, _) = weight.get_slice_raw_bitnet();
+            let (s, _) = scale.get_slice_raw_f32();
+            let (c, _) = res.get_slice_raw_mut_f32();
+            crate::cpu::bit_linear_f32(m, k, logical_n, a, b, s, c, weight.dtype);
+            if let Some(b_t) = bias {
+                let (bias_v, _) = b_t.get_slice_raw_f32();
+                use rayon::prelude::*;
+                c.par_chunks_mut(logical_n).for_each(|row| {
+                    for j in 0..logical_n { row[j] += bias_v[j]; }
+                });
+            }
+        } else {
+            let (a_raw, _) = input.get_slice_raw_bytes();
+            let (b_raw, _) = weight.get_slice_raw_bytes();
+            let (s_raw, _) = scale.get_slice_raw_bytes();
+            let bias_raw = bias.map(|b| b.get_slice_raw_bytes().0).unwrap_or(&[]);
+            let (out_raw, _) = res.get_slice_raw_mut_bytes();
+            crate::backend::execute_bit_linear_into(a_raw, b_raw, s_raw, bias_raw, out_raw, m as u32, k as u32, logical_n as u32, weight.dtype);
         }
         
         Ok(res)

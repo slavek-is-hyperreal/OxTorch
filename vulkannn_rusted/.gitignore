@@ -1,0 +1,10 @@
+target/
+*.so
+*.pyc
+__pycache__/
+.pytest_cache/
+BitNet_repo/
+*.ssd
+build_error.log
+venv/
+.env

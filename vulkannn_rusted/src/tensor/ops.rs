@@ -136,6 +136,40 @@ impl Tensor {
         Ok(out)
     }
 
+    pub fn execute_relu2(&self) -> PyResult<Tensor> {
+        self.unary_op("relu", 0.0, 0.0)?.execute_pow(2.0)
+    }
+
+    pub fn execute_quantize_per_token(&self) -> PyResult<(Tensor, Tensor)> {
+        if self.dtype != DataType::F32 {
+            return Err(pyo3::exceptions::PyValueError::new_err("quantize_per_token only supported for F32"));
+        }
+        let k = self.shape[self.shape.len() - 1]; // Support both 2D and 3D [B, L, D]
+        let total_elements = self.shape.iter().product::<usize>();
+        let rows = total_elements / k;
+        
+        // dst: [B, L, D] as i8
+        let mut dst = Tensor::new_zeros(self.shape.clone(), DataType::Int8, &self.device)?;
+        
+        // scales: [B, L, 1] as f32
+        let mut scale_shape = self.shape.clone();
+        *scale_shape.last_mut().unwrap() = 1;
+        let mut scales = Tensor::new_zeros(scale_shape, DataType::F32, &self.device)?;
+        
+        if self.device == "cpu" {
+            let (src_raw, _) = self.get_slice_raw_f32();
+            let (dst_raw, _) = dst.get_slice_raw_mut_i8();
+            let (scales_raw, _) = scales.get_slice_raw_mut_f32();
+            
+            crate::cpu::quantize_per_token_absmax_f32(rows, k, src_raw, dst_raw, scales_raw);
+        } else {
+            // TODO: Vulkan quantize shader or fallback
+            return Err(pyo3::exceptions::PyValueError::new_err("Vulkan quantization not yet implemented"));
+        }
+        
+        Ok((dst, scales))
+    }
+
     pub fn execute_pow(&self, exponent: f32) -> PyResult<Tensor> {
         let mut out = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
         if self.device == "cpu" {
@@ -238,6 +272,29 @@ impl Tensor {
                 _ => 3,
             };
             crate::backend::execute_elementwise_into(a_raw, b_raw, out_raw, op_id, self.dtype);
+        }
+        Ok(out)
+    }
+
+    pub fn execute_mul_broadcast(&self, other: &Tensor) -> PyResult<Tensor> {
+        let m = self.shape.iter().take(self.shape.len()-1).product::<usize>();
+        let n = self.shape[self.shape.len()-1];
+        if other.shape.iter().product::<usize>() != m {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!("Broadcast shape mismatch: Expected {}, got {}", m, other.shape.iter().product::<usize>())));
+        }
+        let mut out = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
+        if self.device == "cpu" {
+             match self.dtype {
+                 DataType::F32 => {
+                     let (a, _) = self.get_slice_raw_f32();
+                     let (b, _) = other.get_slice_raw_f32();
+                     let (res, _) = out.get_slice_raw_mut_f32();
+                     crate::cpu::mul_broadcast_f32(a, b, res, m, n);
+                 },
+                 _ => return Err(pyo3::exceptions::PyValueError::new_err("Broadcast mul only supported for F32 on CPU")),
+             }
+        } else {
+             return Err(pyo3::exceptions::PyValueError::new_err("Vulkan broadcast mul not yet implemented"));
         }
         Ok(out)
     }

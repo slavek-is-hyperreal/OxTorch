@@ -138,6 +138,12 @@ impl Tensor {
          self.rms_norm(normalized_shape, weight, eps)
     }
 
+    #[pyo3(name = "subln", signature = (normalized_shape, weight=None, eps=1e-5))]
+    pub fn py_subln(&self, normalized_shape: Vec<usize>, weight: Option<&Tensor>, eps: f32) -> PyResult<Tensor> {
+         self.subln(normalized_shape, weight, eps)
+    }
+
+
     pub fn transpose(&self) -> PyResult<Tensor> {
         self.execute_transpose()
     }

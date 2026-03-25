@@ -11,6 +11,12 @@ pub use reduction::*;
 pub mod bit_linear;
 pub use bit_linear::*;
 
+pub mod bitnet_lut;
+pub use bitnet_lut::*;
+
+pub mod quantization;
+pub use quantization::*;
+
 pub mod norm;
 pub use norm::*;
 

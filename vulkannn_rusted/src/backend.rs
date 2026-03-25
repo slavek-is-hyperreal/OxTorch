@@ -53,6 +53,7 @@ pub struct AshBackend {
     pub pipe_layout_rms_norm: vk::PipelineLayout,
     pub pipe_layout_index_select: vk::PipelineLayout,
     pub pipe_layout_bit_linear_fast: vk::PipelineLayout,
+    pub pipe_layout_bit_linear_lut: vk::PipelineLayout,
     
     #[allow(dead_code)]
     pub pipe_elementwise: vk::Pipeline,
@@ -61,6 +62,7 @@ pub struct AshBackend {
     pub pipe_matmul: vk::Pipeline,
     pub pipe_bit_linear: vk::Pipeline,
     pub pipe_bit_linear_fast: vk::Pipeline,
+    pub pipe_bit_linear_lut: vk::Pipeline,
     pub pipe_layer_norm: vk::Pipeline,
     pub pipe_rms_norm: vk::Pipeline,
     pub pipe_index_select: vk::Pipeline,
@@ -462,6 +464,7 @@ pub fn init_backend() {
         let sm_matmul = load_shader(include_bytes!("shaders/matmul_tiled.comp.spv"));
         let sm_bit_linear = load_shader(include_bytes!("shaders/bit_linear.comp.spv"));
         let sm_bit_linear_fast = load_shader(include_bytes!("shaders/bit_linear_fast.comp.spv"));
+        let sm_bit_linear_lut = load_shader(include_bytes!("shaders/bit_linear_lut.comp.spv"));
         let sm_layer_norm = load_shader(include_bytes!("shaders/layer_norm.comp.spv"));
         let sm_rms_norm = load_shader(include_bytes!("shaders/rms_norm.comp.spv"));
         let sm_index_select = load_shader(include_bytes!("shaders/index_select.comp.spv"));
@@ -495,6 +498,7 @@ pub fn init_backend() {
         let pipe_matmul = create_pipe(sm_matmul, &entry_main, pipe_layout_matmul);
         let pipe_bit_linear = create_pipe(sm_bit_linear, &entry_main, pipe_layout_bit_linear);
         let pipe_bit_linear_fast = create_pipe(sm_bit_linear_fast, &entry_main, pipe_layout_bit_linear_fast);
+        let pipe_bit_linear_lut = create_pipe(sm_bit_linear_lut, &entry_main, pipe_layout_bit_linear);
         let pipe_layer_norm = create_pipe(sm_layer_norm, &entry_main, pipe_layout_layer_norm);
         let pipe_rms_norm = create_pipe(sm_rms_norm, &entry_main, pipe_layout_rms_norm);
         let pipe_index_select = create_pipe(sm_index_select, &entry_main, pipe_layout_index_select);
@@ -638,12 +642,14 @@ pub fn init_backend() {
             pipe_layout_matmul,
             pipe_layout_bit_linear,
             pipe_layout_bit_linear_fast,
+            pipe_layout_bit_linear_lut: pipe_layout_bit_linear, // Shared layout
             pipe_layout_layer_norm,
             pipe_layout_rms_norm,
             pipe_layout_index_select,
             pipe_matmul,
             pipe_bit_linear,
             pipe_bit_linear_fast,
+            pipe_bit_linear_lut,
             pipe_layer_norm,
             pipe_rms_norm,
             pipe_index_select,
@@ -1907,8 +1913,8 @@ pub fn execute_bit_linear_into(a_raw: &[u8], b_raw: &[u8], s_raw: &[u8], bias_ra
         backend.device.update_descriptor_sets(&writes, &[]);
 
         let use_fast = dtype == DataType::BitNet2 || dtype == DataType::BitNet1_6;
-        let pipe = if use_fast { backend.pipe_bit_linear_fast } else { backend.pipe_bit_linear };
-        let layout = if use_fast { backend.pipe_layout_bit_linear_fast } else { backend.pipe_layout_bit_linear };
+        let pipe = if use_fast { backend.pipe_bit_linear_lut } else { backend.pipe_bit_linear };
+        let layout = if use_fast { backend.pipe_layout_bit_linear } else { backend.pipe_layout_bit_linear };
 
         backend.device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipe);
         backend.device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, backend.pipe_layout_bit_linear, 0, &[set], &[]);

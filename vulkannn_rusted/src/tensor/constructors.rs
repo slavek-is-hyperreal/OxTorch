@@ -106,8 +106,10 @@ impl Tensor {
                         let v = unsafe { Vec::from_raw_parts(ptr as *mut i8, size, cap) };
                         Storage::Int8(v)
                     },
-                    DataType::BitNet2 | DataType::BitNet1_6 => {
-                        let n_bytes = if dtype == DataType::BitNet2 { (size + 3) / 4 } else { (size + 4) / 5 };
+                    DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => {
+                        let n_bytes = if dtype == DataType::BitNet2 { (size + 3) / 4 } 
+                                      else if dtype == DataType::I2_S { (size / 64) * 20 }
+                                      else { (size + 4) / 5 };
                         let v = unsafe { Vec::from_raw_parts(ptr as *mut u8, n_bytes, cap) };
                         Storage::BitNet(v)
                     },
@@ -119,8 +121,9 @@ impl Tensor {
                 DataType::F16 => Storage::F16(vec![half::f16::ZERO; size]),
                 DataType::BF16 => Storage::BF16(vec![half::bf16::ZERO; size]),
                 DataType::Int8 => Storage::Int8(vec![0; size]),
-                DataType::BitNet2 => Storage::BitNet(vec![0; (size + 3) / 4]),
                 DataType::BitNet1_6 => Storage::BitNet(vec![0; (size + 4) / 5]),
+                DataType::I2_S => Storage::I2_S(vec![0; (size / 64) * 20]),
+            }
             }
         };
 
@@ -189,8 +192,8 @@ impl Tensor {
             DataType::F32 => 4,
             DataType::F16 | DataType::BF16 => 2,
             DataType::Int8 => 1,
-            DataType::BitNet2 => 0, // Fallback, sizes should be handled carefully
             DataType::BitNet1_6 => 0,
+            DataType::I2_S => 0, 
         };
         let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         file.set_len((size * bytes_per_elem) as u64).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;

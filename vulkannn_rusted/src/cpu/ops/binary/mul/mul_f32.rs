@@ -74,3 +74,34 @@ fn mul_f32_scalar(a: &[f32], b: &[f32], res: &mut [f32]) {
         res[i] = a[i] * b[i];
     }
 }
+
+/// Specialized broadcast multiply: [M, N] * [M, 1] -> [M, N]
+pub fn mul_broadcast_f32(a: &[f32], b: &[f32], res: &mut [f32], _m: usize, n: usize) {
+    use rayon::prelude::*;
+    res.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
+        let scale = b[i];
+        let a_row = &a[i * n .. (i + 1) * n];
+        
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx") {
+                unsafe {
+                    let v_scale = _mm256_set1_ps(scale);
+                    let n8 = (n / 8) * 8;
+                    for j in (0..n8).step_by(8) {
+                        let va = _mm256_loadu_ps(a_row.as_ptr().add(j));
+                        _mm256_storeu_ps(row.as_mut_ptr().add(j), _mm256_mul_ps(va, v_scale));
+                    }
+                    for j in n8..n {
+                        row[j] = a_row[j] * scale;
+                    }
+                    return;
+                }
+            }
+        }
+        
+        for j in 0..n {
+            row[j] = a_row[j] * scale;
+        }
+    });
+}
