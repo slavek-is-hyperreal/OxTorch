@@ -62,7 +62,8 @@ impl Tensor {
                     }
                     vec
                 }
-            }
+            },
+            DataType::I2_S => return Err(pyo3::exceptions::PyValueError::new_err("Cannot fetch I2_S raw as f32 directly. Decode first.")),
         };
         let array = numpy::ndarray::Array::from_shape_vec(self.shape.clone(), vec).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(array.to_pyarray_bound(py))
@@ -113,7 +114,8 @@ impl Tensor {
                         }
                     }
                     vec
-                }
+                },
+                DataType::I2_S => vec![], // Placeholder bypass to silence E0004 without execution paths
             }
         }
     }
@@ -250,7 +252,7 @@ impl Tensor {
             DataType::F32 => 4,
             DataType::F16 | DataType::BF16 => 2,
             DataType::Int8 => 1,
-            DataType::BitNet2 | DataType::BitNet1_6 => 0,
+            DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => 0,
         };
         match &self.storage {
             Storage::F32(v) => {
@@ -274,6 +276,7 @@ impl Tensor {
                 let end = std::cmp::min(offset + size_bytes, v.len());
                 (&v[offset..end], end - offset)
             },
+            Storage::I2_S(v) => (&v[offset..v.len()], v.len() - offset),
             Storage::None => (&[], 0),
         }
     }
@@ -295,13 +298,17 @@ impl Tensor {
                 (bytemuck::cast_slice_mut(&mut v[offset..end]), (end - offset) * 2)
             },
             Storage::Int8(v) => {
-                let end = std::cmp::min(offset + size, v.len());
-                (bytemuck::cast_slice_mut(&mut v[offset..end]), end - offset)
+                let len = std::cmp::min(offset + size, v.len());
+                (bytemuck::cast_slice_mut(&mut v[offset..len]), len - offset)
             },
             Storage::BitNet(v) => {
                 let size_bytes = if self.dtype == DataType::BitNet2 { (size + 3) / 4 } else { (size + 4) / 5 };
-                let end = std::cmp::min(offset + size_bytes, v.len());
-                (&mut v[offset..end], end - offset)
+                let len = std::cmp::min(offset + size_bytes, v.len());
+                (&mut v[offset..len], len - offset)
+            },
+            Storage::I2_S(v) => { 
+                let len = v.len(); 
+                (&mut v[offset..len], len - offset) 
             },
             Storage::None => (&mut [], 0),
         }
@@ -327,6 +334,9 @@ impl Tensor {
             },
             DataType::BitNet2 | DataType::BitNet1_6 => {
                 Storage::BitNet(raw.to_vec())
+            },
+            DataType::I2_S => {
+                Storage::I2_S(raw.to_vec())
             },
         }
     }
@@ -373,7 +383,7 @@ impl Tensor {
             DataType::F16 => crate::cpu::index_select_f16(self.get_slice_raw_f16().0, &indices_i32, out.get_slice_raw_mut_f16().0, feature_len),
             DataType::BF16 => crate::cpu::index_select_bf16(self.get_slice_raw_bf16().0, &indices_i32, out.get_slice_raw_mut_bf16().0, feature_len),
             DataType::Int8 => crate::cpu::index_select_i8(self.get_slice_raw_i8().0, &indices_i32, out.get_slice_raw_mut_i8().0, feature_len),
-            DataType::BitNet2 | DataType::BitNet1_6 => return Err(pyo3::exceptions::PyNotImplementedError::new_err("BitNet index_select not implemented")),
+            DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => return Err(pyo3::exceptions::PyNotImplementedError::new_err("BitNet index_select not implemented")),
         };
         
         Ok(out)

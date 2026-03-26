@@ -10,6 +10,7 @@ impl Tensor {
                 let size = data.len();
                 let n_bytes = if dtype == DataType::BitNet2 { (size + 3) / 4 } 
                               else if dtype == DataType::BitNet1_6 { (size + 4) / 5 } 
+                              else if dtype == DataType::I2_S { (size / 64) * 20 }
                               else { size * dtype.size() };
                 super::pool::TENSOR_POOL.with(|pool| {
                     let mut p = pool.borrow_mut();
@@ -38,6 +39,11 @@ impl Tensor {
                             for i in 0..size { v[i] = data[i] as u8; }
                             Storage::BitNet(v)
                         },
+                        DataType::I2_S => {
+                            let mut v = unsafe { Vec::from_raw_parts(ptr as *mut u8, size, cap) };
+                            for i in 0..size { v[i] = data[i] as u8; }
+                            Storage::I2_S(v)
+                        },
                         _ => unreachable!(),
                     }
                 })
@@ -57,11 +63,7 @@ impl Tensor {
                 for i in 0..data.len() { v[i] = data[i] as i8; }
                 Storage::Int8(v)
             },
-            DataType::BitNet2 | DataType::BitNet1_6 => {
-                let mut v = vec![0u8; data.len()];
-                for i in 0..data.len() { v[i] = data[i] as u8; }
-                Storage::BitNet(v)
-            }
+            DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => return Err(pyo3::exceptions::PyValueError::new_err("Cannot create quantized raw struct directly from f32. Use from_raw_bytes.")),
         };
 
         let strides = Self::calculate_default_strides(shape.clone());
@@ -121,9 +123,9 @@ impl Tensor {
                 DataType::F16 => Storage::F16(vec![half::f16::ZERO; size]),
                 DataType::BF16 => Storage::BF16(vec![half::bf16::ZERO; size]),
                 DataType::Int8 => Storage::Int8(vec![0; size]),
+                DataType::BitNet2 => Storage::BitNet(vec![0; (size + 3) / 4]),
                 DataType::BitNet1_6 => Storage::BitNet(vec![0; (size + 4) / 5]),
                 DataType::I2_S => Storage::I2_S(vec![0; (size / 64) * 20]),
-            }
             }
         };
 
@@ -153,6 +155,7 @@ impl Tensor {
             Storage::BF16(v) => v.fill(half::bf16::from_f32(1.0)),
             Storage::Int8(v) => v.fill(1),
             Storage::BitNet(v) => v.fill(0xFF), // Filled with 'ones' (packed representation depends on bitlayout)
+            Storage::I2_S(v) => v.fill(0xFF), // Assuming 0xFF represents 'ones' for I2_S as well
             _ => {},
         }
         Ok(t)
@@ -189,14 +192,15 @@ impl Tensor {
     pub fn new_ssd_raw(path: &str, shape: Vec<usize>, dtype: DataType) -> PyResult<Self> {
         let size = shape.iter().product::<usize>();
         let bytes_per_elem = match dtype {
-            DataType::F32 => 4,
-            DataType::F16 | DataType::BF16 => 2,
-            DataType::Int8 => 1,
-            DataType::BitNet1_6 => 0,
-            DataType::I2_S => 0, 
+            DataType::F32 => size * 4,
+            DataType::F16 | DataType::BF16 => size * 2,
+            DataType::Int8 => size,
+            DataType::BitNet2 => (size + 3) / 4,
+            DataType::BitNet1_6 => (size + 4) / 5,
+            DataType::I2_S => (size / 64) * 20, 
         };
         let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        file.set_len((size * bytes_per_elem) as u64).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        file.set_len(bytes_per_elem as u64).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         let engine = crate::io_uring_engine::DirectIoEngine::new(path, false);
         let strides = Self::calculate_default_strides(shape.clone());
         Ok(Tensor { 
@@ -296,6 +300,9 @@ impl Tensor {
             },
             DataType::BitNet2 | DataType::BitNet1_6 => {
                 Storage::BitNet(data)
+            },
+            DataType::I2_S => {
+                Storage::I2_S(data)
             },
         };
 

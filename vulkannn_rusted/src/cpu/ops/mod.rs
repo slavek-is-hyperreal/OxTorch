@@ -8,11 +8,8 @@ pub use unary::*;
 pub use binary::*;
 pub use reduction::*;
 
-pub mod bit_linear;
-pub use bit_linear::*;
-
-pub mod bitnet_lut;
-pub use bitnet_lut::*;
+pub mod bitnet;
+pub use bitnet::*;
 
 pub mod quantization;
 pub use quantization::*;

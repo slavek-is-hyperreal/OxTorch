@@ -9,6 +9,7 @@ pub enum Storage {
     BF16(Vec<half::bf16>),
     Int8(Vec<i8>),
     BitNet(Vec<u8>), // Packed BitNet weights (BitNet2 or BitNet1_6)
+    I2_S(Vec<u8>),   // Packed GGML I2_S chunks
     None,
 }
 
@@ -48,6 +49,12 @@ impl Drop for Storage {
                 (Vec::from_raw_parts(ptr as *mut u8, cap, cap), ptr as usize)
             },
             Storage::BitNet(v) => unsafe {
+                let mut v = std::mem::take(v);
+                let (ptr, _len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
+                std::mem::forget(v);
+                (Vec::from_raw_parts(ptr as *mut u8, cap, cap), ptr as usize)
+            },
+            Storage::I2_S(v) => unsafe {
                 let mut v = std::mem::take(v);
                 let (ptr, _len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
                 std::mem::forget(v);

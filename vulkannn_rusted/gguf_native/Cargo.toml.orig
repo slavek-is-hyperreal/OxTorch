@@ -1,0 +1,26 @@
+[package]
+name = "gguf"
+version = "0.1.2"
+description = "A small utility to parse GGUF files"
+edition = "2021"
+license = "MIT"
+authors = ["Jiayu Liu <jiayu@hey.com>"]
+keywords = ["gguf", "parser", "metadata", "ai", "model"]
+repository = "https://github.com/Jimexist/gguf"
+homepage = "https://github.com/Jimexist/gguf"
+
+[dependencies]
+nom = { version = "7", features = ["alloc"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = { version = "0.9", optional = true }
+serde_json = { version = "1.0", optional = true }
+bytes = { version = "1.5", optional = true }
+comfy-table = { version = "7", optional = true }
+clap = { version = "4", optional = true, features = ["derive"] }
+
+[features]
+bin = ["serde_yaml", "serde_json", "comfy-table", "bytes", "clap"]
+
+[[bin]]
+name = "gguf-info"
+required-features = ["bin"]

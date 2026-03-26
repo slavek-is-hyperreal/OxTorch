@@ -258,7 +258,7 @@ impl Tensor {
                         _ => {},
                     }
                 },
-                DataType::BitNet2 | DataType::BitNet1_6 => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for BitNet")); }
+                DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for BitNet")); },
             }
         } else {
             let (a_raw, _) = self.get_slice_raw_bytes();
@@ -323,7 +323,7 @@ impl Tensor {
                 let (v_out, _) = out.get_slice_raw_mut_i8();
                 crate::cpu::scalar_op_i8(v_in, scalar as i8, v_out, op);
             },
-            DataType::BitNet2 | DataType::BitNet1_6 => {
+            DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => {
                 return Err(pyo3::exceptions::PyValueError::new_err("Scalar ops not supported for BitNet"));
             }
         }
@@ -376,7 +376,7 @@ impl Tensor {
                         _ => {},
                     }
                 },
-                DataType::BitNet2 | DataType::BitNet1_6 => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for BitNet")); }
+                DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for BitNet")); }
             }
         } else if self.dtype == DataType::Int8 && op == "gelu" {
             // INT8 GELU has no Vulkan kernel — the shader lacks the dequant step.
@@ -438,7 +438,7 @@ impl Tensor {
                         _ => {},
                     }
                 },
-                DataType::BitNet2 | DataType::BitNet1_6 => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for BitNet")); }
+                DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for BitNet")); }
              }
         } else {
              let (input_raw, _) = self.get_slice_raw_bytes();

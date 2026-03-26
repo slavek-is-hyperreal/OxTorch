@@ -8,13 +8,16 @@ import vulkannn_rusted as vnn
 
 def chat():
     parser = argparse.ArgumentParser(description="BitNet-2B Native Rust Chat")
-    parser.add_argument("--model", type=str, default="/my_data/gaussian_room/models/bitnet-2B-ternary/", help="Path to model directory")
+    parser.add_argument("--model", type=str, default="/my_data/gaussian_room/models/bitnet-2B-4T-gguf/ggml-model-i2_s.gguf", help="Path to model")
+    parser.add_argument("--tokenizer", type=str, default="unsloth/Llama-3.2-1B", help="Path to tokenizer (HF repo or local dir)")
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "vulkan", "vga"], help="Compute device")
     parser.add_argument("--max_new_tokens", type=int, default=128, help="Max tokens to generate")
+    parser.add_argument("--prompt", type=str, default=None, help="Process a single prompt and exit")
     args = parser.parse_args()
 
-    print(f"[*] Loading tokenizer from {args.model}...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model, clean_up_tokenization_spaces=False, fix_mistral_regex=True)
+    print(f"[*] Loading tokenizer from {args.tokenizer}...")
+    # Llama-3 uses tiktoken-based BPE (similar to GPT-2)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     
     # Llama-3 EOS: 128001 / 128009
     stop_tokens = [128001, 128009]
@@ -28,7 +31,11 @@ def chat():
     
     while True:
         try:
-            prompt = input("\nUser > ")
+            if args.prompt:
+                prompt = args.prompt
+            else:
+                prompt = input("\nUser > ")
+            
             if prompt.lower() in ["exit", "quit"]: break
             
             # Format prompt (standard Llama-3 chat template or simple text)
@@ -50,7 +57,9 @@ def chat():
             tps = len(new_ids) / dt if dt > 0 else 0
             print(f"\n[Stats: {len(new_ids)} tokens, {dt:.2f}s, {tps:.2f} tok/s]")
 
-        except KeyboardInterrupt:
+            if args.prompt: break
+
+        except (KeyboardInterrupt, EOFError):
             print("\nExiting...")
             break
         except Exception as e:

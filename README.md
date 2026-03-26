@@ -1,4 +1,4 @@
-# OxTorch (v3.7.1 — "MSTS Dual-Path Dispatch & TensorPool")
+# OxTorch (v3.7.1 — "MSTS Tiered-SIMD & BitNet Refactor")
 
 **Run modern AI inference on hardware that PyTorch left behind.**
 
@@ -240,7 +240,7 @@ Runtime dispatch via `is_x86_feature_detected!()` — no compile-time flags.
 | CPU Backend | `src/cpu/` |
 | Vulkan Backend | `src/backend.rs` |
 | OxTorch Drop-in Package | `oxtorch/__init__.py`, `oxtorch/tensor.py` |
-| BitNet Kernels | `src/cpu/ops/bit_linear.rs` |
+| BitNet Tiered Kernels | `src/cpu/ops/bitnet/` |
 | SSD Streaming | `src/streaming.rs`, `src/io_uring_engine.rs` |
 | MSTS Tile System | `src/crook_scheduler.rs`, `src/tensor/msts.rs` |
 | SIMD Kernels | `src/cpu/ops/` |

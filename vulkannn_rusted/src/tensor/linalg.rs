@@ -127,7 +127,7 @@ impl Tensor {
                  match res_dtype {
                      DataType::F16 => crate::cpu::convert_f32_to_f16(&c_f32_vec, bytemuck::cast_slice_mut(res_bytes)),
                      DataType::BF16 => crate::cpu::convert_f32_to_bf16(&c_f32_vec, bytemuck::cast_slice_mut(res_bytes)),
-                     DataType::Int8 | DataType::BitNet2 | DataType::BitNet1_6 => {
+                     DataType::Int8 | DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => {
                           let dst = bytemuck::cast_slice_mut::<u8, i8>(res_bytes);
                           for i in 0..c_f32_vec.len() { dst[i] = c_f32_vec[i] as i8; }
                      }
@@ -196,7 +196,7 @@ impl Tensor {
                     let res_dtype = res.dtype; let (res_bytes, _) = res.get_slice_raw_mut_bytes();
                     match res_dtype {
                         DataType::BF16 => crate::cpu::convert_f32_to_bf16(&c_f32_vec, bytemuck::cast_slice_mut(res_bytes)),
-                        DataType::Int8 | DataType::BitNet2 | DataType::BitNet1_6 => {
+                        DataType::Int8 | DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => {
                              let dst = bytemuck::cast_slice_mut::<u8, i8>(res_bytes);
                              for i in 0..c_f32_vec.len() { dst[i] = c_f32_vec[i] as i8; }
                         }
@@ -279,7 +279,7 @@ impl Tensor {
                      let (x_raw, _) = self.get_slice_raw_f32();
                      let w_raw = if let Some(w) = weight { Some(w.get_slice_raw_f32().0) } else { None };
                      let (out_raw, _) = res.get_slice_raw_mut_f32();
-                     crate::cpu::ops::norm::sub_layer_norm::f32::sub_layer_norm_f32(x_raw, w_raw, eps, &normalized_shape, out_raw)?;
+                     crate::cpu::sub_layer_norm_f32(x_raw, w_raw, eps, &normalized_shape, out_raw)?;
                  },
                  _ => return Err(PyValueError::new_err(format!("Unsupported dtype {:?} for subln on CPU", self.dtype))),
              }
@@ -294,6 +294,7 @@ impl Tensor {
         for dim in &normalized_shape { d *= dim; }
         let total = self.shape.iter().product::<usize>();
         if total % d != 0 {
+            println!("[Tensor] RMSNorm FAIL: shape={:?}, norm_shape={:?}, total={}, d={}", self.shape, normalized_shape, total, d);
             return Err(PyValueError::new_err("Invalid normalized_shape for rms_norm"));
         }
         let n = total / d;
@@ -336,8 +337,8 @@ impl Tensor {
         let n = weight.shape[0];
         
         if input.dtype != DataType::Int8 { return Err(PyValueError::new_err("BitLinear input must be Int8")); }
-        if weight.dtype != DataType::BitNet2 && weight.dtype != DataType::BitNet1_6 { 
-            return Err(PyValueError::new_err("BitLinear weights must be BitNet2 or BitNet1_6")); 
+        if weight.dtype != DataType::BitNet2 && weight.dtype != DataType::BitNet1_6 && weight.dtype != DataType::I2_S { 
+            return Err(PyValueError::new_err("BitLinear weights must be BitNet2, BitNet1_6, or I2_S")); 
         }
         if weight.shape[1] != k { return Err(PyValueError::new_err("BitLinear shape mismatch (K dimension)")); }
         
@@ -379,8 +380,8 @@ impl Tensor {
         let m: usize = input.shape[..input.shape.len().saturating_sub(1)].iter().product::<usize>().max(1);
         
         if input.dtype != DataType::Int8 { return Err(PyValueError::new_err("BitLinear input must be Int8")); }
-        if weight.dtype != DataType::BitNet2 && weight.dtype != DataType::BitNet1_6 {
-            return Err(PyValueError::new_err("BitLinear weights must be BitNet2 or BitNet1_6"));
+        if weight.dtype != DataType::BitNet2 && weight.dtype != DataType::BitNet1_6 && weight.dtype != DataType::I2_S {
+            return Err(PyValueError::new_err("BitLinear weights must be BitNet2, BitNet1_6, or I2_S"));
         }
         
         // Output shape mirrors input shape but last dim becomes logical_n
@@ -553,7 +554,7 @@ impl Tensor {
                     std::mem::forget(v);
                     Vec::from_raw_parts(ptr as *mut u8, len, cap)
                 },
-                DataType::Int8 | DataType::BitNet2 | DataType::BitNet1_6 => unsafe {
+                DataType::Int8 | DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => unsafe {
                     let v = crate::cpu::cat_i8(&cpu_tensors, dim);
                     let ptr = v.as_ptr();
                     let len = v.len();
@@ -600,6 +601,13 @@ impl Tensor {
                 let cap = raw_out.capacity();
                 std::mem::forget(raw_out);
                 Storage::BitNet(Vec::from_raw_parts(ptr as *mut u8, len, cap))
+            },
+            DataType::I2_S => unsafe {
+                let ptr = raw_out.as_ptr();
+                let len = raw_out.len();
+                let cap = raw_out.capacity();
+                std::mem::forget(raw_out);
+                Storage::I2_S(Vec::from_raw_parts(ptr as *mut u8, len, cap))
             },
         };
 

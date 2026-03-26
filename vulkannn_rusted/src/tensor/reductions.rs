@@ -177,7 +177,7 @@ impl Tensor {
                                 DataType::F16 => row.push(unsafe { (*(in_raw.as_ptr().add((row_base + j * inner) * 2) as *const half::f16)).to_f32() }),
                                 DataType::BF16 => row.push(unsafe { (*(in_raw.as_ptr().add((row_base + j * inner) * 2) as *const half::bf16)).to_f32() }),
                                 DataType::Int8 => row.push(unsafe { *(in_raw.as_ptr().add(row_base + j * inner) as *const i8) as f32 }),
-                                DataType::BitNet2 | DataType::BitNet1_6 => {
+                                DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => {
                             // Dequantizing for reduction (slow fallback)
                             row.push(0.0f32); // Placeholder or implement dequant
                         },
