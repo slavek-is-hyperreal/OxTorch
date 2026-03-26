@@ -1,0 +1,1 @@
+{"name": "Ext_Erf_f32_cpu", "op": "erf", "dtype": "f32", "mode": "cpu", "pt_time": 0.004879875899951003, "vnn_time": 0.014068762900024012, "ratio": 2.883016533302675, "parity": true, "max_diff": 0.0, "cpu_temp": 44.0, "baseline": null}

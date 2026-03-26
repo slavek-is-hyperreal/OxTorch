@@ -1,0 +1,1 @@
+{"name": "ScalarMul_bf16_vulkan", "op": "ScalarMul", "dtype": "bf16", "mode": "vulkan", "pt_time": 0.002596988799996325, "vnn_time": 0.004430074499941839, "ratio": 1.7058504449261036, "parity": true, "max_diff": 0.0, "cpu_temp": 45.0, "baseline": null}

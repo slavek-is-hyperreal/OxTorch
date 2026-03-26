@@ -1,0 +1,12 @@
+{
+    "name": "IndexSelect_int8_hybrid",
+    "op": "IndexSelect",
+    "dtype": "int8",
+    "mode": "hybrid",
+    "pt_time": 0.02882952699983434,
+    "vnn_time": 0.0011607111999182961,
+    "ratio": 0.04026119470933275,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 43.0
+}

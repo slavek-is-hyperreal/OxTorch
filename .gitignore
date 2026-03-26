@@ -48,7 +48,13 @@ Gemma/
 gemma/
 gemma-weights/
 *.ssd
+pip_cache/
+**/__pycache__/
+build/
+dist/
+*.egg-info/
 
-# Workflows
-.agent/workflows/technical_references.md
-.agent/workflows/tools.txt
+# Research Repos (External)
+BitNet_repo/
+pytorch/
+/models/

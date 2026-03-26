@@ -1,0 +1,1 @@
+{"name": "LayerNorm_f32_vulkan", "op": "LayerNorm", "dtype": "f32", "mode": "vulkan", "pt_time": 0.002095850099976815, "vnn_time": 0.0025601472999369434, "ratio": 1.2215316829983522, "parity": true, "max_diff": 0.0, "cpu_temp": 44.0, "baseline": null}

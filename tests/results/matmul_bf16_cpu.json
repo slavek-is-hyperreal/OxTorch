@@ -1,0 +1,12 @@
+{
+    "name": "MatMul_bf16_cpu",
+    "op": "MatMul",
+    "dtype": "bf16",
+    "mode": "cpu",
+    "pt_time": 66.64005156350049,
+    "vnn_time": 0.19616505399972084,
+    "ratio": 0.002943650993619018,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

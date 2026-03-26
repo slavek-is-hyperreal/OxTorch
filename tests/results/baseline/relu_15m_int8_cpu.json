@@ -1,0 +1,1 @@
+{"name": "ReLU_15M_int8_cpu", "op": "ReLU", "dtype": "int8", "mode": "cpu", "pt_time": 0.003184699399935198, "vnn_time": 0.008814193600119324, "ratio": 2.7676689361321434, "parity": true, "max_diff": 0.0, "cpu_temp": 48.0, "baseline": null}

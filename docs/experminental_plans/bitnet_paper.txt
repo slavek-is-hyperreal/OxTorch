@@ -1,0 +1,1731 @@
+<div class="package-alerts ltx_document" role="status" aria-label="Conversion errors have been found">
+      <button aria-label="Dismiss alert" onclick="closePopup()">
+          <span aria-hidden="true"><svg role="presentation" width="20" height="20" viewBox="0 0 44 44" aria-hidden="true" focusable="false">
+          <path d="M0.549989 4.44999L4.44999 0.549988L43.45 39.55L39.55 43.45L0.549989 4.44999Z"></path>
+          <path d="M39.55 0.549988L43.45 4.44999L4.44999 43.45L0.549988 39.55L39.55 0.549988Z"></path>
+          </svg></span>
+      </button>
+      <p>HTML conversions <a href="https://info.dev.arxiv.org/about/accessibility_html_error_messages.html" target="_blank">sometimes display errors</a> due to content that did not convert correctly from the source. This paper uses the following packages that are not yet supported by the HTML conversion tool. Feedback on these issues are not necessary; they are known and are being worked on.</p>
+          <ul arial-label="Unsupported packages used in this paper">
+              <li>failed: anyfontsize</li>
+          </ul>
+      <p>Authors: achieve the best HTML results from your LaTeX submissions by following these <a href="https://info.arxiv.org/help/submit_latex_best_practices.html" target="_blank">best practices</a>.</p>
+    </div><div id="target-section" class="section"><a id="license-tr" href="https://info.arxiv.org/help/license/index.html#licenses-available">License: arXiv.org perpetual non-exclusive license</a><div id="watermark-tr">arXiv:2504.12285v2 [cs.CL] 25 Apr 2025</div></div>
+<article class="ltx_document ltx_authors_1line">
+<h1 class="ltx_title ltx_title_document">BitNet b1.58 2B4T Technical Report</h1><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_authors">
+<span class="ltx_creator ltx_role_author">
+<span class="ltx_personname">
+Shuming Ma&nbsp;&nbsp;&nbsp;&nbsp;Hongyu Wang<span class="ltx_note ltx_role_footnotemark" id="footnotex1"><sup class="ltx_note_mark">1</sup><span class="ltx_note_outer"><span class="ltx_note_content"><sup class="ltx_note_mark">1</sup><span class="ltx_note_type">footnotemark: </span><span class="ltx_tag ltx_tag_note">1</span></span></span></span>&nbsp;&nbsp;&nbsp;&nbsp;Shaohan Huang&nbsp;&nbsp;&nbsp;&nbsp;Xingxing Zhang 
+<br class="ltx_break"><span class="ltx_text ltx_font_bold" id="id2.2.1">Ying Hu&nbsp;&nbsp;&nbsp;&nbsp;Ting Song&nbsp;&nbsp;&nbsp;&nbsp;Yan Xia&nbsp;&nbsp;&nbsp;&nbsp;Furu Wei<sup class="ltx_sup" id="id2.2.1.1"><span class="ltx_text ltx_font_medium ltx_font_italic" id="id2.2.1.1.1">⋄</span></sup>
+<br class="ltx_break"><a class="ltx_ref ltx_href" href="https://aka.ms/GeneralAI" title="">https://aka.ms/GeneralAI</a>
+<br class="ltx_break"></span>
+</span><span class="ltx_author_notes">&nbsp;Equal contribution. <math alttext="\diamond" class="ltx_Math" display="inline" id="id1.1.m1.1"><semantics id="id1.1.m1.1a"><mo id="id1.1.m1.1.1" xref="id1.1.m1.1.1.cmml">⋄</mo><annotation-xml encoding="MathML-Content" id="id1.1.m1.1b"><ci id="id1.1.m1.1.1.cmml" xref="id1.1.m1.1.1">⋄</ci></annotation-xml><annotation encoding="application/x-tex" id="id1.1.m1.1c">\diamond</annotation><annotation encoding="application/x-llamapun" id="id1.1.m1.1d">⋄</annotation></semantics></math> Corresponding author. S. Ma, S. Huang, X. Zhang, T. Song, Y. Xia and F. Wei are with Microsoft Research. H. Wang is with University of Chinese Academy of Sciences. Y. Hu is with Tsinghua University.</span></span>
+</div><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_abstract" id="abstract">
+<h6 class="ltx_title ltx_title_abstract">Abstract</h6><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<p class="ltx_p" id="id3.id1">We introduce BitNet b1.58 2B4T, the first open-source, native 1-bit Large Language Model (LLM) at the 2-billion parameter scale. Trained on a corpus of 4 trillion tokens, the model has been rigorously evaluated across benchmarks covering language understanding, mathematical reasoning, coding proficiency, and conversational ability. Our results demonstrate that BitNet b1.58 2B4T achieves performance on par with leading open-weight, full-precision LLMs of similar size, while offering significant advantages in computational efficiency, including substantially reduced memory footprint, energy consumption, and decoding latency. To facilitate further research and adoption, the model weights are released via Hugging Face along with open-source inference implementations for both GPU and CPU architectures.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="p1">
+<p class="ltx_p" id="p1.1"><span class="ltx_text" id="p1.1.1" style="font-size:90%;position:relative; bottom:-1.5pt;"><img alt="[Uncaptioned image]" class="ltx_graphics ltx_img_square" height="18" id="p1.1.1.g1" src="x1.png" width="19"></span><span class="ltx_text" id="p1.1.2" style="font-size:90%;">&nbsp;<span class="ltx_text ltx_font_bold" id="p1.1.2.1">BitNet b1.58 2B4T</span><span class="ltx_text ltx_font_bold" id="p1.1.2.2"> (1.58-bit)</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/microsoft/bitnet-b1.58-2B-4T" title="">bitnet-b1.58-2B-4T</a>
+<br class="ltx_break">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<em class="ltx_emph ltx_font_italic" id="p1.1.2.3">The packed weight of <span class="ltx_text" id="p1.1.2.3.1">BitNet b1.58 2B4T</span>, used for inference only</em></span></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="p2">
+<p class="ltx_p" id="p2.1"><span class="ltx_text" id="p2.1.1" style="font-size:90%;position:relative; bottom:-1.5pt;"><img alt="[Uncaptioned image]" class="ltx_graphics ltx_img_square" height="18" id="p2.1.1.g1" src="x2.png" width="19"></span><span class="ltx_text" id="p2.1.2" style="font-size:90%;">&nbsp;<span class="ltx_text ltx_font_bold" id="p2.1.2.1">BitNet b1.58 2B4T</span><span class="ltx_text ltx_font_bold" id="p2.1.2.2"> (bf16)</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/microsoft/bitnet-b1.58-2B-4T-bf16" title="">bitnet-b1.58-2B-4T-bf16</a>
+<br class="ltx_break">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<em class="ltx_emph ltx_font_italic" id="p2.1.2.3">The master weight of <span class="ltx_text" id="p2.1.2.3.1">BitNet b1.58 2B4T</span>, used for training only</em></span></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="p3">
+<p class="ltx_p" id="p3.1"><span class="ltx_text" id="p3.1.1" style="font-size:90%;position:relative; bottom:-1.5pt;"><img alt="[Uncaptioned image]" class="ltx_graphics ltx_img_square" height="18" id="p3.1.1.g1" src="x3.png" width="19"></span><span class="ltx_text" id="p3.1.2" style="font-size:90%;">&nbsp;<span class="ltx_text ltx_font_bold" id="p3.1.2.1">BitNet b1.58 2B4T</span><span class="ltx_text ltx_font_bold" id="p3.1.2.2"> (gguf)</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/microsoft/bitnet-b1.58-2B-4T-gguf" title="">bitnet-b1.58-2B-4T-gguf</a>
+<br class="ltx_break">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<em class="ltx_emph ltx_font_italic" id="p3.1.2.3">The GGUF format of <span class="ltx_text" id="p3.1.2.3.1">BitNet b1.58 2B4T</span>, used for bitnet.cpp</em></span></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="p4">
+<p class="ltx_p" id="p4.1"><span class="ltx_text" id="p4.1.1" style="font-size:90%;position:relative; bottom:-1.5pt;"><img alt="[Uncaptioned image]" class="ltx_graphics ltx_img_square" height="18" id="p4.1.1.g1" src="x4.png" width="18"></span><span class="ltx_text" id="p4.1.2" style="font-size:90%;">&nbsp;<span class="ltx_text ltx_font_bold" id="p4.1.2.1">BitNet b1.58 2B4T</span><span class="ltx_text ltx_font_bold" id="p4.1.2.2"> Code</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://github.com/microsoft/BitNet" title="">bitnet.cpp</a>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="ltx_text ltx_font_bold" id="p4.1.2.3">Demo</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://aka.ms/bitnet-demo" title="">aka.ms/bitnet-demo</a>
+<br class="ltx_break"></span></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<figure class="ltx_figure" id="S0.F1"><img alt="Refer to caption" class="ltx_graphics ltx_centering ltx_img_landscape" height="441" id="S0.F1.g1" src="x5.png" width="706">
+<figcaption class="ltx_caption ltx_centering"><span class="ltx_tag ltx_tag_figure">Figure 1: </span><span class="ltx_text" id="S0.F1.2.1">BitNet b1.58 2B4T</span> advances the Pareto frontier defined by leading open-weight LLMs under 3B parameters in terms of performance versus memory, demonstrating superior efficiency.</figcaption>
+</figure><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_pagination ltx_role_newpage"></div>
+<section class="ltx_section" id="S1">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">1 </span>Introduction</h2><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S1.p1">
+<p class="ltx_p" id="S1.p1.1">Open-source large language models (LLMs) have become pivotal in democratizing access to advanced AI capabilities, fostering innovation, and enabling research across diverse fields such as natural language processing, code generation, and vision computing&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Dubey et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib7" title="">2024</a>; Yang et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib43" title="">2024</a>; Bai et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib2" title="">2025</a>)</cite>. Their public availability allows for widespread experimentation and adaptation. However, a significant barrier hinders their broader adoption: the substantial computational resources required for deployment and inference. State-of-the-art open LLMs typically require large memory footprints, consume considerable energy, and exhibit notable inference latency, rendering them impractical for many edge devices, resource-constrained environments, and real-time applications.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S1.p2">
+<p class="ltx_p" id="S1.p2.1">1-bit LLMs, representing an extreme yet promising form of model quantization where weights and potentially activations are constrained to binary {-1, +1} or ternary {-1, 0, +1}, offer a compelling solution to the efficiency challenges. By drastically reducing the memory required to store weights and enabling highly efficient bitwise computations, they have the potential to significantly lower deployment costs, reduce energy consumption, and accelerate inference speeds. While prior work has explored 1-bit models, existing open efforts often fall into two categories: 1) post-training quantization (PTQ) methods applied to pre-trained full-precision models, which can lead to significant performance degradation&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib40" title="">Xu et&nbsp;al., 2024b, </a>; Team,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib30" title="">2024</a>)</cite>, or 2) native 1-bit models (trained from scratch with 1-bit weights) that have been developed at relatively smaller scales (e.g.,
+OLMo-Bitnet-1B<span class="ltx_note ltx_role_footnote" id="footnote1"><sup class="ltx_note_mark">1</sup><span class="ltx_note_outer"><span class="ltx_note_content"><sup class="ltx_note_mark">1</sup><span class="ltx_tag ltx_tag_note">1</span><a class="ltx_ref ltx_url ltx_font_typewriter" href="https://huggingface.co/NousResearch/OLMo-Bitnet-1B" title="">https://huggingface.co/NousResearch/OLMo-Bitnet-1B</a></span></span></span>]) and may not yet match the capabilities of larger, full-precision counterparts. This performance gap has limited the practical impact of 1-bit LLMs thus far.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S1.p3">
+<p class="ltx_p" id="S1.p3.1">To bridge this gap between efficiency and performance, we introduce <span class="ltx_text" id="S1.p3.1.1">BitNet b1.58 2B4T</span>, the first open-source, native 1-bit LLM trained at scale. This model, comprising 2 billion parameters, was trained from scratch on a substantial dataset of 4 trillion tokens, leveraging architectural and training innovations specific to the 1-bit paradigm. <span class="ltx_text ltx_font_bold" id="S1.p3.1.2">The core contribution of this work is to demonstrate that a native 1-bit LLM, when trained effectively at scale, can achieve performance comparable to leading open-weight, full-precision models of similar size across a wide range of tasks.</span></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S1.p4">
+<p class="ltx_p" id="S1.p4.1">This technical report details the development and evaluation of <span class="ltx_text" id="S1.p4.1.1">BitNet b1.58 2B4T</span>. We describe the architecture and training methodology, and then present comprehensive evaluation results on standard benchmarks assessing language understanding, mathematical reasoning, coding proficiency, and multi-turn conversational abilities. Our findings confirm its strong performance relative to established full-precision baselines, coupled with significant advantages in efficiency. Finally, we announce the public release of the <span class="ltx_text" id="S1.p4.1.2">BitNet b1.58 2B4T</span> model weights via Hugging Face and provide open-source inference code optimized for both GPU and CPU execution, aiming to facilitate further research and the practical deployment of highly efficient LLMs.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+<section class="ltx_section" id="S2">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">2 </span>Architecture</h2><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S2.p1">
+<p class="ltx_p" id="S2.p1.1">The architecture of <span class="ltx_text" id="S2.p1.1.1">BitNet b1.58 2B4T</span> is derived from the standard Transformer model&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Vaswani et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib32" title="">2017</a>)</cite>, incorporating significant modifications based on the BitNet framework&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib33" title="">Wang et&nbsp;al., 2023a, </a>; Ma et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib19" title="">2024</a>)</cite>. The model is trained entirely from scratch.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S2.p2">
+<p class="ltx_p" id="S2.p2.1">The core architectural innovation lies in replacing the standard full-precision linear layers (<em class="ltx_emph ltx_font_italic" id="S2.p2.1.1">torch.nn.Linear</em>) with custom <em class="ltx_emph ltx_font_italic" id="S2.p2.1.2">BitLinear</em> layers. This constitutes the foundation of the BitNet approach. Within these <em class="ltx_emph ltx_font_italic" id="S2.p2.1.3">BitLinear</em> layers:</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<ul class="ltx_itemize" id="S2.I1">
+<li class="ltx_item" id="S2.I1.i1" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S2.I1.i1.p1">
+<p class="ltx_p" id="S2.I1.i1.p1.1"><span class="ltx_text ltx_font_bold" id="S2.I1.i1.p1.1.1">Weight Quantization:</span> Model weights are quantized to 1.58 bits during the forward pass. This is achieved using an absolute mean (absmean) quantization scheme, which maps weights to ternary values <math alttext="\{-1,0,+1\}" class="ltx_Math" display="inline" id="S2.I1.i1.p1.1.m1.3"><semantics id="S2.I1.i1.p1.1.m1.3a"><mrow id="S2.I1.i1.p1.1.m1.3.3.2" xref="S2.I1.i1.p1.1.m1.3.3.3.cmml"><mo id="S2.I1.i1.p1.1.m1.3.3.2.3" stretchy="false" xref="S2.I1.i1.p1.1.m1.3.3.3.cmml">{</mo><mrow id="S2.I1.i1.p1.1.m1.2.2.1.1" xref="S2.I1.i1.p1.1.m1.2.2.1.1.cmml"><mo id="S2.I1.i1.p1.1.m1.2.2.1.1a" xref="S2.I1.i1.p1.1.m1.2.2.1.1.cmml">−</mo><mn id="S2.I1.i1.p1.1.m1.2.2.1.1.2" xref="S2.I1.i1.p1.1.m1.2.2.1.1.2.cmml">1</mn></mrow><mo id="S2.I1.i1.p1.1.m1.3.3.2.4" xref="S2.I1.i1.p1.1.m1.3.3.3.cmml">,</mo><mn id="S2.I1.i1.p1.1.m1.1.1" xref="S2.I1.i1.p1.1.m1.1.1.cmml">0</mn><mo id="S2.I1.i1.p1.1.m1.3.3.2.5" xref="S2.I1.i1.p1.1.m1.3.3.3.cmml">,</mo><mrow id="S2.I1.i1.p1.1.m1.3.3.2.2" xref="S2.I1.i1.p1.1.m1.3.3.2.2.cmml"><mo id="S2.I1.i1.p1.1.m1.3.3.2.2a" xref="S2.I1.i1.p1.1.m1.3.3.2.2.cmml">+</mo><mn id="S2.I1.i1.p1.1.m1.3.3.2.2.2" xref="S2.I1.i1.p1.1.m1.3.3.2.2.2.cmml">1</mn></mrow><mo id="S2.I1.i1.p1.1.m1.3.3.2.6" stretchy="false" xref="S2.I1.i1.p1.1.m1.3.3.3.cmml">}</mo></mrow><annotation-xml encoding="MathML-Content" id="S2.I1.i1.p1.1.m1.3b"><set id="S2.I1.i1.p1.1.m1.3.3.3.cmml" xref="S2.I1.i1.p1.1.m1.3.3.2"><apply id="S2.I1.i1.p1.1.m1.2.2.1.1.cmml" xref="S2.I1.i1.p1.1.m1.2.2.1.1"><minus id="S2.I1.i1.p1.1.m1.2.2.1.1.1.cmml" xref="S2.I1.i1.p1.1.m1.2.2.1.1"></minus><cn id="S2.I1.i1.p1.1.m1.2.2.1.1.2.cmml" type="integer" xref="S2.I1.i1.p1.1.m1.2.2.1.1.2">1</cn></apply><cn id="S2.I1.i1.p1.1.m1.1.1.cmml" type="integer" xref="S2.I1.i1.p1.1.m1.1.1">0</cn><apply id="S2.I1.i1.p1.1.m1.3.3.2.2.cmml" xref="S2.I1.i1.p1.1.m1.3.3.2.2"><plus id="S2.I1.i1.p1.1.m1.3.3.2.2.1.cmml" xref="S2.I1.i1.p1.1.m1.3.3.2.2"></plus><cn id="S2.I1.i1.p1.1.m1.3.3.2.2.2.cmml" type="integer" xref="S2.I1.i1.p1.1.m1.3.3.2.2.2">1</cn></apply></set></annotation-xml><annotation encoding="application/x-tex" id="S2.I1.i1.p1.1.m1.3c">\{-1,0,+1\}</annotation><annotation encoding="application/x-llamapun" id="S2.I1.i1.p1.1.m1.3d">{ - 1 , 0 , + 1 }</annotation></semantics></math>. This drastically reduces the model size and enables efficient mathematical operations.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S2.I1.i2" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S2.I1.i2.p1">
+<p class="ltx_p" id="S2.I1.i2.p1.1"><span class="ltx_text ltx_font_bold" id="S2.I1.i2.p1.1.1">Activation Quantization:</span> Activations flowing through the linear projection are quantized to 8-bit integers. This employs an absolute maximum (absmax) quantization strategy, applied per-token.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S2.I1.i3" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S2.I1.i3.p1">
+<p class="ltx_p" id="S2.I1.i3.p1.1"><span class="ltx_text ltx_font_bold" id="S2.I1.i3.p1.1.1">Normalization:</span> We incorporate <span class="ltx_text ltx_font_typewriter" id="S2.I1.i3.p1.1.2">subln</span> normalization <cite class="ltx_cite ltx_citemacro_citep">(Wang et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib34" title="">2022</a>)</cite> to further enhance training stability, which can be particularly beneficial in quantized training regimes.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+</ul>
+</div>
+<div class="ltx_para" id="S2.p3">
+<p class="ltx_p" id="S2.p3.1">Beyond the <em class="ltx_emph ltx_font_italic" id="S2.p3.1.1">BitLinear</em> layers, several established LLM techniques are integrated to enhance performance and stability:</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<ul class="ltx_itemize" id="S2.I2">
+<li class="ltx_item" id="S2.I2.i1" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S2.I2.i1.p1">
+<p class="ltx_p" id="S2.I2.i1.p1.1"><span class="ltx_text ltx_font_bold" id="S2.I2.i1.p1.1.1">Activation Function (FFN):</span> Within the feed-forward network (FFN) sub-layers, instead of the commonly used SwiGLU activation&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Shazeer,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib26" title="">2020</a>)</cite>, <span class="ltx_text" id="S2.I2.i1.p1.1.2">BitNet b1.58 2B4T</span> employs squared ReLU (<math alttext="\text{ReLU}^{2}" class="ltx_Math" display="inline" id="S2.I2.i1.p1.1.m1.1"><semantics id="S2.I2.i1.p1.1.m1.1a"><msup id="S2.I2.i1.p1.1.m1.1.1" xref="S2.I2.i1.p1.1.m1.1.1.cmml"><mtext id="S2.I2.i1.p1.1.m1.1.1.2" xref="S2.I2.i1.p1.1.m1.1.1.2a.cmml">ReLU</mtext><mn id="S2.I2.i1.p1.1.m1.1.1.3" xref="S2.I2.i1.p1.1.m1.1.1.3.cmml">2</mn></msup><annotation-xml encoding="MathML-Content" id="S2.I2.i1.p1.1.m1.1b"><apply id="S2.I2.i1.p1.1.m1.1.1.cmml" xref="S2.I2.i1.p1.1.m1.1.1"><csymbol cd="ambiguous" id="S2.I2.i1.p1.1.m1.1.1.1.cmml" xref="S2.I2.i1.p1.1.m1.1.1">superscript</csymbol><ci id="S2.I2.i1.p1.1.m1.1.1.2a.cmml" xref="S2.I2.i1.p1.1.m1.1.1.2"><mtext id="S2.I2.i1.p1.1.m1.1.1.2.cmml" xref="S2.I2.i1.p1.1.m1.1.1.2">ReLU</mtext></ci><cn id="S2.I2.i1.p1.1.m1.1.1.3.cmml" type="integer" xref="S2.I2.i1.p1.1.m1.1.1.3">2</cn></apply></annotation-xml><annotation encoding="application/x-tex" id="S2.I2.i1.p1.1.m1.1c">\text{ReLU}^{2}</annotation><annotation encoding="application/x-llamapun" id="S2.I2.i1.p1.1.m1.1d">ReLU start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT</annotation></semantics></math>). This choice is motivated by its potential to improve model sparsity and computational characteristics within the 1-bit context&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib36" title="">Wang et&nbsp;al., 2024b, </a>; <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib35" title="">Wang et&nbsp;al., 2024a, </a>)</cite>.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S2.I2.i2" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S2.I2.i2.p1">
+<p class="ltx_p" id="S2.I2.i2.p1.1"><span class="ltx_text ltx_font_bold" id="S2.I2.i2.p1.1.1">Positional Embeddings:</span> Rotary Position Embeddings (RoPE)&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Su et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib27" title="">2024</a>)</cite> are used to inject positional information, a standard practice in modern high-performance LLMs.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S2.I2.i3" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S2.I2.i3.p1">
+<p class="ltx_p" id="S2.I2.i3.p1.1"><span class="ltx_text ltx_font_bold" id="S2.I2.i3.p1.1.1">Bias Removal:</span> Consistent with architectures like LLaMA, all bias terms are removed from the linear layers and normalization layers throughout the network, reducing parameter count and potentially simplifying quantization.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+</ul>
+</div>
+<div class="ltx_para" id="S2.p4">
+<p class="ltx_p" id="S2.p4.1">For tokenization, we adopt the tokenizer developed for LLaMA 3 <cite class="ltx_cite ltx_citemacro_citep">(Dubey et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib7" title="">2024</a>)</cite>. This tokenizer implements a byte-level Byte-Pair Encoding (BPE) scheme with a vocabulary size of 128,256 tokens. This choice ensures robust handling of diverse text and code, and its widespread adoption facilitates straightforward integration with existing open-source tooling and ecosystems.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+<section class="ltx_section" id="S3">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">3 </span>Training</h2><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.p1">
+<p class="ltx_p" id="S3.p1.1">The training process for <span class="ltx_text" id="S3.p1.1.1">BitNet b1.58 2B4T</span> involved three distinct phases: large-scale pre-training followed by supervised fine-tuning (SFT) and direct preference optimization (DPO). While advanced techniques like Proximal Policy Optimization (PPO) or Group Relative Policy Optimization (GRPO) can further enhance capabilities such as mathematics and chain-of-thought reasoning <cite class="ltx_cite ltx_citemacro_citep">(Schulman et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib24" title="">2017</a>; Shao et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib25" title="">2024</a>)</cite>, the current version of <span class="ltx_text" id="S3.p1.1.2">BitNet b1.58 2B4T</span> relies solely on pre-training, SFT, and DPO. The exploration of reinforcement learning methods remains a direction for future work.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<section class="ltx_subsection" id="S3.SS1">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">3.1 </span>Pre-training</h3><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.SS1.p1">
+<p class="ltx_p" id="S3.SS1.p1.1">The pre-training phase aimed to imbue the model with broad world knowledge and foundational language capabilities. We adapted general training strategies from established LLM practices <cite class="ltx_cite ltx_citemacro_citep">(Dubey et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib7" title="">2024</a>)</cite>, with specific adjustments tailored for the 1-bit architecture.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<section class="ltx_subsubsection" id="S3.SS1.SSS1">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">3.1.1 </span>Learning Rate Schedule</h4><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.SS1.SSS1.p1">
+<p class="ltx_p" id="S3.SS1.SSS1.p1.1">A two-stage learning rate schedule was employed.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<ol class="ltx_enumerate" id="S3.I1">
+<li class="ltx_item" id="S3.I1.i1" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">1.</span>
+<div class="ltx_para" id="S3.I1.i1.p1">
+<p class="ltx_p" id="S3.I1.i1.p1.1"><span class="ltx_text ltx_font_bold" id="S3.I1.i1.p1.1.1">Stage 1 (High Learning Rate):</span> The initial phase utilized a standard cosine decay schedule but commenced with a relatively high peak learning rate. This decision was informed by the observation that 1-bit models often exhibit greater training stability compared to their full-precision counterparts, allowing for more aggressive initial learning steps.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S3.I1.i2" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">2.</span>
+<div class="ltx_para" id="S3.I1.i2.p1">
+<p class="ltx_p" id="S3.I1.i2.p1.1"><span class="ltx_text ltx_font_bold" id="S3.I1.i2.p1.1.1">Stage 2 (Cooldown):</span> Approximately midway through the planned training token count, the learning rate was abruptly decayed and subsequently maintained via a cosine schedule with a significantly lower peak value. This "cooldown" phase allows the model to refine its representations on higher-quality data (see Section&nbsp;<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#S3.SS1.SSS3" title="3.1.3 Pre-training Data ‣ 3.1 Pre-training ‣ 3 Training ‣ BitNet b1.58 2B4T Technical Report"><span class="ltx_text ltx_ref_tag">3.1.3</span></a>).</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+</ol>
+</div>
+</section>
+<section class="ltx_subsubsection" id="S3.SS1.SSS2">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">3.1.2 </span>Weight Decay Schedule</h4><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.SS1.SSS2.p1">
+<p class="ltx_p" id="S3.SS1.SSS2.p1.1">Complementing the learning rate adjustments, a two-stage weight decay strategy was implemented.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<ol class="ltx_enumerate" id="S3.I2">
+<li class="ltx_item" id="S3.I2.i1" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">1.</span>
+<div class="ltx_para" id="S3.I2.i1.p1">
+<p class="ltx_p" id="S3.I2.i1.p1.1"><span class="ltx_text ltx_font_bold" id="S3.I2.i1.p1.1.1">Stage 1:</span> During the first training stage, weight decay followed a cosine schedule, reaching a peak value of <math alttext="0.1" class="ltx_Math" display="inline" id="S3.I2.i1.p1.1.m1.1"><semantics id="S3.I2.i1.p1.1.m1.1a"><mn id="S3.I2.i1.p1.1.m1.1.1" xref="S3.I2.i1.p1.1.m1.1.1.cmml">0.1</mn><annotation-xml encoding="MathML-Content" id="S3.I2.i1.p1.1.m1.1b"><cn id="S3.I2.i1.p1.1.m1.1.1.cmml" type="float" xref="S3.I2.i1.p1.1.m1.1.1">0.1</cn></annotation-xml><annotation encoding="application/x-tex" id="S3.I2.i1.p1.1.m1.1c">0.1</annotation><annotation encoding="application/x-llamapun" id="S3.I2.i1.p1.1.m1.1d">0.1</annotation></semantics></math>. This regularization helps prevent overfitting during the initial high-learning-rate phase.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S3.I2.i2" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">2.</span>
+<div class="ltx_para" id="S3.I2.i2.p1">
+<p class="ltx_p" id="S3.I2.i2.p1.1"><span class="ltx_text ltx_font_bold" id="S3.I2.i2.p1.1.1">Stage 2:</span> In the second stage, weight decay was effectively disabled (set to zero). This allows the model parameters to settle into finer-grained optima guided by the lower learning rate and curated data.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+</ol>
+</div>
+</section>
+<section class="ltx_subsubsection" id="S3.SS1.SSS3">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">3.1.3 </span>Pre-training Data</h4><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.SS1.SSS3.p1">
+<p class="ltx_p" id="S3.SS1.SSS3.p1.1">The pre-training corpus comprised a mixture of publicly available text and code datasets, including large web crawls like DCLM&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib15" title="">Li et&nbsp;al., 2024b, </a>)</cite> and educational web pages like FineWeb-EDU&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Penedo et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib21" title="">2024</a>)</cite>. To enhance mathematical reasoning abilities, we also incorporated synthetically generated mathematical data. The data presentation strategy aligned with the two-stage training: the bulk of general web data was processed during Stage 1, while higher-quality curated datasets were emphasized during the Stage 2 cooldown phase, coinciding with the reduced learning rate.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+</section>
+<section class="ltx_subsection" id="S3.SS2">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">3.2 </span>Supervised Fine-tuning (SFT)</h3><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.SS2.p1">
+<p class="ltx_p" id="S3.SS2.p1.1">Following pre-training, the model underwent supervised fine-tuning (SFT) to enhance its instruction-following capabilities and improve its performance in conversational interaction formats.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<section class="ltx_subsubsection" id="S3.SS2.SSS1">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">3.2.1 </span>SFT Data</h4><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.SS2.SSS1.p1">
+<p class="ltx_p" id="S3.SS2.SSS1.p1.1">The SFT phase utilized a diverse collection of publicly available instruction-following and conversational datasets. These included, but were not limited to, WildChat&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Zhao et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib46" title="">2024</a>)</cite>, LMSYS-Chat-1M&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Zheng et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib47" title="">2024</a>)</cite>, WizardLM Evol-Instruct&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib39" title="">Xu et&nbsp;al., 2024a, </a>)</cite>, and SlimOrca&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Lian et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib16" title="">2023</a>)</cite>. To further bolster specific capabilities, particularly in reasoning and complex instruction adherence, we supplemented these with synthetic datasets generated using methodologies like GLAN&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib14" title="">Li et&nbsp;al., 2024a, </a>)</cite> and MathScale&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Tang et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib29" title="">2024</a>)</cite>.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+<section class="ltx_subsubsection" id="S3.SS2.SSS2">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">3.2.2 </span>Chat Template</h4><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.SS2.SSS2.p1">
+<p class="ltx_p" id="S3.SS2.SSS2.p1.1">For conversational tasks during SFT and inference, the following chat template structure was employed:</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<pre class="ltx_verbatim ltx_font_typewriter" id="S3.SS2.SSS2.p1.2">&lt;|begin_of_text|&gt;System: {system_message}&lt;|eot_id|&gt;
+User: {user_message_1}&lt;|eot_id|&gt;
+Assistant: {assistant_message_1}&lt;|eot_id|&gt;
+User: {user_message_2}&lt;|eot_id|&gt;
+Assistant: {assistant_message_2}&lt;|eot_id|&gt;...
+</pre>
+</div>
+</section>
+<section class="ltx_subsubsection" id="S3.SS2.SSS3">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">3.2.3 </span>Optimization Details</h4><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.SS2.SSS3.p1">
+<p class="ltx_p" id="S3.SS2.SSS3.p1.1">Several optimization choices were key during SFT:</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<ul class="ltx_itemize" id="S3.I3">
+<li class="ltx_item" id="S3.I3.i1" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S3.I3.i1.p1">
+<p class="ltx_p" id="S3.I3.i1.p1.1"><span class="ltx_text ltx_font_bold" id="S3.I3.i1.p1.1.1">Loss Aggregation:</span> Instead of averaging the cross-entropy loss across tokens within a batch (mean reduction), we employed summation. Empirically, we observed that summing the losses led to improved convergence and better final performance for this model.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S3.I3.i2" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S3.I3.i2.p1">
+<p class="ltx_p" id="S3.I3.i2.p1.1"><span class="ltx_text ltx_font_bold" id="S3.I3.i2.p1.1.1">Hyperparameter Tuning:</span> Careful tuning of the learning rate and the number of training epochs was performed. Consistent with our pre-training findings, the 1-bit model benefited from a relatively larger learning rate during SFT compared to typical full-precision model fine-tuning. Furthermore, achieving optimal convergence required extending the fine-tuning duration over a larger number of epochs than full-precision models of similar size.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+</ul>
+</div>
+</section>
+</section>
+<section class="ltx_subsection" id="S3.SS3">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">3.3 </span>Direct Preference Optimization (DPO)</h3><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.SS3.p1">
+<p class="ltx_p" id="S3.SS3.p1.1">To further align the model’s behavior with human preferences regarding helpfulness and safety, we applied Direct Preference Optimization (DPO)&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Rafailov et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib22" title="">2023</a>)</cite> following the SFT phase. DPO offers an efficient alternative to traditional RLHF by directly optimizing the language model using preference data, thereby circumventing the need to train a separate reward model. This DPO stage served to refine the model’s conversational prowess and overall alignment with desired interaction patterns in practical use cases.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<section class="ltx_subsubsection" id="S3.SS3.SSS1">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">3.3.1 </span>Training Data</h4><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.SS3.SSS1.p1">
+<p class="ltx_p" id="S3.SS3.SSS1.p1.1">The preference dataset used for DPO training was constructed from a combination of publicly available resources recognized for capturing diverse human judgments on model outputs. Specifically, we utilized UltraFeedback&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Cui et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib6" title="">2024</a>)</cite> and MagPie&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib41" title="">Xu et&nbsp;al., 2024c, </a>)</cite>.
+The aggregation of these datasets provided a robust and multifaceted preference signal, guiding the model towards generating responses more aligned with human expectations.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+<section class="ltx_subsubsection" id="S3.SS3.SSS2">
+<h4 class="ltx_title ltx_title_subsubsection">
+<span class="ltx_tag ltx_tag_subsubsection">3.3.2 </span>Training Details</h4><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S3.SS3.SSS2.p1">
+<p class="ltx_p" id="S3.SS3.SSS2.p1.1">The DPO training phase was conducted for 2 epochs. We employed a learning rate of <math alttext="2\times 10^{-7}" class="ltx_Math" display="inline" id="S3.SS3.SSS2.p1.1.m1.1"><semantics id="S3.SS3.SSS2.p1.1.m1.1a"><mrow id="S3.SS3.SSS2.p1.1.m1.1.1" xref="S3.SS3.SSS2.p1.1.m1.1.1.cmml"><mn id="S3.SS3.SSS2.p1.1.m1.1.1.2" xref="S3.SS3.SSS2.p1.1.m1.1.1.2.cmml">2</mn><mo id="S3.SS3.SSS2.p1.1.m1.1.1.1" lspace="0.222em" rspace="0.222em" xref="S3.SS3.SSS2.p1.1.m1.1.1.1.cmml">×</mo><msup id="S3.SS3.SSS2.p1.1.m1.1.1.3" xref="S3.SS3.SSS2.p1.1.m1.1.1.3.cmml"><mn id="S3.SS3.SSS2.p1.1.m1.1.1.3.2" xref="S3.SS3.SSS2.p1.1.m1.1.1.3.2.cmml">10</mn><mrow id="S3.SS3.SSS2.p1.1.m1.1.1.3.3" xref="S3.SS3.SSS2.p1.1.m1.1.1.3.3.cmml"><mo id="S3.SS3.SSS2.p1.1.m1.1.1.3.3a" xref="S3.SS3.SSS2.p1.1.m1.1.1.3.3.cmml">−</mo><mn id="S3.SS3.SSS2.p1.1.m1.1.1.3.3.2" xref="S3.SS3.SSS2.p1.1.m1.1.1.3.3.2.cmml">7</mn></mrow></msup></mrow><annotation-xml encoding="MathML-Content" id="S3.SS3.SSS2.p1.1.m1.1b"><apply id="S3.SS3.SSS2.p1.1.m1.1.1.cmml" xref="S3.SS3.SSS2.p1.1.m1.1.1"><times id="S3.SS3.SSS2.p1.1.m1.1.1.1.cmml" xref="S3.SS3.SSS2.p1.1.m1.1.1.1"></times><cn id="S3.SS3.SSS2.p1.1.m1.1.1.2.cmml" type="integer" xref="S3.SS3.SSS2.p1.1.m1.1.1.2">2</cn><apply id="S3.SS3.SSS2.p1.1.m1.1.1.3.cmml" xref="S3.SS3.SSS2.p1.1.m1.1.1.3"><csymbol cd="ambiguous" id="S3.SS3.SSS2.p1.1.m1.1.1.3.1.cmml" xref="S3.SS3.SSS2.p1.1.m1.1.1.3">superscript</csymbol><cn id="S3.SS3.SSS2.p1.1.m1.1.1.3.2.cmml" type="integer" xref="S3.SS3.SSS2.p1.1.m1.1.1.3.2">10</cn><apply id="S3.SS3.SSS2.p1.1.m1.1.1.3.3.cmml" xref="S3.SS3.SSS2.p1.1.m1.1.1.3.3"><minus id="S3.SS3.SSS2.p1.1.m1.1.1.3.3.1.cmml" xref="S3.SS3.SSS2.p1.1.m1.1.1.3.3"></minus><cn id="S3.SS3.SSS2.p1.1.m1.1.1.3.3.2.cmml" type="integer" xref="S3.SS3.SSS2.p1.1.m1.1.1.3.3.2">7</cn></apply></apply></apply></annotation-xml><annotation encoding="application/x-tex" id="S3.SS3.SSS2.p1.1.m1.1c">2\times 10^{-7}</annotation><annotation encoding="application/x-llamapun" id="S3.SS3.SSS2.p1.1.m1.1d">2 × 10 start_POSTSUPERSCRIPT - 7 end_POSTSUPERSCRIPT</annotation></semantics></math> and set the DPO beta parameter, which controls the divergence from the reference policy, to 0.1. To enhance training efficiency during this phase, we integrated optimized kernels from the <em class="ltx_emph ltx_font_italic" id="S3.SS3.SSS2.p1.1.1">Liger Kernel</em> library&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Hsu et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib11" title="">2024</a>)</cite>. Qualitatively, our observations indicate that the DPO process effectively steered the model towards preferred response styles without inducing significant degradation in the core capabilities established during pre-training and SFT.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<figure class="ltx_table" id="S3.T1">
+<table class="ltx_tabular ltx_guessed_headers ltx_align_middle" id="S3.T1.1">
+<tbody class="ltx_tbody">
+<tr class="ltx_tr" id="S3.T1.1.1.1">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r ltx_border_tt" id="S3.T1.1.1.1.1" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.1.1.1.1" style="font-size:80%;">Benchmark <span class="ltx_text ltx_align_center" id="S3.T1.1.1.1.1.1.1" style="font-size:63%;">(Metric)</span></span></th>
+<td class="ltx_td ltx_align_center ltx_border_tt" id="S3.T1.1.1.1.2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.1.1.2.1" style="font-size:80%;">LLaMA 3.2</span></td>
+<td class="ltx_td ltx_align_center ltx_border_tt" id="S3.T1.1.1.1.3" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.1.1.3.1" style="font-size:80%;">Gemma-3</span></td>
+<td class="ltx_td ltx_align_center ltx_border_tt" id="S3.T1.1.1.1.4" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.1.1.4.1" style="font-size:80%;">Qwen2.5</span></td>
+<td class="ltx_td ltx_align_center ltx_border_tt" id="S3.T1.1.1.1.5" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.1.1.5.1" style="font-size:80%;">SmolLM2</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r ltx_border_tt" id="S3.T1.1.1.1.6" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.1.1.6.1" style="font-size:80%;">MiniCPM</span></td>
+<td class="ltx_td ltx_align_center ltx_border_tt" id="S3.T1.1.1.1.7" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.1.1.7.1" style="font-size:80%;">BitNet b1.58</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.2.2">
+<td class="ltx_td ltx_align_center" id="S3.T1.1.2.2.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.2.2.1.1" style="font-size:80%;">1B</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.2.2.2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.2.2.2.1" style="font-size:80%;">1B</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.2.2.3" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.2.2.3.1" style="font-size:80%;">1.5B</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.2.2.4" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.2.2.4.1" style="font-size:80%;">1.7B</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.2.2.5" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.2.2.5.1" style="font-size:80%;">2B</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.2.2.6" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.2.2.6.1" style="font-size:80%;">2B</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.3.3">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r ltx_border_t" id="S3.T1.1.3.3.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.3.3.1.1" style="font-size:80%;">Memory</span></th>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.3.3.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.3.3.2.1" style="font-size:80%;">2GB</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.3.3.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.3.3.3.1" style="font-size:80%;">1.4GB</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.3.3.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.3.3.4.1" style="font-size:80%;">2.6GB</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.3.3.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.3.3.5.1" style="font-size:80%;">3.2GB</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r ltx_border_t" id="S3.T1.1.3.3.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.3.3.6.1" style="font-size:80%;">4.8GB</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.3.3.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.3.3.7.1" style="font-size:80%;">0.4GB</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.4.4">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.4.4.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.4.4.1.1" style="font-size:50%;">(Non-emb)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.5.5">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.5.5.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.5.5.1.1" style="font-size:80%;">Latency</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.5.5.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.5.5.2.1" style="font-size:80%;">48ms</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.5.5.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.5.5.3.1" style="font-size:80%;">41ms</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.5.5.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.5.5.4.1" style="font-size:80%;">65ms</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.5.5.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.5.5.5.1" style="font-size:80%;">67ms</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.5.5.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.5.5.6.1" style="font-size:80%;">124ms</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.5.5.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.5.5.7.1" style="font-size:80%;">29ms</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.6.6">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.6.6.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.6.6.1.1" style="font-size:50%;">(CPU; TPOT)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.7.7">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.7.7.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.7.7.1.1" style="font-size:80%;">Energy</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.7.7.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.7.7.2.1" style="font-size:80%;">0.258J</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.7.7.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.7.7.3.1" style="font-size:80%;">0.186J</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.7.7.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.7.7.4.1" style="font-size:80%;">0.347J</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.7.7.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.7.7.5.1" style="font-size:80%;">0.425J</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.7.7.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.7.7.6.1" style="font-size:80%;">0.649J</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.7.7.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.7.7.7.1" style="font-size:80%;">0.028J</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.8.8">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.8.8.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.8.8.1.1" style="font-size:50%;">(Estimated)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.9.9">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.9.9.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.9.9.1.1" style="font-size:80%;">Training Tokens</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.9.9.2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.9.9.2.1" style="font-size:80%;">9T</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.9.9.3" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.9.9.3.1" style="font-size:80%;">2T</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.9.9.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.9.9.4.1" style="font-size:80%;">18T</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.9.9.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.9.9.5.1" style="font-size:80%;">11T</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.9.9.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.9.9.6.1" style="font-size:80%;">1.1T</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.9.9.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.9.9.7.1" style="font-size:80%;">4T</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.10.10">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.10.10.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.10.10.1.1" style="font-size:50%;">(Pre-training)</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.10.10.2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.10.10.2.1" style="font-size:50%;">(pruning &amp; distillation)</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.10.10.3" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.10.10.3.1" style="font-size:50%;">(distillation)</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.11.11">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r ltx_border_t" id="S3.T1.1.11.11.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.11.11.1.1" style="font-size:80%;">ARC-Challange</span></th>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.11.11.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.11.11.2.1" style="font-size:80%;">37.80</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.11.11.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.11.11.3.1" style="font-size:80%;">38.40</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.11.11.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.11.11.4.1" style="font-size:80%;">46.67</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.11.11.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.11.11.5.1" style="font-size:80%;">43.52</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r ltx_border_t" id="S3.T1.1.11.11.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.11.11.6.1" style="font-size:80%;">44.80</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.11.11.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.11.11.7.1" style="font-size:80%;">49.91</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.12.12">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.12.12.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.12.12.1.1" style="font-size:50%;">(0-shot; Acc,norm)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.13.13">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.13.13.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.13.13.1.1" style="font-size:80%;">ARC-Easy</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.13.13.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.13.13.2.1" style="font-size:80%;">63.17</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.13.13.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.13.13.3.1" style="font-size:80%;">63.13</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.13.13.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.13.13.4.1" style="font-size:80%;">76.01</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.13.13.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.13.13.5.1" style="font-size:80%;">62.92</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.13.13.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.13.13.6.1" style="font-size:80%;">72.14</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.13.13.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.13.13.7.1" style="font-size:80%;">74.79</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.14.14">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.14.14.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.14.14.1.1" style="font-size:50%;">(0-shot; Acc,norm)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.15.15">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.15.15.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.15.15.1.1" style="font-size:80%;">OpenbookQA</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.15.15.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.15.15.2.1" style="font-size:80%;">34.80</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.15.15.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.15.15.3.1" style="font-size:80%;">38.80</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.15.15.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.15.15.4.1" style="font-size:80%;">40.80</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.15.15.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.15.15.5.1" style="font-size:80%;">46.00</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.15.15.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.15.15.6.1" style="font-size:80%;">40.20</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.15.15.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.15.15.7.1" style="font-size:80%;">41.60</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.16.16">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.16.16.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.16.16.1.1" style="font-size:50%;">(0-shot; Acc,norm)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.17.17">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.17.17.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.17.17.1.1" style="font-size:80%;">BoolQ</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.17.17.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.17.17.2.1" style="font-size:80%;">64.65</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.17.17.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.17.17.3.1" style="font-size:80%;">74.22</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.17.17.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.17.17.4.1" style="font-size:80%;">78.04</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.17.17.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.17.17.5.1" style="font-size:80%;">75.78</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.17.17.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.17.17.6.1" style="font-size:80%;">80.67</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.17.17.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.17.17.7.1" style="font-size:80%;">80.18</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.18.18">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.18.18.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.18.18.1.1" style="font-size:50%;">(0-shot; Acc)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.19.19">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.19.19.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.19.19.1.1" style="font-size:80%;">HellaSwag</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.19.19.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.19.19.2.1" style="font-size:80%;">60.80</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.19.19.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.19.19.3.1" style="font-size:80%;">57.69</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.19.19.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.19.19.4.1" style="font-size:80%;">68.28</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.19.19.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.19.19.5.1" style="font-size:80%;">71.71</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.19.19.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.19.19.6.1" style="font-size:80%;">70.81</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.19.19.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.19.19.7.1" style="font-size:80%;">68.44</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.20.20">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.20.20.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.20.20.1.1" style="font-size:50%;">(0-shot; Acc,norm)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.21.21">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.21.21.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.21.21.1.1" style="font-size:80%;">PIQA</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.21.21.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.21.21.2.1" style="font-size:80%;">74.21</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.21.21.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.21.21.3.1" style="font-size:80%;">71.93</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.21.21.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.21.21.4.1" style="font-size:80%;">76.12</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.21.21.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.21.21.5.1" style="font-size:80%;">76.12</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.21.21.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.21.21.6.1" style="font-size:80%;">76.66</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.21.21.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.21.21.7.1" style="font-size:80%;">77.09</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.22.22">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.22.22.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.22.22.1.1" style="font-size:50%;">(0-shot; Acc,norm)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.23.23">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.23.23.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.23.23.1.1" style="font-size:80%;">WinoGrande</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.23.23.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.23.23.2.1" style="font-size:80%;">59.51</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.23.23.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.23.23.3.1" style="font-size:80%;">58.48</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.23.23.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.23.23.4.1" style="font-size:80%;">62.83</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.23.23.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.23.23.5.1" style="font-size:80%;">68.98</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.23.23.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.23.23.6.1" style="font-size:80%;">61.80</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.23.23.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.23.23.7.1" style="font-size:80%;">71.90</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.24.24">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.24.24.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.24.24.1.1" style="font-size:50%;">(0-shot; Acc)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.25.25">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.25.25.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.25.25.1.1" style="font-size:80%;">CommonsenseQA</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.25.25.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.25.25.2.1" style="font-size:80%;">58.48</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.25.25.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.25.25.3.1" style="font-size:80%;">42.10</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.25.25.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.25.25.4.1" style="font-size:80%;">76.41</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.25.25.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.25.25.5.1" style="font-size:80%;">63.55</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.25.25.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.25.25.6.1" style="font-size:80%;">71.74</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.25.25.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.25.25.7.1" style="font-size:80%;">71.58</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.26.26">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.26.26.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.26.26.1.1" style="font-size:50%;">(10-shot; Acc)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.27.27">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.27.27.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.27.27.1.1" style="font-size:80%;">TruthfulQA</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.27.27.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.27.27.2.1" style="font-size:80%;">43.80</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.27.27.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.27.27.3.1" style="font-size:80%;">38.66</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.27.27.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.27.27.4.1" style="font-size:80%;">46.67</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.27.27.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.27.27.5.1" style="font-size:80%;">39.90</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.27.27.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.27.27.6.1" style="font-size:80%;">41.41</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.27.27.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.27.27.7.1" style="font-size:80%;">45.31</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.28.28">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.28.28.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.28.28.1.1" style="font-size:50%;">(10-shot; MC2)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.29.29">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.29.29.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.29.29.1.1" style="font-size:80%;">TriviaQA</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.29.29.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.29.29.2.1" style="font-size:80%;">37.60</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.29.29.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.29.29.3.1" style="font-size:80%;">23.49</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.29.29.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.29.29.4.1" style="font-size:80%;">38.37</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.29.29.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.29.29.5.1" style="font-size:80%;">45.97</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.29.29.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.29.29.6.1" style="font-size:80%;">34.13</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.29.29.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.29.29.7.1" style="font-size:80%;">33.57</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.30.30">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.30.30.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.30.30.1.1" style="font-size:50%;">(5-shot; EM)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.31.31">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.31.31.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.31.31.1.1" style="font-size:80%;">MMLU</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.31.31.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.31.31.2.1" style="font-size:80%;">45.58</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.31.31.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.31.31.3.1" style="font-size:80%;">39.91</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.31.31.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.31.31.4.1" style="font-size:80%;">60.25</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.31.31.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.31.31.5.1" style="font-size:80%;">49.24</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.31.31.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.31.31.6.1" style="font-size:80%;">51.82</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.31.31.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.31.31.7.1" style="font-size:80%;">53.17</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.32.32">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.32.32.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.32.32.1.1" style="font-size:50%;">(5-shot; Acc)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.33.33">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r ltx_border_t" id="S3.T1.1.33.33.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.33.33.1.1" style="font-size:80%;">HumanEval+</span></th>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.33.33.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.33.33.2.1" style="font-size:80%;">31.10</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.33.33.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.33.33.3.1" style="font-size:80%;">37.20</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.33.33.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.33.33.4.1" style="font-size:80%;">50.60</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.33.33.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.33.33.5.1" style="font-size:80%;">28.00</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r ltx_border_t" id="S3.T1.1.33.33.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.33.33.6.1" style="font-size:80%;">43.90</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.33.33.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.33.33.7.1" style="font-size:80%;">38.40</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.34.34">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.34.34.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.34.34.1.1" style="font-size:50%;">(0-shot; Pass@1)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.35.35">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.35.35.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.35.35.1.1" style="font-size:80%;">GSM8K</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.35.35.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.35.35.2.1" style="font-size:80%;">38.21</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.35.35.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.35.35.3.1" style="font-size:80%;">31.16</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.35.35.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.35.35.4.1" style="font-size:80%;">56.79</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.35.35.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.35.35.5.1" style="font-size:80%;">45.11</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.35.35.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.35.35.6.1" style="font-size:80%;">4.40</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.35.35.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.35.35.7.1" style="font-size:80%;">58.38</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.36.36">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.36.36.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.36.36.1.1" style="font-size:50%;">(4-shot; EM)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.37.37">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.37.37.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.37.37.1.1" style="font-size:80%;">MATH-500</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.37.37.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.37.37.2.1" style="font-size:80%;">23.00</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.37.37.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.37.37.3.1" style="font-size:80%;">42.00</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.37.37.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.37.37.4.1" style="font-size:80%;">53.00</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.37.37.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.37.37.5.1" style="font-size:80%;">17.60</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.37.37.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.37.37.6.1" style="font-size:80%;">14.80</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.37.37.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.37.37.7.1" style="font-size:80%;">43.40</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.38.38">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.38.38.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.38.38.1.1" style="font-size:50%;">(0-shot; EM)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.39.39">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r ltx_border_t" id="S3.T1.1.39.39.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.39.39.1.1" style="font-size:80%;">IFEval</span></th>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.39.39.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.39.39.2.1" style="font-size:80%;">62.71</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.39.39.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.39.39.3.1" style="font-size:80%;">66.67</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.39.39.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.39.39.4.1" style="font-size:80%;">50.12</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.39.39.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.39.39.5.1" style="font-size:80%;">57.91</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r ltx_border_t" id="S3.T1.1.39.39.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.39.39.6.1" style="font-size:80%;">36.81</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S3.T1.1.39.39.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.39.39.7.1" style="font-size:80%;">53.48</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.40.40">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.40.40.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.40.40.1.1" style="font-size:50%;">(0-shot; Instruct-Strict)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.41.41">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.41.41.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.41.41.1.1" style="font-size:80%;">MT-bench</span></th>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.41.41.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.41.41.2.1" style="font-size:80%;">5.43</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.41.41.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.41.41.3.1" style="font-size:80%;">6.40</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.41.41.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.41.41.4.1" style="font-size:80%;">6.12</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.41.41.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.41.41.5.1" style="font-size:80%;">5.50</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S3.T1.1.41.41.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.41.41.6.1" style="font-size:80%;">6.57</span></td>
+<td class="ltx_td ltx_align_center" id="S3.T1.1.41.41.7" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.41.41.7.1" style="font-size:80%;">5.85</span></td>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.42.42">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S3.T1.1.42.42.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.42.42.1.1" style="font-size:50%;">(0-shot; Average)</span></th>
+</tr>
+<tr class="ltx_tr" id="S3.T1.1.43.43">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_bb ltx_border_r ltx_border_t" id="S3.T1.1.43.43.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.43.43.1.1" style="font-size:80%;">Average</span></th>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S3.T1.1.43.43.2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.43.43.2.1" style="font-size:80%;">44.90</span></td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S3.T1.1.43.43.3" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.43.43.3.1" style="font-size:80%;">43.74</span></td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S3.T1.1.43.43.4" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S3.T1.1.43.43.4.1" style="font-size:80%;">55.23</span></td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S3.T1.1.43.43.5" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.43.43.5.1" style="font-size:80%;">48.70</span></td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_r ltx_border_t" id="S3.T1.1.43.43.6" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.43.43.6.1" style="font-size:80%;">42.05</span></td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S3.T1.1.43.43.7" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S3.T1.1.43.43.7.1" style="font-size:80%;">54.19</span></td>
+</tr>
+</tbody>
+</table>
+<figcaption class="ltx_caption" style="font-size:80%;"><span class="ltx_tag ltx_tag_table">Table 1: </span>Comparison of <span class="ltx_text" id="S3.T1.6.1">BitNet b1.58 2B4T</span> with leading open-weight full-precision LLMs of similar size (1B-2B parameters) on efficiency metrics and performance across a wide range of benchmarks. All models compared are instruction-tuned versions.
+</figcaption>
+</figure><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</section>
+</section>
+</section>
+<section class="ltx_section" id="S4">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">4 </span>Evaluation</h2><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<figure class="ltx_table" id="S4.T2">
+<table class="ltx_tabular ltx_guessed_headers ltx_align_middle" id="S4.T2.1">
+<tbody class="ltx_tbody">
+<tr class="ltx_tr" id="S4.T2.1.1.1">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r ltx_border_tt" id="S4.T2.1.1.1.1" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text ltx_font_bold" id="S4.T2.1.1.1.1.1">Benchmark <span class="ltx_text ltx_align_center" id="S4.T2.1.1.1.1.1.1" style="font-size:50%;">(Metric)</span></span></th>
+<td class="ltx_td ltx_align_center ltx_border_r ltx_border_tt" colspan="3" id="S4.T2.1.1.1.2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text ltx_font_bold" id="S4.T2.1.1.1.2.1">Qwen2.5</span></td>
+<td class="ltx_td ltx_align_center ltx_border_tt" id="S4.T2.1.1.1.3" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text ltx_font_bold" id="S4.T2.1.1.1.3.1">BitNet b1.58</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T2.1.2.2">
+<td class="ltx_td ltx_align_center" id="S4.T2.1.2.2.1" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text ltx_font_bold" id="S4.T2.1.2.2.1.1">1.5B-bf16</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T2.1.2.2.2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text ltx_font_bold" id="S4.T2.1.2.2.2.1">1.5B-GPTQ-int4</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T2.1.2.2.3" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text ltx_font_bold" id="S4.T2.1.2.2.3.1">1.5B-AWQ-int4</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T2.1.2.2.4" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text ltx_font_bold" id="S4.T2.1.2.2.4.1">2B</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T2.1.3.3">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r ltx_border_t" id="S4.T2.1.3.3.1" style="padding-left:5.0pt;padding-right:5.0pt;">Memory</th>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S4.T2.1.3.3.2" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.3.3.2.1">2.6GB</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S4.T2.1.3.3.3" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.3.3.3.1">0.7GB</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r ltx_border_t" id="S4.T2.1.3.3.4" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.3.3.4.1">0.7GB</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S4.T2.1.3.3.5" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.3.3.5.1">0.4GB</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T2.1.4.4">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T2.1.4.4.1" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.4.4.1.1" style="font-size:50%;">(Non-emb)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T2.1.5.5">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T2.1.5.5.1" style="padding-left:5.0pt;padding-right:5.0pt;">Activation</th>
+<td class="ltx_td ltx_align_center" id="S4.T2.1.5.5.2" style="padding-left:5.0pt;padding-right:5.0pt;">bf16</td>
+<td class="ltx_td ltx_align_center" id="S4.T2.1.5.5.3" style="padding-left:5.0pt;padding-right:5.0pt;">bf16</td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T2.1.5.5.4" style="padding-left:5.0pt;padding-right:5.0pt;">bf16</td>
+<td class="ltx_td ltx_align_center" id="S4.T2.1.5.5.5" style="padding-left:5.0pt;padding-right:5.0pt;">int8</td>
+</tr>
+<tr class="ltx_tr" id="S4.T2.1.6.6">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r ltx_border_t" id="S4.T2.1.6.6.1" style="padding-left:5.0pt;padding-right:5.0pt;">MMLU</th>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S4.T2.1.6.6.2" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text ltx_font_bold" id="S4.T2.1.6.6.2.1">60.25</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S4.T2.1.6.6.3" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.6.6.3.1">58.06</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r ltx_border_t" id="S4.T2.1.6.6.4" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.6.6.4.1">57.43</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S4.T2.1.6.6.5" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.6.6.5.1">53.17</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T2.1.7.7">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T2.1.7.7.1" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.7.7.1.1" style="font-size:50%;">(5-shot; Acc)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T2.1.8.8">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T2.1.8.8.1" style="padding-left:5.0pt;padding-right:5.0pt;">GSM8K</th>
+<td class="ltx_td ltx_align_center" id="S4.T2.1.8.8.2" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.8.8.2.1">56.79</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T2.1.8.8.3" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.8.8.3.1">50.57</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T2.1.8.8.4" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.8.8.4.1">50.64</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T2.1.8.8.5" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text ltx_font_bold" id="S4.T2.1.8.8.5.1">58.38</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T2.1.9.9">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T2.1.9.9.1" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.9.9.1.1" style="font-size:50%;">(4-shot; EM)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T2.1.10.10">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T2.1.10.10.1" style="padding-left:5.0pt;padding-right:5.0pt;">IFEval</th>
+<td class="ltx_td ltx_align_center" id="S4.T2.1.10.10.2" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.10.10.2.1">50.12</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T2.1.10.10.3" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.10.10.3.1">47.84</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T2.1.10.10.4" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.10.10.4.1">45.44</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T2.1.10.10.5" rowspan="2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text ltx_font_bold" id="S4.T2.1.10.10.5.1">53.48</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T2.1.11.11">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T2.1.11.11.1" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text" id="S4.T2.1.11.11.1.1" style="font-size:50%;">(0-shot; Instruct-Strict)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T2.1.12.12">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_bb ltx_border_r ltx_border_t" id="S4.T2.1.12.12.1" style="padding-left:5.0pt;padding-right:5.0pt;">Average</th>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S4.T2.1.12.12.2" style="padding-left:5.0pt;padding-right:5.0pt;"><span class="ltx_text ltx_font_bold" id="S4.T2.1.12.12.2.1">55.72</span></td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S4.T2.1.12.12.3" style="padding-left:5.0pt;padding-right:5.0pt;">52.15</td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_r ltx_border_t" id="S4.T2.1.12.12.4" style="padding-left:5.0pt;padding-right:5.0pt;">51.17</td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S4.T2.1.12.12.5" style="padding-left:5.0pt;padding-right:5.0pt;">55.01</td>
+</tr>
+</tbody>
+</table>
+<figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_table">Table 2: </span>Comparison of BitNet b1.58 (2B) against Qwen2.5 1.5B in its original bf16 precision and after INT4 post-training quantization (GPTQ and AWQ). All models shown are based on instruction-tuned checkpoints.
+</figcaption>
+</figure><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<figure class="ltx_table" id="S4.T3">
+<table class="ltx_tabular ltx_guessed_headers ltx_align_middle" id="S4.T3.1">
+<thead class="ltx_thead">
+<tr class="ltx_tr" id="S4.T3.1.1.1">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_th_row ltx_border_r ltx_border_tt" id="S4.T3.1.1.1.1" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.1.1.1.1" style="font-size:80%;">Benchmark <span class="ltx_text ltx_align_center" id="S4.T3.1.1.1.1.1.1" style="font-size:63%;">(Metric)</span></span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_tt" id="S4.T3.1.1.1.2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.1.1.2.1" style="font-size:80%;">Bonsai</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_tt" id="S4.T3.1.1.1.3" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.1.1.3.1" style="font-size:80%;">OLMo-Bitnet</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_tt" id="S4.T3.1.1.1.4" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.1.1.4.1" style="font-size:80%;">Falcon3-1.58bit</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_r ltx_border_tt" id="S4.T3.1.1.1.5" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.1.1.5.1" style="font-size:80%;">Llama3-8B-1.58</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_tt" id="S4.T3.1.1.1.6" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.1.1.6.1" style="font-size:80%;">BitNet b1.58</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.2.2">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column" id="S4.T3.1.2.2.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.2.2.1.1" style="font-size:80%;">0.5B</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column" id="S4.T3.1.2.2.2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.2.2.2.1" style="font-size:80%;">1B</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column" id="S4.T3.1.2.2.3" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.2.2.3.1" style="font-size:80%;">7B</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_r" id="S4.T3.1.2.2.4" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.2.2.4.1" style="font-size:80%;">8B</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column" id="S4.T3.1.2.2.5" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.2.2.5.1" style="font-size:80%;">2B</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.3.3">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_th_row ltx_border_r ltx_border_t" id="S4.T3.1.3.3.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.3.3.1.1" style="font-size:80%;">Native 1-bit</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_t" id="S4.T3.1.3.3.2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.3.3.2.1" style="font-size:80%;">✓</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_t" id="S4.T3.1.3.3.3" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.3.3.3.1" style="font-size:80%;">✓</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_t" id="S4.T3.1.3.3.4" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.3.3.4.1" style="font-size:80%;">✗</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_r ltx_border_t" id="S4.T3.1.3.3.5" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.3.3.5.1" style="font-size:80%;">✗</span></th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_t" id="S4.T3.1.3.3.6" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.3.3.6.1" style="font-size:80%;">✓</span></th>
+</tr>
+</thead>
+<tbody class="ltx_tbody">
+<tr class="ltx_tr" id="S4.T3.1.4.1">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r ltx_border_t" id="S4.T3.1.4.1.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.4.1.1.1" style="font-size:80%;">ARC-Challange</span></th>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S4.T3.1.4.1.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.4.1.2.1" style="font-size:80%;">33.19</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S4.T3.1.4.1.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.4.1.3.1" style="font-size:80%;">26.54</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S4.T3.1.4.1.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.4.1.4.1" style="font-size:80%;">37.80</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r ltx_border_t" id="S4.T3.1.4.1.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.4.1.5.1" style="font-size:80%;">43.69</span></td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="S4.T3.1.4.1.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.4.1.6.1" style="font-size:80%;">49.91</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.5.2">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.5.2.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.5.2.1.1" style="font-size:50%;">(0-shot; Acc,norm)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.6.3">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.6.3.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.6.3.1.1" style="font-size:80%;">ARC-Easy</span></th>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.6.3.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.6.3.2.1" style="font-size:80%;">58.25</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.6.3.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.6.3.3.1" style="font-size:80%;">25.38</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.6.3.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.6.3.4.1" style="font-size:80%;">65.03</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T3.1.6.3.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.6.3.5.1" style="font-size:80%;">70.71</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.6.3.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.6.3.6.1" style="font-size:80%;">74.79</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.7.4">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.7.4.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.7.4.1.1" style="font-size:50%;">(0-shot; Acc,norm)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.8.5">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.8.5.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.8.5.1.1" style="font-size:80%;">OpenbookQA</span></th>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.8.5.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.8.5.2.1" style="font-size:80%;">33.60</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.8.5.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.8.5.3.1" style="font-size:80%;">28.20</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.8.5.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.8.5.4.1" style="font-size:80%;">38.20</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T3.1.8.5.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.8.5.5.1" style="font-size:80%;">37.20</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.8.5.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.8.5.6.1" style="font-size:80%;">41.60</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.9.6">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.9.6.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.9.6.1.1" style="font-size:50%;">(0-shot; Acc,norm)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.10.7">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.10.7.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.10.7.1.1" style="font-size:80%;">BoolQ</span></th>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.10.7.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.10.7.2.1" style="font-size:80%;">58.44</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.10.7.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.10.7.3.1" style="font-size:80%;">52.48</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.10.7.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.10.7.4.1" style="font-size:80%;">72.14</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T3.1.10.7.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.10.7.5.1" style="font-size:80%;">68.38</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.10.7.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.10.7.6.1" style="font-size:80%;">80.18</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.11.8">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.11.8.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.11.8.1.1" style="font-size:50%;">(0-shot; Acc)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.12.9">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.12.9.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.12.9.1.1" style="font-size:80%;">HellaSwag</span></th>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.12.9.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.12.9.2.1" style="font-size:80%;">48.01</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.12.9.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.12.9.3.1" style="font-size:80%;">25.88</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.12.9.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.12.9.4.1" style="font-size:80%;">59.46</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T3.1.12.9.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.12.9.5.1" style="font-size:80%;">68.56</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.12.9.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.12.9.6.1" style="font-size:80%;">68.44</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.13.10">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.13.10.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.13.10.1.1" style="font-size:50%;">(0-shot; Acc,norm)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.14.11">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.14.11.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.14.11.1.1" style="font-size:80%;">PIQA</span></th>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.14.11.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.14.11.2.1" style="font-size:80%;">70.02</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.14.11.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.14.11.3.1" style="font-size:80%;">50.49</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.14.11.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.14.11.4.1" style="font-size:80%;">72.36</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T3.1.14.11.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.14.11.5.1" style="font-size:80%;">75.30</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.14.11.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.14.11.6.1" style="font-size:80%;">77.09</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.15.12">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.15.12.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.15.12.1.1" style="font-size:50%;">(0-shot; Acc,norm)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.16.13">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.16.13.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.16.13.1.1" style="font-size:80%;">WinoGrande</span></th>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.16.13.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.16.13.2.1" style="font-size:80%;">54.46</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.16.13.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.16.13.3.1" style="font-size:80%;">51.54</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.16.13.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.16.13.4.1" style="font-size:80%;">60.14</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T3.1.16.13.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.16.13.5.1" style="font-size:80%;">60.93</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.16.13.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.16.13.6.1" style="font-size:80%;">71.90</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.17.14">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.17.14.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.17.14.1.1" style="font-size:50%;">(0-shot; Acc)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.18.15">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.18.15.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.18.15.1.1" style="font-size:80%;">CommonsenseQA</span></th>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.18.15.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.18.15.2.1" style="font-size:80%;">18.43</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.18.15.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.18.15.3.1" style="font-size:80%;">19.49</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.18.15.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.18.15.4.1" style="font-size:80%;">67.08</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T3.1.18.15.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.18.15.5.1" style="font-size:80%;">28.50</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.18.15.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.18.15.6.1" style="font-size:80%;">71.58</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.19.16">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.19.16.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.19.16.1.1" style="font-size:50%;">(10-shot; Acc)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.20.17">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.20.17.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.20.17.1.1" style="font-size:80%;">TruthfulQA</span></th>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.20.17.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.20.17.2.1" style="font-size:80%;">40.65</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.20.17.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.20.17.3.1" style="font-size:80%;">49.05</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.20.17.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.20.17.4.1" style="font-size:80%;">43.29</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T3.1.20.17.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.20.17.5.1" style="font-size:80%;">39.13</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.20.17.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.20.17.6.1" style="font-size:80%;">45.31</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.21.18">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.21.18.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.21.18.1.1" style="font-size:50%;">(10-shot; MC2)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.22.19">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.22.19.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.22.19.1.1" style="font-size:80%;">TriviaQA</span></th>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.22.19.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.22.19.2.1" style="font-size:80%;">10.84</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.22.19.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.22.19.3.1" style="font-size:80%;">0.00</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.22.19.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.22.19.4.1" style="font-size:80%;">0.00</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T3.1.22.19.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.22.19.5.1" style="font-size:80%;">19.82</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.22.19.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.22.19.6.1" style="font-size:80%;">33.57</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.23.20">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.23.20.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.23.20.1.1" style="font-size:50%;">(5-shot; EM)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.24.21">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.24.21.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.24.21.1.1" style="font-size:80%;">MMLU</span></th>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.24.21.2" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.24.21.2.1" style="font-size:80%;">25.74</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.24.21.3" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.24.21.3.1" style="font-size:80%;">25.47</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.24.21.4" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.24.21.4.1" style="font-size:80%;">42.79</span></td>
+<td class="ltx_td ltx_align_center ltx_border_r" id="S4.T3.1.24.21.5" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.24.21.5.1" style="font-size:80%;">35.04</span></td>
+<td class="ltx_td ltx_align_center" id="S4.T3.1.24.21.6" rowspan="2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.24.21.6.1" style="font-size:80%;">53.17</span></td>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.25.22">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_r" id="S4.T3.1.25.22.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.25.22.1.1" style="font-size:50%;">(5-shot; Acc)</span></th>
+</tr>
+<tr class="ltx_tr" id="S4.T3.1.26.23">
+<th class="ltx_td ltx_align_center ltx_th ltx_th_row ltx_border_bb ltx_border_r ltx_border_t" id="S4.T3.1.26.23.1" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.26.23.1.1" style="font-size:80%;">Average</span></th>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S4.T3.1.26.23.2" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.26.23.2.1" style="font-size:80%;">41.06</span></td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S4.T3.1.26.23.3" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.26.23.3.1" style="font-size:80%;">32.22</span></td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S4.T3.1.26.23.4" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.26.23.4.1" style="font-size:80%;">50.76</span></td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_r ltx_border_t" id="S4.T3.1.26.23.5" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text" id="S4.T3.1.26.23.5.1" style="font-size:80%;">49.75</span></td>
+<td class="ltx_td ltx_align_center ltx_border_bb ltx_border_t" id="S4.T3.1.26.23.6" style="padding-left:4.5pt;padding-right:4.5pt;"><span class="ltx_text ltx_font_bold" id="S4.T3.1.26.23.6.1" style="font-size:80%;">60.68</span></td>
+</tr>
+</tbody>
+</table>
+<figcaption class="ltx_caption" style="font-size:80%;"><span class="ltx_tag ltx_tag_table">Table 3: </span>Performance comparison of <span class="ltx_text" id="S4.T3.6.1">BitNet b1.58 2B4T</span> against other open-weight 1-bit models. This includes natively trained 1-bit models (Bonsai-0.5B, OLMo-Bitnet-1B) and larger models post-training quantized to 1.58-bit (Falcon3-1.58bit-7B, Llama3-8B-1.58).
+</figcaption>
+</figure><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S4.p1">
+<p class="ltx_p" id="S4.p1.1">We measure performance on a wide variety of benchmarks classified as follows:</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S4.p2">
+<ul class="ltx_itemize" id="S4.I1">
+<li class="ltx_item" id="S4.I1.i1" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S4.I1.i1.p1">
+<p class="ltx_p" id="S4.I1.i1.p1.1"><span class="ltx_text ltx_font_bold" id="S4.I1.i1.p1.1.1">Language understanding and reasoning:</span> ARC-Easy <cite class="ltx_cite ltx_citemacro_citep">(Yadav et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib42" title="">2019</a>)</cite>, ARC-Challenge <cite class="ltx_cite ltx_citemacro_citep">(Yadav et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib42" title="">2019</a>)</cite>, HellaSwag <cite class="ltx_cite ltx_citemacro_citep">(Zellers et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib44" title="">2019</a>)</cite>, WinoGrande <cite class="ltx_cite ltx_citemacro_citep">(Sakaguchi et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib23" title="">2020</a>)</cite>, PIQA <cite class="ltx_cite ltx_citemacro_citep">(Bisk et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib3" title="">2019</a>)</cite>, OpenbookQA <cite class="ltx_cite ltx_citemacro_citep">(Mihaylov et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib20" title="">2018</a>)</cite>, and CommonsenseQA <cite class="ltx_cite ltx_citemacro_citep">(Talmor et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib28" title="">2019</a>)</cite></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S4.I1.i2" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S4.I1.i2.p1">
+<p class="ltx_p" id="S4.I1.i2.p1.1"><span class="ltx_text ltx_font_bold" id="S4.I1.i2.p1.1.1">World knowledge:</span> TruthfulQA&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Lin et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib17" title="">2022</a>)</cite> and MMLU&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib8" title="">Hendrycks et&nbsp;al., 2021a, </a>)</cite></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S4.I1.i3" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S4.I1.i3.p1">
+<p class="ltx_p" id="S4.I1.i3.p1.1"><span class="ltx_text ltx_font_bold" id="S4.I1.i3.p1.1.1">Reading comprehension:</span> TriviaQA&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Joshi et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib13" title="">2017</a>)</cite> and BoolQ&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Clark et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib4" title="">2019</a>)</cite></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S4.I1.i4" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S4.I1.i4.p1">
+<p class="ltx_p" id="S4.I1.i4.p1.1"><span class="ltx_text ltx_font_bold" id="S4.I1.i4.p1.1.1">Math and code:</span> GSM8K <cite class="ltx_cite ltx_citemacro_citep">(Cobbe et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib5" title="">2021</a>)</cite>, MATH-500 <cite class="ltx_cite ltx_citemacro_citep">(<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib9" title="">Hendrycks et&nbsp;al., 2021b, </a>)</cite> and HumanEval+ <cite class="ltx_cite ltx_citemacro_citep">(Liu et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib18" title="">2023</a>)</cite></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S4.I1.i5" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S4.I1.i5.p1">
+<p class="ltx_p" id="S4.I1.i5.p1.1"><span class="ltx_text ltx_font_bold" id="S4.I1.i5.p1.1.1">Instruction following and conversation:</span> IFEval <cite class="ltx_cite ltx_citemacro_citep">(Zhou et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib49" title="">2023</a>)</cite> and MT-bench <cite class="ltx_cite ltx_citemacro_citep">(Zheng et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib48" title="">2023</a>)</cite></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+</ul>
+</div>
+<div class="ltx_para" id="S4.p3">
+<p class="ltx_p" id="S4.p3.1">We compare <span class="ltx_text" id="S4.p3.1.1">BitNet b1.58 2B4T</span> with leading open-weight full precision LLMs of similar size, including LLaMA 3.2 1B&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Dubey et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib7" title="">2024</a>)</cite>, Gemma-3 1B&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Team et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib31" title="">2025</a>)</cite>, Qwen2.5 1.5B&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Yang et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib43" title="">2024</a>)</cite>, SmolLM2 1.7B&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Allal et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib1" title="">2025</a>)</cite> and MiniCPM 2B&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Hu et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib12" title="">2024</a>)</cite>. All models are instruction-tuned versions.
+We re-run all benchmarks with a public evaluation pipeline for a fair comparison. More evaluation details are available at the appendix. The main results are presented in Table&nbsp;<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#S3.T1" title="Table 1 ‣ 3.3.2 Training Details ‣ 3.3 Direct Preference Optimization (DPO) ‣ 3 Training ‣ BitNet b1.58 2B4T Technical Report"><span class="ltx_text ltx_ref_tag">1</span></a>.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<section class="ltx_subsection" id="S4.SS1">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">4.1 </span>Main Results</h3><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S4.SS1.p1">
+<p class="ltx_p" id="S4.SS1.p1.1">As shown in Table 1, <span class="ltx_text" id="S4.SS1.p1.1.1">BitNet b1.58 2B4T</span> demonstrates remarkable resource efficiency. Its non-embedding memory footprint and estimated energy consumption&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Horowitz,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib10" title="">2014</a>; Zhang et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib45" title="">2022</a>)</cite> during decoding are substantially lower compared to all the full-precision models evaluated, highlighting a significant advantage in operational cost and deployability on resource-constrained devices.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S4.SS1.p2">
+<p class="ltx_p" id="S4.SS1.p2.1">In terms of task performance, <span class="ltx_text" id="S4.SS1.p2.1.1">BitNet b1.58 2B4T</span> proves highly competitive. It achieves the best results among the compared models on several benchmarks spanning reasoning, knowledge, and math capabilities. On other benchmarks, its performance is closely comparable to the top-performing full-precision models. While some full-precision models show slight advantages on specific tasks or the overall average, <span class="ltx_text" id="S4.SS1.p2.1.2">BitNet b1.58 2B4T</span> delivers strong performance across the board. The results indicate that <span class="ltx_text" id="S4.SS1.p2.1.3">BitNet b1.58 2B4T</span> achieves capabilities nearly on par with leading models in its size class while offering dramatically improved efficiency.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+<section class="ltx_subsection" id="S4.SS2">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">4.2 </span>Comparison with Post-training Quantized Models</h3><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S4.SS2.p1">
+<p class="ltx_p" id="S4.SS2.p1.1">We further investigate the efficiency-performance trade-off by comparing <span class="ltx_text" id="S4.SS2.p1.1.1">BitNet b1.58 2B4T</span> against post-training quantized (PTQ) versions of a leading competitor, Qwen2.5 1.5B, using standard INT4 methods (GPTQ and AWQ). The results are summarized in Table&nbsp;<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#S4.T2" title="Table 2 ‣ 4 Evaluation ‣ BitNet b1.58 2B4T Technical Report"><span class="ltx_text ltx_ref_tag">2</span></a>.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S4.SS2.p2">
+<p class="ltx_p" id="S4.SS2.p2.1">While INT4 quantization successfully reduces the memory footprint of the full-precision model, <span class="ltx_text" id="S4.SS2.p2.1.1">BitNet b1.58 2B4T</span> achieves an even lower memory requirement due to its native 1-bit architecture. More importantly, this superior memory efficiency does not compromise performance relative to the quantized models. Standard PTQ techniques lead to a noticeable degradation in performance compared to the original full-precision model. In contrast, <span class="ltx_text" id="S4.SS2.p2.1.2">BitNet b1.58 2B4T</span> maintains stronger overall performance than the INT4 quantized versions of Qwen2.5-1.5B on the evaluated benchmarks. This comparison suggests that <span class="ltx_text" id="S4.SS2.p2.1.3">BitNet b1.58 2B4T</span> represents a more favorable point on the efficiency-performance curve than applying conventional INT4 PTQ to existing architectures, offering better performance with lower resource usage.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+<section class="ltx_subsection" id="S4.SS3">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">4.3 </span>Comparison with Open-weight 1-bit Models</h3><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S4.SS3.p1">
+<p class="ltx_p" id="S4.SS3.p1.1">Finally, we situate <span class="ltx_text" id="S4.SS3.p1.1.1">BitNet b1.58 2B4T</span> within the landscape of other models designed for or quantized to near 1-bit precision. We compare it against natively trained 1-bit models of smaller scale and significantly larger models post-training quantized to 1.58-bit precision. The comparative results are presented in Table&nbsp;<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#S4.T3" title="Table 3 ‣ 4 Evaluation ‣ BitNet b1.58 2B4T Technical Report"><span class="ltx_text ltx_ref_tag">3</span></a>.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S4.SS3.p2">
+<p class="ltx_p" id="S4.SS3.p2.1">The evaluation clearly positions <span class="ltx_text" id="S4.SS3.p2.1.1">BitNet b1.58 2B4T</span> as the leading model in this category. It demonstrates significantly stronger overall performance than all other compared 1-bit models, achieving the highest scores on the vast majority of benchmarks. Notably, <span class="ltx_text" id="S4.SS3.p2.1.2">BitNet b1.58 2B4T</span> substantially outperforms not only the smaller, natively trained 1-bit models but also the much larger models (in terms of parameter count) that were quantized to 1-bit. This highlights the effectiveness of the native training approach employed by <span class="ltx_text" id="S4.SS3.p2.1.3">BitNet b1.58 2B4T</span>, allowing it to set a new state-of-the-art performance level for models operating at this extreme level of quantization, even surpassing larger models subjected to post-training quantization.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+</section>
+<section class="ltx_section" id="S5">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">5 </span>Inference Implementation</h2><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S5.p1">
+<p class="ltx_p" id="S5.p1.1">Efficient inference is crucial for deploying Large Language Models, particularly for resource-constrained environments. The unique quantization scheme of <span class="ltx_text" id="S5.p1.1.1">BitNet b1.58 2B4T</span>, employing 1.58-bit weights and 8-bit activations (W1.58A8), necessitates specialized implementations, as standard deep learning libraries often lack optimized kernels for such mixed-precision, low-bit formats. To address this, we developed and open-sourced dedicated inference libraries for both GPU and CPU platforms. The code is publicly available at <a class="ltx_ref ltx_url ltx_font_typewriter" href="https://aka.ms/bitnet" title="">https://aka.ms/bitnet</a>.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<section class="ltx_subsection" id="S5.SS1">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">5.1 </span>GPU Inference</h3><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S5.SS1.p1">
+<p class="ltx_p" id="S5.SS1.p1.1">Current GPU architectures and their associated software libraries (e.g., cuBLAS, PyTorch kernels) are primarily optimized for operations involving standard data types like FP16, BF16, and INT8/INT4. Native, high-performance support for the specific W1.58A8 matrix multiplication required by <span class="ltx_text" id="S5.SS1.p1.1.1">BitNet b1.58 2B4T</span> is generally unavailable. This limitation can hinder the realization of the theoretical efficiency gains offered by 1-bit models on existing hardware.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S5.SS1.p2">
+<p class="ltx_p" id="S5.SS1.p2.1">To enable efficient GPU inference, we developed a custom CUDA kernel specifically designed for the W1.58A8 matrix multiplication. Since ternary weights ({-1, 0, +1}, representing 1.58 bits) cannot be stored efficiently using standard data types, we pack multiple weight values into a single 8-bit integer (‘int8’) for storage in High Bandwidth Memory (HBM). Specifically, four ternary values are encoded into one ‘int8’ value. During computation, the CUDA kernel loads the packed ‘int8’ weights from HBM into the GPU’s faster on-chip Shared Memory (SRAM). It then unpacks these values back into a representation suitable for efficient ternary computation (e.g., reconstructing the -1, 0, +1 values) immediately before performing the matrix multiplication with the 8-bit activations. This ‘pack-store-load-unpack-compute’ strategy minimizes memory bandwidth usage while leveraging custom compute instructions.
+Further implementation details and optimization strategies are elaborated in the Ladder framework&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib38" title="">Wang et&nbsp;al., 2023b, </a>)</cite>.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S5.SS1.p3">
+<p class="ltx_p" id="S5.SS1.p3.1">While our custom kernel significantly improves performance compared to naive implementations, we note that current commodity GPU architectures are not optimally designed for the 1-bit models. We believe that future hardware innovations, potentially incorporating dedicated logic for low-bit operations, will be essential to fully unlock the performance and energy efficiency potential of models like BitNet b1.58.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+<section class="ltx_subsection" id="S5.SS2">
+<h3 class="ltx_title ltx_title_subsection">
+<span class="ltx_tag ltx_tag_subsection">5.2 </span>CPU Inference</h3><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S5.SS2.p1">
+<p class="ltx_p" id="S5.SS2.p1.1">To ensure broad accessibility and enable deployment on devices lacking powerful GPUs (e.g., edge devices, laptops, standard servers), we developed <em class="ltx_emph ltx_font_italic" id="S5.SS2.p1.1.1">bitnet.cpp</em>. This C++ library serves as an official reference implementation for CPU inference of 1-bit LLMs, including BitNet b1.58.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S5.SS2.p2">
+<p class="ltx_p" id="S5.SS2.p2.1"><em class="ltx_emph ltx_font_italic" id="S5.SS2.p2.1.1">bitnet.cpp</em> provides optimized kernels tailored for efficient execution on standard CPU architectures. The kernels are designed to operate efficiently with the model’s specific quantization scheme, avoiding the overhead of generic quantization libraries or intricate low-level bit manipulation where possible. It processes the weight elements in a manner consistent with the BitNet b1.58 training methodology, ensuring numerical accuracy (lossless inference relative to the training procedure).</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S5.SS2.p3">
+<p class="ltx_p" id="S5.SS2.p3.1">This approach delivers fast and accurate inference of 1.58-bit models directly on CPUs. More technical details and usage instructions can be found in the <em class="ltx_emph ltx_font_italic" id="S5.SS2.p3.1.1">bitnet.cpp</em> repository and associated technical report&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Wang et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib37" title="">2025</a>)</cite>.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+</section>
+<section class="ltx_section" id="S6">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">6 </span>Conclusion</h2><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S6.p1">
+<p class="ltx_p" id="S6.p1.1">This technical report introduced <span class="ltx_text" id="S6.p1.1.1">BitNet b1.58 2B4T</span>, a significant step towards highly efficient yet capable Large Language Models. As the first open-source, native 1-bit LLM trained at the 2-billion parameter scale on 4 trillion tokens, our work demonstrates the viability of extreme quantization directly within the training process.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S6.p2">
+<p class="ltx_p" id="S6.p2.1">Comprehensive evaluations across benchmarks assessing language understanding, reasoning, mathematics, coding, and dialogue revealed that <span class="ltx_text" id="S6.p2.1.1">BitNet b1.58 2B4T</span> achieves performance comparable to state-of-the-art open-weight, full-precision models of similar size. Crucially, this performance parity is achieved with dramatically reduced computational requirements, offering substantial savings in memory footprint, energy consumption, and inference latency. To facilitate practical use and further research, we developed and released optimized inference implementations for both GPU (via custom CUDA kernels) and CPU (via the ‘bitnet.cpp’ library), alongside the model weights available on Hugging Face.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S6.p3">
+<p class="ltx_p" id="S6.p3.1"><span class="ltx_text" id="S6.p3.1.1">BitNet b1.58 2B4T</span> represents a compelling proof-of-concept that challenges the necessity of full-precision weights for achieving high performance in LLMs at scale. It opens avenues for deploying powerful language models in resource-constrained environments where previous models were prohibitive, potentially democratizing access to advanced AI capabilities.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+<section class="ltx_section" id="S7">
+<h2 class="ltx_title ltx_title_section">
+<span class="ltx_tag ltx_tag_section">7 </span>Future Directions</h2><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="S7.p1">
+<p class="ltx_p" id="S7.p1.1">While <span class="ltx_text" id="S7.p1.1.1">BitNet b1.58 2B4T</span> demonstrates promising results, several exciting research directions remain:</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="S7.p2">
+<ul class="ltx_itemize" id="S7.I1">
+<li class="ltx_item" id="S7.I1.i1" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S7.I1.i1.p1">
+<p class="ltx_p" id="S7.I1.i1.p1.1"><span class="ltx_text ltx_font_bold" id="S7.I1.i1.p1.1.1">Scaling Laws and Larger Models:</span> Investigating the scaling properties of native 1-bit LLMs is crucial. Future work will explore training larger models (e.g., 7B, 13B parameters and beyond) and training on even larger datasets to understand if the performance parity with full-precision models holds.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S7.I1.i2" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S7.I1.i2.p1">
+<p class="ltx_p" id="S7.I1.i2.p1.1"><span class="ltx_text ltx_font_bold" id="S7.I1.i2.p1.1.1">Hardware Co-Design and Optimization:</span> The full potential of 1-bit models is likely hindered by current hardware limitations. Continued development of highly optimized kernels for existing hardware (GPUs, CPUs, NPUs) is needed. Furthermore, co-designing future hardware accelerators specifically optimized for 1-bit computations and data movement could unlock orders-of-magnitude improvements in speed and energy efficiency.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S7.I1.i3" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S7.I1.i3.p1">
+<p class="ltx_p" id="S7.I1.i3.p1.1"><span class="ltx_text ltx_font_bold" id="S7.I1.i3.p1.1.1">Extended Sequence Length:</span> Extending the maximum sequence length of <span class="ltx_text" id="S7.I1.i3.p1.1.2">BitNet b1.58 2B4T</span> can process is crucial. This enhancement is vital for tasks demanding long-context understanding, such as summarizing lengthy documents or engaging in complex problem-solving, and is particularly critical for improving performance on <span class="ltx_text ltx_font_bold" id="S7.I1.i3.p1.1.3">long chain-of-thought reasoning</span> tasks. Investigating efficient attention mechanisms suitable for low-bit models at longer sequence lengths will be key.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S7.I1.i4" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S7.I1.i4.p1">
+<p class="ltx_p" id="S7.I1.i4.p1.1"><span class="ltx_text ltx_font_bold" id="S7.I1.i4.p1.1.1">Multilingual Capabilities:</span> The current model is primarily trained on English-centric data. Extending the pre-training corpus and potentially adapting the architecture to effectively support <span class="ltx_text ltx_font_bold" id="S7.I1.i4.p1.1.2">multiple languages</span> is a key direction for broader applicability.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S7.I1.i5" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S7.I1.i5.p1">
+<p class="ltx_p" id="S7.I1.i5.p1.1"><span class="ltx_text ltx_font_bold" id="S7.I1.i5.p1.1.1">Multimodal Integration:</span> Exploring the integration of 1-bit principles into <span class="ltx_text ltx_font_bold" id="S7.I1.i5.p1.1.2">multimodal architectures</span> is another promising frontier. Developing efficient ways to process and fuse information from different modalities (e.g., text and images) within a low-bit framework could enable new applications.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="S7.I1.i6" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="S7.I1.i6.p1">
+<p class="ltx_p" id="S7.I1.i6.p1.1"><span class="ltx_text ltx_font_bold" id="S7.I1.i6.p1.1.1">Theoretical Understanding:</span> Delving deeper into the theoretical underpinnings of why 1-bit training at scale is effective remains an open area. Analyzing the learning dynamics, loss landscapes, and representational properties of these models could yield valuable insights for future development.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+</ul>
+</div>
+<div class="ltx_para" id="S7.p3">
+<p class="ltx_p" id="S7.p3.1">By pursuing these directions, we aim to further advance the capability and efficiency of 1-bit LLMs, paving the way for more sustainable and accessible artificial intelligence. The open-source release of <span class="ltx_text" id="S7.p3.1.1">BitNet b1.58 2B4T</span> and its associated tools provides a foundation for the community to build upon these efforts.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+<section class="ltx_bibliography" id="bib">
+<h2 class="ltx_title ltx_title_bibliography">References</h2><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<ul class="ltx_biblist">
+<li class="ltx_bibitem" id="bib.bib1">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Allal et&nbsp;al.,  (2025)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Allal, L.&nbsp;B., Lozhkov, A., Bakouch, E., Blázquez, G.&nbsp;M., Penedo, G., Tunstall, L., Marafioti, A., Kydlíček, H., Lajarín, A.&nbsp;P., Srivastav, V., Lochner, J., Fahlgren, C., Nguyen, X.-S., Fourrier, C., Burtenshaw, B., Larcher, H., Zhao, H., Zakka, C., Morlon, M., Raffel, C., von Werra, L., and Wolf, T. (2025).
+
+</span>
+<span class="ltx_bibblock">Smollm2: When smol goes big - data-centric training of a small language model.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib1.1.1">CoRR</span>, abs/2502.02737.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib2">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Bai et&nbsp;al.,  (2025)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Bai, S., Chen, K., Liu, X., Wang, J., Ge, W., Song, S., Dang, K., Wang, P., Wang, S., Tang, J., Zhong, H., Zhu, Y., Yang, M.-H., Li, Z., Wan, J., Wang, P., Ding, W., Fu, Z., Xu, Y., Ye, J., Zhang, X., Xie, T., Cheng, Z., Zhang, H., Yang, Z., Xu, H., and Lin, J. (2025).
+
+</span>
+<span class="ltx_bibblock">Qwen2.5-vl technical report.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib2.1.1">CoRR</span>, abs/2502.13923.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib3">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Bisk et&nbsp;al.,  (2019)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Bisk, Y., Zellers, R., Bras, R.&nbsp;L., Gao, J., and Choi, Y. (2019).
+
+</span>
+<span class="ltx_bibblock">PIQA: reasoning about physical commonsense in natural language.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib3.1.1">CoRR</span>, abs/1911.11641.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib4">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Clark et&nbsp;al.,  (2019)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Clark, C., Lee, K., Chang, M.-W., Kwiatkowski, T., Collins, M., and Toutanova, K. (2019).
+
+</span>
+<span class="ltx_bibblock">Boolq: Exploring the surprising difficulty of natural yes/no questions.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib4.1.1">CoRR</span>, abs/1905.10044.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib5">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Cobbe et&nbsp;al.,  (2021)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert, M., Tworek, J., Hilton, J., Nakano, R., Hesse, C., and Schulman, J. (2021).
+
+</span>
+<span class="ltx_bibblock">Training verifiers to solve math word problems.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib5.1.1">CoRR</span>, abs/2110.14168.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib6">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Cui et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Cui, G., Yuan, L., Ding, N., Yao, G., He, B., Zhu, W., Ni, Y., Xie, G., Xie, R., Lin, Y., Liu, Z., and Sun, M. (2024).
+
+</span>
+<span class="ltx_bibblock">ULTRAFEEDBACK: boosting language models with scaled AI feedback.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib6.1.1">ICML</span>. OpenReview.net.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib7">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Dubey et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Dubey, A., Jauhri, A., Pandey, A., Kadian, A., Al-Dahle, A., Letman, A., Mathur, A., Schelten, A., Yang, A., Fan, A., Goyal, A., Hartshorn, A., Yang, A., Mitra, A., Sravankumar, A., Korenev, A., Hinsvark, A., Rao, A., Zhang, A., Rodriguez, A., Gregerson, A., Spataru, A., Rozière, B., Biron, B., Tang, B., Chern, B., Caucheteux, C., Nayak, C., Bi, C., Marra, C., McConnell, C., Keller, C., Touret, C., Wu, C., Wong, C., Ferrer, C.&nbsp;C., Nikolaidis, C., Allonsius, D., Song, D., Pintz, D., Livshits, D., Esiobu, D., Choudhary, D., Mahajan, D., Garcia-Olano, D., Perino, D., Hupkes, D., Lakomkin, E., AlBadawy, E., Lobanova, E., Dinan, E., Smith, E.&nbsp;M., Radenovic, F., Zhang, F., Synnaeve, G., Lee, G., Anderson, G.&nbsp;L., Nail, G., Mialon, G., Pang, G., Cucurell, G., Nguyen, H., Korevaar, H., Xu, H., Touvron, H., Zarov, I., Ibarra, I.&nbsp;A., Kloumann, I.&nbsp;M., Misra, I., Evtimov, I., Copet, J., Lee, J., Geffert, J., Vranes, J., Park, J., Mahadeokar, J., Shah, J., van&nbsp;der Linde, J., Billock, J., Hong, J., Lee, J., Fu, J., Chi,
+J., Huang, J., Liu, J., Wang, J., Yu, J., Bitton, J., Spisak, J., Park, J., Rocca, J., Johnstun, J., Saxe, J., Jia, J., Alwala, K.&nbsp;V., Upasani, K., Plawiak, K., Li, K., Heafield, K., Stone, K., and et&nbsp;al. (2024).
+
+</span>
+<span class="ltx_bibblock">The llama 3 herd of models.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib7.1.1">CoRR</span>, abs/2407.21783.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib8">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">(8)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Hendrycks, D., Burns, C., Basart, S., Zou, A., Mazeika, M., Song, D., and Steinhardt, J. (2021a).
+
+</span>
+<span class="ltx_bibblock">Measuring massive multitask language understanding.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib8.1.1">9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021</span>.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib9">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">(9)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song, D., and Steinhardt, J. (2021b).
+
+</span>
+<span class="ltx_bibblock">Measuring mathematical problem solving with the MATH dataset.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib9.1.1">Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks 1, NeurIPS Datasets and Benchmarks 2021, December 2021, virtual</span>.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib10">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Horowitz,  (2014)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Horowitz, M. (2014).
+
+</span>
+<span class="ltx_bibblock">1.1 computing’s energy problem (and what we can do about it).
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib10.1.1">2014 IEEE International Conference on Solid-State Circuits Conference, ISSCC 2014, Digest of Technical Papers, San Francisco, CA, USA, February 9-13, 2014</span>, pages 10–14.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib11">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Hsu et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Hsu, P.-L., Dai, Y., Kothapalli, V., Song, Q., Tang, S., Zhu, S., Shimizu, S., Sahni, S., Ning, H., and Chen, Y. (2024).
+
+</span>
+<span class="ltx_bibblock">Liger kernel: Efficient triton kernels for LLM training.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib11.1.1">CoRR</span>, abs/2410.10989.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib12">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Hu et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Hu, S., Tu, Y., Han, X., He, C., Cui, G., Long, X., Zheng, Z., Fang, Y., Huang, Y., Zhao, W., Zhang, X., Thai, Z.&nbsp;L., Zhang, K., Wang, C., Yao, Y., Zhao, C., Zhou, J., Cai, J., Zhai, Z., Ding, N., Jia, C., Zeng, G., Li, D., Liu, Z., and Sun, M. (2024).
+
+</span>
+<span class="ltx_bibblock">Minicpm: Unveiling the potential of small language models with scalable training strategies.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib12.1.1">CoRR</span>, abs/2404.06395.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib13">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Joshi et&nbsp;al.,  (2017)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Joshi, M., Choi, E., Weld, D.&nbsp;S., and Zettlemoyer, L. (2017).
+
+</span>
+<span class="ltx_bibblock">Triviaqa: A large scale distantly supervised challenge dataset for reading comprehension.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib13.1.1">Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics, ACL 2017, Vancouver, Canada, July 30 - August 4, Volume 1: Long Papers</span>, pages 1601–1611.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib14">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">(14)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Li, H., Dong, Q., Tang, Z., Wang, C., Zhang, X., Huang, H., Huang, S., Huang, X., Huang, Z., Zhang, D., Gu, Y., Cheng, X., Wang, X., Chen, S.-Q., Dong, L., Lu, W., Sui, Z., Wang, B., Lam, W., and Wei, F. (2024a).
+
+</span>
+<span class="ltx_bibblock">Synthetic data (almost) from scratch: Generalized instruction tuning for language models.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib14.1.1">CoRR</span>, abs/2402.13064.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib15">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">(15)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Li, J., Fang, A., Smyrnis, G., Ivgi, M., Jordan, M., Gadre, S.&nbsp;Y., Bansal, H., Guha, E., Keh, S.&nbsp;S., Arora, K., Garg, S., Xin, R., Muennighoff, N., Heckel, R., Mercat, J., Chen, M.&nbsp;F., Gururangan, S., Wortsman, M., Albalak, A., Bitton, Y., Nezhurina, M., Abbas, A., Hsieh, C.-Y., Ghosh, D., Gardner, J., Kilian, M., Zhang, H., Shao, R., Pratt, S.&nbsp;M., Sanyal, S., Ilharco, G., Daras, G., Marathe, K., Gokaslan, A., Zhang, J., Chandu, K.&nbsp;R., Nguyen, T., Vasiljevic, I., Kakade, S.&nbsp;M., Song, S., Sanghavi, S., Faghri, F., Oh, S., Zettlemoyer, L., Lo, K., El-Nouby, A., Pouransari, H., Toshev, A., Wang, S., Groeneveld, D., Soldaini, L., Koh, P.&nbsp;W., Jitsev, J., Kollar, T., Dimakis, A., Carmon, Y., Dave, A., Schmidt, L., and Shankar, V. (2024b).
+
+</span>
+<span class="ltx_bibblock">Datacomp-lm: In search of the next generation of training sets for language models.
+
+</span>
+<span class="ltx_bibblock">In Globersons, A., Mackey, L., Belgrave, D., Fan, A., Paquet, U., Tomczak, J.&nbsp;M., and Zhang, C., editors, <span class="ltx_text ltx_font_italic" id="bib.bib15.1.1">Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024</span>.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib16">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Lian et&nbsp;al.,  (2023)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Lian, W., Wang, G., Goodson, B., Pentland, E., Cook, A., Vong, C., and "Teknium" (2023).
+
+</span>
+<span class="ltx_bibblock">Slimorca: An open dataset of gpt-4 augmented flan reasoning traces, with verification.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib17">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Lin et&nbsp;al.,  (2022)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Lin, S., Hilton, J., and Evans, O. (2022).
+
+</span>
+<span class="ltx_bibblock">Truthfulqa: Measuring how models mimic human falsehoods.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib17.1.1">Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), ACL 2022, Dublin, Ireland, May 22-27, 2022</span>, pages 3214–3252.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib18">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Liu et&nbsp;al.,  (2023)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Liu, J., Xia, C.&nbsp;S., Wang, Y., and Zhang, L. (2023).
+
+</span>
+<span class="ltx_bibblock">Is your code generated by chatgpt really correct? rigorous evaluation of large language models for code generation.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib18.1.1">Advances in Neural Information Processing Systems</span>, 36:21558–21572.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib19">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Ma et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Ma, S., Wang, H., Ma, L., Wang, L., Wang, W., Huang, S., Dong, L., Wang, R., Xue, J., and Wei, F. (2024).
+
+</span>
+<span class="ltx_bibblock">The era of 1-bit llms: All large language models are in 1.58 bits.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib19.1.1">CoRR</span>, abs/2402.17764.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib20">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Mihaylov et&nbsp;al.,  (2018)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Mihaylov, T., Clark, P., Khot, T., and Sabharwal, A. (2018).
+
+</span>
+<span class="ltx_bibblock">Can a suit of armor conduct electricity? A new dataset for open book question answering.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib20.1.1">CoRR</span>, abs/1809.02789.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib21">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Penedo et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Penedo, G., Kydlícek, H., Allal, L.&nbsp;B., Lozhkov, A., Mitchell, M., Raffel, C.&nbsp;A., von Werra, L., and Wolf, T. (2024).
+
+</span>
+<span class="ltx_bibblock">The fineweb datasets: Decanting the web for the finest text data at scale.
+
+</span>
+<span class="ltx_bibblock">In Globersons, A., Mackey, L., Belgrave, D., Fan, A., Paquet, U., Tomczak, J.&nbsp;M., and Zhang, C., editors, <span class="ltx_text ltx_font_italic" id="bib.bib21.1.1">Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024</span>.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib22">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Rafailov et&nbsp;al.,  (2023)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Rafailov, R., Sharma, A., Mitchell, E., Manning, C.&nbsp;D., Ermon, S., and Finn, C. (2023).
+
+</span>
+<span class="ltx_bibblock">Direct preference optimization: Your language model is secretly a reward model.
+
+</span>
+<span class="ltx_bibblock">In Oh, A., Naumann, T., Globerson, A., Saenko, K., Hardt, M., and Levine, S., editors, <span class="ltx_text ltx_font_italic" id="bib.bib22.1.1">Advances in Neural Information Processing Systems 36</span>.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib23">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Sakaguchi et&nbsp;al.,  (2020)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Sakaguchi, K., Bras, R.&nbsp;L., Bhagavatula, C., and Choi, Y. (2020).
+
+</span>
+<span class="ltx_bibblock">WinoGrande: an adversarial winograd schema challenge at scale.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib23.1.1">AAAI</span>, pages 8732–8740.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib24">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Schulman et&nbsp;al.,  (2017)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O. (2017).
+
+</span>
+<span class="ltx_bibblock">Proximal policy optimization algorithms.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib24.1.1">CoRR</span>, abs/1707.06347.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib25">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Shao et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Shao, Z., Wang, P., Zhu, Q., Xu, R., Song, J., Zhang, M., Li, Y.&nbsp;K., Wu, Y., and Guo, D. (2024).
+
+</span>
+<span class="ltx_bibblock">Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib25.1.1">CoRR</span>, abs/2402.03300.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib26">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Shazeer,  (2020)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Shazeer, N. (2020).
+
+</span>
+<span class="ltx_bibblock">GLU variants improve transformer.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib26.1.1">CoRR</span>, abs/2002.05202.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib27">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Su et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Su, J., Ahmed, M. H.&nbsp;M., Lu, Y., Pan, S., Bo, W., and Liu, Y. (2024).
+
+</span>
+<span class="ltx_bibblock">Roformer: Enhanced transformer with rotary position embedding.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib27.1.1">Neurocomputing</span>, 568:127063.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib28">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Talmor et&nbsp;al.,  (2019)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Talmor, A., Herzig, J., Lourie, N., and Berant, J. (2019).
+
+</span>
+<span class="ltx_bibblock">Commonsenseqa: A question answering challenge targeting commonsense knowledge.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib28.1.1">Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, NAACL-HLT 2019, Minneapolis, MN, USA, June 2-7, 2019, Volume 1 (Long and Short Papers)</span>, pages 4149–4158.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib29">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Tang et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Tang, Z., Zhang, X., Wang, B., and Wei, F. (2024).
+
+</span>
+<span class="ltx_bibblock">Mathscale: Scaling instruction tuning for mathematical reasoning.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib29.1.1">Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024</span>. OpenReview.net.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib30">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Team,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Team, F.-L. (2024).
+
+</span>
+<span class="ltx_bibblock">The falcon 3 family of open models.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib31">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Team et&nbsp;al.,  (2025)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Team, G., Kamath, A., Ferret, J., Pathak, S., Vieillard, N., Merhej, R., Perrin, S., Matejovicova, T., Ram’e, A., Rivi‘ere, M., et&nbsp;al. (2025).
+
+</span>
+<span class="ltx_bibblock">Gemma 3 technical report.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib31.1.1">arXiv preprint arXiv:2503.19786</span>.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib32">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Vaswani et&nbsp;al.,  (2017)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.&nbsp;N., Kaiser, L., and Polosukhin, I. (2017).
+
+</span>
+<span class="ltx_bibblock">Attention is all you need.
+
+</span>
+<span class="ltx_bibblock">In Guyon, I., von Luxburg, U., Bengio, S., Wallach, H.&nbsp;M., Fergus, R., Vishwanathan, S. V.&nbsp;N., and Garnett, R., editors, <span class="ltx_text ltx_font_italic" id="bib.bib32.1.1">Advances in Neural Information Processing Systems 30: Annual Conference on Neural Information Processing Systems 2017, December 4-9, 2017, Long Beach, CA, USA</span>, pages 5998–6008.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib33">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">(33)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Wang, H., Ma, S., Dong, L., Huang, S., Wang, H., Ma, L., Yang, F., Wang, R., Wu, Y., and Wei, F. (2023a).
+
+</span>
+<span class="ltx_bibblock">Bitnet: Scaling 1-bit transformers for large language models.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib33.1.1">CoRR</span>, abs/2310.11453.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib34">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Wang et&nbsp;al.,  (2022)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Wang, H., Ma, S., Huang, S., Dong, L., Wang, W., Peng, Z., Wu, Y., Bajaj, P., Singhal, S., Benhaim, A., Patra, B., Liu, Z., Chaudhary, V., Song, X., and Wei, F. (2022).
+
+</span>
+<span class="ltx_bibblock">Foundation transformers.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib34.1.1">CoRR</span>.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib35">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">(35)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Wang, H., Ma, S., Wang, R., and Wei, F. (2024a).
+
+</span>
+<span class="ltx_bibblock">Q-sparse: All large language models can be fully sparsely-activated.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib35.1.1">CoRR</span>, abs/2407.10969.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib36">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">(36)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Wang, H., Ma, S., and Wei, F. (2024b).
+
+</span>
+<span class="ltx_bibblock">Bitnet a4.8: 4-bit activations for 1-bit llms.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib36.1.1">CoRR</span>, abs/2411.04965.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib37">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Wang et&nbsp;al.,  (2025)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Wang, J., Zhou, H., Song, T., Cao, S., Xia, Y., Cao, T., Wei, J., Ma, S., Wang, H., and Wei, F. (2025).
+
+</span>
+<span class="ltx_bibblock">Bitnet.cpp: Efficient edge inference for ternary llms.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib37.1.1">CoRR</span>, abs/2502.11880.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib38">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">(38)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Wang, L., Ma, L., Cao, S., Zheng, N., Zhang, Q., Xue, J., Miao, Z., Cao, T., , and Yang, Y. (2023b).
+
+</span>
+<span class="ltx_bibblock">Ladder: Efficient tensor compilation on customized data format.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib38.1.1">OSDI</span>.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib39">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">(39)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Xu, C., Sun, Q., Zheng, K., Geng, X., Zhao, P., Feng, J., Tao, C., Lin, Q., and Jiang, D. (2024a).
+
+</span>
+<span class="ltx_bibblock">Wizardlm: Empowering large pre-trained language models to follow complex instructions.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib39.1.1">The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024</span>. OpenReview.net.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib40">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">(40)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Xu, Y., Han, X., Yang, Z., Wang, S., Zhu, Q., Liu, Z., Liu, W., and Che, W. (2024b).
+
+</span>
+<span class="ltx_bibblock">Onebit: Towards extremely low-bit large language models.
+
+</span>
+<span class="ltx_bibblock">In Globersons, A., Mackey, L., Belgrave, D., Fan, A., Paquet, U., Tomczak, J.&nbsp;M., and Zhang, C., editors, <span class="ltx_text ltx_font_italic" id="bib.bib40.1.1">Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024</span>.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib41">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">(41)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Xu, Z., Jiang, F., Niu, L., Deng, Y., Poovendran, R., Choi, Y., and Lin, B.&nbsp;Y. (2024c).
+
+</span>
+<span class="ltx_bibblock">Magpie: Alignment data synthesis from scratch by prompting aligned llms with nothing.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib41.1.1">CoRR</span>, abs/2406.08464.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib42">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Yadav et&nbsp;al.,  (2019)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Yadav, V., Bethard, S., and Surdeanu, M. (2019).
+
+</span>
+<span class="ltx_bibblock">Quick and (not so) dirty: Unsupervised selection of justification sentences for multi-hop question answering.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib42.1.1">EMNLP-IJCNLP</span>.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib43">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Yang et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Yang, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Li, C., Liu, D., Huang, F., Wei, H., Lin, H., Yang, J., Tu, J., Zhang, J., Yang, J., Yang, J., Zhou, J., Lin, J., Dang, K., Lu, K., Bao, K., Yang, K., Yu, L., Li, M., Xue, M., Zhang, P., Zhu, Q., Men, R., Lin, R., Li, T., Xia, T., Ren, X., Ren, X., Fan, Y., Su, Y., Zhang, Y., Wan, Y., Liu, Y., Cui, Z., Zhang, Z., and Qiu, Z. (2024).
+
+</span>
+<span class="ltx_bibblock">Qwen2.5 technical report.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib43.1.1">CoRR</span>, abs/2412.15115.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib44">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Zellers et&nbsp;al.,  (2019)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Zellers, R., Holtzman, A., Bisk, Y., Farhadi, A., and Choi, Y. (2019).
+
+</span>
+<span class="ltx_bibblock">HellaSwag: can a machine really finish your sentence?
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib44.1.1">Proceedings of the 57th Conference of the Association for Computational Linguistics</span>, pages 4791–4800.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib45">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Zhang et&nbsp;al.,  (2022)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Zhang, Y., Zhang, Z., and Lew, L. (2022).
+
+</span>
+<span class="ltx_bibblock">PokeBNN: A binary pursuit of lightweight accuracy.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib45.1.1">IEEE/CVF Conference on Computer Vision and Pattern Recognition</span>, pages 12465–12475. IEEE.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib46">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Zhao et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Zhao, W., Ren, X., Hessel, J., Cardie, C., Choi, Y., and Deng, Y. (2024).
+
+</span>
+<span class="ltx_bibblock">Wildchat: 1m chatgpt interaction logs in the wild.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib46.1.1">The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024</span>. OpenReview.net.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib47">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Zheng et&nbsp;al.,  (2024)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Zheng, L., Chiang, W.-L., Sheng, Y., Li, T., Zhuang, S., Wu, Z., Zhuang, Y., Li, Z., Lin, Z., Xing, E.&nbsp;P., Gonzalez, J.&nbsp;E., Stoica, I., and Zhang, H. (2024).
+
+</span>
+<span class="ltx_bibblock">Lmsys-chat-1m: A large-scale real-world LLM conversation dataset.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib47.1.1">The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024</span>. OpenReview.net.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib48">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Zheng et&nbsp;al.,  (2023)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Zheng, L., Chiang, W.-L., Sheng, Y., Zhuang, S., Wu, Z., Zhuang, Y., Lin, Z., Li, Z., Li, D., Xing, E.&nbsp;P., Zhang, H., Gonzalez, J.&nbsp;E., and Stoica, I. (2023).
+
+</span>
+<span class="ltx_bibblock">Judging llm-as-a-judge with mt-bench and chatbot arena.
+
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_font_italic" id="bib.bib48.1.1">Advances in Neural Information Processing Systems 36</span>.
+
+</span>
+</li>
+<li class="ltx_bibitem" id="bib.bib49">
+<span class="ltx_tag ltx_role_refnum ltx_tag_bibitem">Zhou et&nbsp;al.,  (2023)<button class="back-to-reference-btn" aria-label="Back to the article">↑</button></span>
+<span class="ltx_bibblock">
+Zhou, J., Lu, T., Mishra, S., Brahma, S., Basu, S., Luan, Y., Zhou, D., and Hou, L. (2023).
+
+</span>
+<span class="ltx_bibblock">Instruction-following evaluation for large language models.
+
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_font_italic" id="bib.bib49.1.1">CoRR</span>, abs/2311.07911.
+
+</span>
+</li>
+</ul>
+</section>
+<section class="ltx_appendix" id="A1">
+<h2 class="ltx_title ltx_title_appendix">
+<span class="ltx_tag ltx_tag_appendix">Appendix A </span>Open-weight Baselines</h2><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="A1.p1">
+<p class="ltx_p" id="A1.p1.1">We summarize the links to the open-weight LLMs evaluated in this work as below:</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="A1.p2">
+<ul class="ltx_itemize" id="A1.I1">
+<li class="ltx_item" id="A1.I1.i1" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i1.p1">
+<p class="ltx_p" id="A1.I1.i1.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i1.p1.1.1">LLaMA 3.2 1B</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct" title="">meta-llama/Llama-3.2-1B-Instruct</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i2" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i2.p1">
+<p class="ltx_p" id="A1.I1.i2.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i2.p1.1.1">Gemma-3 1B</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/google/gemma-3-1b-it" title="">google/gemma-3-1b-it</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i3" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i3.p1">
+<p class="ltx_p" id="A1.I1.i3.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i3.p1.1.1">Qwen2.5 0.5B</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct" title="">Qwen/Qwen2.5-0.5B-Instruct</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i4" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i4.p1">
+<p class="ltx_p" id="A1.I1.i4.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i4.p1.1.1">Qwen2.5 1.5B</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct" title="">Qwen/Qwen2.5-1.5B-Instruct</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i5" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i5.p1">
+<p class="ltx_p" id="A1.I1.i5.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i5.p1.1.1">Qwen2.5 3B</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/Qwen/Qwen2.5-3B-Instruct" title="">Qwen/Qwen2.5-3B-Instruct</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i6" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i6.p1">
+<p class="ltx_p" id="A1.I1.i6.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i6.p1.1.1">SmolLM2 1.7B</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct" title="">HuggingFaceTB/SmolLM2-1.7B-Instruct</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i7" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i7.p1">
+<p class="ltx_p" id="A1.I1.i7.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i7.p1.1.1">MiniCPM 2B</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/openbmb/MiniCPM-2B-dpo-bf16" title="">openbmb/MiniCPM-2B-dpo-bf16</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i8" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i8.p1">
+<p class="ltx_p" id="A1.I1.i8.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i8.p1.1.1">Qwen2.5 1.5B-GPTQ-int4</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GPTQ-Int4" title="">Qwen/Qwen2.5-1.5B-Instruct-GPTQ-Int4</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i9" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i9.p1">
+<p class="ltx_p" id="A1.I1.i9.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i9.p1.1.1">Qwen2.5 1.5B-AWQ-int4</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-AWQ" title="">Qwen/Qwen2.5-1.5B-Instruct-AWQ</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i10" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i10.p1">
+<p class="ltx_p" id="A1.I1.i10.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i10.p1.1.1">Bonsai 0.5B</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/deepgrove/Bonsai" title="">deepgrove/Bonsai</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i11" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i11.p1">
+<p class="ltx_p" id="A1.I1.i11.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i11.p1.1.1">OLMo-Bitnet 1B</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/NousResearch/OLMo-Bitnet-1B" title="">NousResearch/OLMo-Bitnet-1B</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i12" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i12.p1">
+<p class="ltx_p" id="A1.I1.i12.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i12.p1.1.1">Falcon3-1.58bit 7B</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/tiiuae/Falcon3-7B-Instruct-1.58bit" title="">tiiuae/Falcon3-7B-Instruct-1.58bit</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A1.I1.i13" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A1.I1.i13.p1">
+<p class="ltx_p" id="A1.I1.i13.p1.1"><span class="ltx_text ltx_font_bold" id="A1.I1.i13.p1.1.1">Llama3-8B-1.58 8B</span>:&nbsp;<a class="ltx_ref ltx_href ltx_font_typewriter" href="https://huggingface.co/HF1BitLLM/Llama3-8B-1.58-100B-tokens" title="">HF1BitLLM/Llama3-8B-1.58-100B-tokens</a></p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+</ul>
+</div>
+</section>
+<section class="ltx_appendix" id="A2">
+<h2 class="ltx_title ltx_title_appendix">
+<span class="ltx_tag ltx_tag_appendix">Appendix B </span>Evaluation Pipeline Details</h2><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="A2.p1">
+<p class="ltx_p" id="A2.p1.1">To ensure standardized evaluation, we employed established toolkits for different benchmark categories. Specifically:</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<ul class="ltx_itemize" id="A2.I1">
+<li class="ltx_item" id="A2.I1.i1" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A2.I1.i1.p1">
+<p class="ltx_p" id="A2.I1.i1.p1.1">For the HumanEval+ coding benchmark, we utilized the <a class="ltx_ref ltx_href ltx_font_typewriter" href="https://github.com/evalplus/evalplus" title="">evalplus</a> toolkit.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A2.I1.i2" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A2.I1.i2.p1">
+<p class="ltx_p" id="A2.I1.i2.p1.1">For the MATH-500 mathematical reasoning benchmark, we used a customized version of the <a class="ltx_ref ltx_href ltx_font_typewriter" href="https://github.com/ZubinGou/math-evaluation-harness" title="">math-evaluation-harness</a> toolkit.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A2.I1.i3" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A2.I1.i3.p1">
+<p class="ltx_p" id="A2.I1.i3.p1.1">For the MT-Bench conversational benchmark, evaluation was performed using the official <a class="ltx_ref ltx_href ltx_font_typewriter" href="https://github.com/lm-sys/FastChat/blob/main/fastchat/llm_judge/README.md" title="">LLM Judge</a> open-source codebase.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+<li class="ltx_item" id="A2.I1.i4" style="list-style-type:none;">
+<span class="ltx_tag ltx_tag_item">•</span>
+<div class="ltx_para" id="A2.I1.i4.p1">
+<p class="ltx_p" id="A2.I1.i4.p1.1">For all other benchmarks assessing language understanding, reasoning, knowledge, and comprehension, we used the standard <a class="ltx_ref ltx_href ltx_font_typewriter" href="https://github.com/EleutherAI/lm-evaluation-harness" title="">lm-evaluation-harness</a> framework.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</li>
+</ul>
+</div>
+<div class="ltx_para" id="A2.p2">
+<p class="ltx_p" id="A2.p2.1">Models were prompted using a chat format for generative tasks (e.g., GSM8K, IFEval, and MT-Bench), while default settings from the respective toolkits were used for other tasks.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<figure class="ltx_table" id="A2.T4">
+<table class="ltx_tabular ltx_centering ltx_guessed_headers ltx_align_middle" id="A2.T4.1">
+<thead class="ltx_thead">
+<tr class="ltx_tr" id="A2.T4.1.1.1">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_column ltx_th_row ltx_border_tt" id="A2.T4.1.1.1.1">Bits</th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_tt" id="A2.T4.1.1.1.2">ADD Energy</th>
+<th class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_tt" id="A2.T4.1.1.1.3">MUL Energy</th>
+</tr>
+</thead>
+<tbody class="ltx_tbody">
+<tr class="ltx_tr" id="A2.T4.1.2.1">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_t" id="A2.T4.1.2.1.1">FP16</th>
+<td class="ltx_td ltx_align_center ltx_border_t" id="A2.T4.1.2.1.2">0.16</td>
+<td class="ltx_td ltx_align_center ltx_border_t" id="A2.T4.1.2.1.3">0.34</td>
+</tr>
+<tr class="ltx_tr" id="A2.T4.1.3.2">
+<th class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_bb" id="A2.T4.1.3.2.1">INT8</th>
+<td class="ltx_td ltx_align_center ltx_border_bb" id="A2.T4.1.3.2.2">0.007</td>
+<td class="ltx_td ltx_align_center ltx_border_bb" id="A2.T4.1.3.2.3">0.07</td>
+</tr>
+</tbody>
+</table>
+<figcaption class="ltx_caption ltx_centering"><span class="ltx_tag ltx_tag_table">Table 4: </span>ADD and MUL energy consumption (in pJ) of different precision at 7nm process nodes.</figcaption>
+</figure><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+<div class="ltx_para" id="A2.p3">
+<p class="ltx_p" id="A2.p3.1">For energy consumption, we utilize the energy model in&nbsp;<cite class="ltx_cite ltx_citemacro_citep">(Horowitz,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib10" title="">2014</a>; Zhang et&nbsp;al.,, <a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#bib.bib45" title="">2022</a>)</cite> to estimate the arithmetic operations energy (AOE) of matrix multiplication. The sequence length is set as 512 tokens. We present the energy consumption for ADD and MUL operation at 7nm process nodes in Table&nbsp;<a class="ltx_ref" href="https://arxiv.org/html/2504.12285v2#A2.T4" title="Table 4 ‣ Appendix B Evaluation Pipeline Details ‣ BitNet b1.58 2B4T Technical Report"><span class="ltx_text ltx_ref_tag">4</span></a>.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+<div class="ltx_para" id="A2.p4">
+<p class="ltx_p" id="A2.p4.1">To assess CPU decoding performance, latency measurements were conducted on a Surface Laptop Studio 2 system powered by a 13th Gen Intel Core i7-13800H processor. The benchmarking process utilized 8 CPU threads. Specifically, the <span class="ltx_text" id="A2.p4.1.1">BitNet b1.58 2B4T</span> model was tested using its <em class="ltx_emph ltx_font_italic" id="A2.p4.1.2">bitnet.cpp</em> implementation, whereas other models were evaluated using the <em class="ltx_emph ltx_font_italic" id="A2.p4.1.3">llama.cpp</em> framework. For each model, we generated 128 tokens and report the average latency per token for this task.</p><button class="sr-only button" style="display: none;">Report issue for preceding element</button>
+</div>
+</section>
+</article>

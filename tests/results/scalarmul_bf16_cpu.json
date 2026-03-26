@@ -1,0 +1,12 @@
+{
+    "name": "ScalarMul_bf16_cpu",
+    "op": "ScalarMul",
+    "dtype": "bf16",
+    "mode": "cpu",
+    "pt_time": 0.0046337303998370775,
+    "vnn_time": 0.0039113732000259915,
+    "ratio": 0.8441089279090376,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

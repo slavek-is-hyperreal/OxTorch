@@ -1,0 +1,12 @@
+{
+    "name": "LayerNorm_bf16_vulkan",
+    "op": "LayerNorm",
+    "dtype": "bf16",
+    "mode": "vulkan",
+    "pt_time": 0.0018080331999954069,
+    "vnn_time": 0.0032126594000146725,
+    "ratio": 1.7768807564058193,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 46.0
+}

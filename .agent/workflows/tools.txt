@@ -1,0 +1,54 @@
+Poza tym załatwiłem 3 nowe urządzenia do testowania naszej biblioteki 
+
+Pierwsze to:
+
+System:
+  Host: slavekm Kernel: 5.10.224-antix.1-486-smp arch: i686 bits: 32
+    Console: pty pts/0 Distro: antiX-23.2_386-base Arditi del Popolo 6 October
+    2024
+Machine:
+  Type: Laptop System: ASUSTeK product: 1000HD v: x.x
+    serial: <superuser required>
+  Mobo: ASUSTeK model: 1000HD v: x.xx serial: <superuser required>
+    BIOS: American Megatrends v: 0902 date: 08/05/2008
+CPU:
+  Info: single core model: Intel Celeron M bits: 32 cache: 512 KiB note: check
+  Speed (MHz): 898 min/max: N/A core: 1: 898
+Graphics:
+  Device-1: Intel Mobile 915GM/GMS/910GML Express Graphics driver: i915
+    v: kernel
+  Device-2: Genesys Logic USB 2.0 Camera type: USB driver: uvcvideo
+  Display: server: X.org v: 1.21.1.7 driver: X: loaded: intel
+    unloaded: fbdev,modesetting,vesa dri: i915 gpu: i915 tty: 80x24
+    resolution: 1024x600
+  API: OpenGL Message: GL data unavailable in console. Try -G --display
+Audio:
+  Device-1: Intel 82801FB/FBM/FR/FW/FRW High Definition Audio
+    driver: snd_hda_intel
+  API: ALSA v: k5.10.224-antix.1-486-smp status: kernel-api
+Network:
+  Device-1: Qualcomm Atheros AR242x / AR542x Wireless Network Adapter
+    driver: ath5k
+  IF: wlan0 state: down mac: 00:22:43:04:ab:ad
+  Device-2: Qualcomm Atheros AR8121/AR8113/AR8114 Gigabit or Fast Ethernet
+    driver: ATL1E
+  IF: eth0 state: up speed: 100 Mbps duplex: full mac: 00:23:54:23:77:24
+Drives:
+  Local Storage: total: 149.05 GiB used: 5.99 GiB (4.0%)
+  ID-1: /dev/sda vendor: Seagate model: ST9160310AS size: 149.05 GiB
+Partition:
+  ID-1: / size: 145.65 GiB used: 5.99 GiB (4.1%) fs: ext4 dev: /dev/sda1
+Swap:
+  ID-1: swap-1 type: file size: 989 MiB used: 0 KiB (0.0%) file: /swap/swap
+Sensors:
+  System Temperatures: cpu: N/A mobo: N/A
+  Fan Speeds (RPM): cpu: 620
+Info:
+  Processes: 94 Uptime: 2m Memory: 989.6 MiB used: 255.8 MiB (25.9%)
+  Init: SysVinit runlevel: 2 Shell: Bash inxi: 3.3.26
+slavekm@slavekm:~
+$ 
+
+drugie to Raspberry Pi model B+ v 1.2 (2014)
+
+i kompa z kartą graf podobnie starą - ale jego spec pokażę później - co myślisz?

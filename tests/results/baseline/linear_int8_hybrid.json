@@ -1,0 +1,1 @@
+{"name": "Linear_int8_hybrid", "op": "Linear", "dtype": "int8", "mode": "hybrid", "pt_time": 1.497930144649945, "vnn_time": 0.644112906349983, "ratio": 0.4300019654791762, "parity": true, "max_diff": 0.0, "cpu_temp": 44.0, "baseline": 0.1642664560499952}

@@ -1,0 +1,1 @@
+{"name": "Sum_int8_vulkan", "op": "Sum", "dtype": "int8", "mode": "vulkan", "pt_time": 0.010174136749992613, "vnn_time": 0.007505760100048065, "ratio": 0.7377294294824093, "parity": true, "max_diff": 0.0, "cpu_temp": 45.0, "baseline": null}

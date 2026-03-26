@@ -1,0 +1,1 @@
+{"name": "Softmax_int8_hybrid", "op": "Softmax", "dtype": "int8", "mode": "hybrid", "pt_time": 0.014238879850017839, "vnn_time": 0.013501546150018839, "ratio": 0.9482168746582916, "parity": true, "max_diff": 0.0, "cpu_temp": 45.0, "baseline": null}

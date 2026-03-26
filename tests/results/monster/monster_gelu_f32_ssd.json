@@ -1,0 +1,14 @@
+{
+  "name": "Monster_GELU_F32_SSD",
+  "op": "GELU",
+  "dtype": "f32",
+  "mode": "ssd",
+  "vnn_time": 246.97839145200123,
+  "pt_time": 0.0,
+  "ratio": 0.0,
+  "tensor_gb": 44.689998626708984,
+  "throughput_mbs": 185.28972646031536,
+  "parity": true,
+  "max_diff": 0.0,
+  "cpu_temp": 39.0
+}

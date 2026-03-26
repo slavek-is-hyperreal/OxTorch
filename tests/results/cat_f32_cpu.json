@@ -1,0 +1,12 @@
+{
+    "name": "Cat_f32_cpu",
+    "op": "Cat",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.0019418431500525912,
+    "vnn_time": 0.001785098799973639,
+    "ratio": 0.9192806329003931,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 45.0
+}

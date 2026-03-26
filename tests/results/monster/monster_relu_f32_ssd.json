@@ -1,0 +1,14 @@
+{
+  "name": "Monster_ReLU_F32_SSD",
+  "op": "ReLU",
+  "dtype": "f32",
+  "mode": "ssd",
+  "vnn_time": 276.15120432000185,
+  "pt_time": 0.0,
+  "ratio": 0.0,
+  "tensor_gb": 49.51835632324219,
+  "throughput_mbs": 183.61968400558325,
+  "parity": true,
+  "max_diff": 0.0,
+  "cpu_temp": 41.0
+}

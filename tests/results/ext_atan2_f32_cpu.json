@@ -1,0 +1,12 @@
+{
+    "name": "Ext_Atan2_f32_cpu",
+    "op": "atan2",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.04720319845000631,
+    "vnn_time": 0.08728338589999111,
+    "ratio": 1.8490989756220522,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 49.0
+}

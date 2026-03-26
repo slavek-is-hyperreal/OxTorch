@@ -1,0 +1,12 @@
+{
+    "name": "Sub_f32_hybrid",
+    "op": "Sub",
+    "dtype": "f32",
+    "mode": "hybrid",
+    "pt_time": 0.005943425850000494,
+    "vnn_time": 0.020623603249987355,
+    "ratio": 3.469985791104913,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 41.0
+}

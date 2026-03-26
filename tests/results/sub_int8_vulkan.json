@@ -1,0 +1,12 @@
+{
+    "name": "Sub_int8_vulkan",
+    "op": "Sub",
+    "dtype": "int8",
+    "mode": "vulkan",
+    "pt_time": 0.0010728346999712812,
+    "vnn_time": 0.022618914649956422,
+    "ratio": 21.083317542359424,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 47.0
+}

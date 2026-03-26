@@ -1,0 +1,12 @@
+{
+    "name": "LayerNorm_f16_hybrid",
+    "op": "LayerNorm",
+    "dtype": "f16",
+    "mode": "hybrid",
+    "pt_time": 0.00416776319998462,
+    "vnn_time": 0.004069599099966581,
+    "ratio": 0.9764468144403212,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 47.0
+}

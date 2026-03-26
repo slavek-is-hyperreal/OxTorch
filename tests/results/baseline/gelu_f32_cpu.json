@@ -1,0 +1,1 @@
+{"name": "GELU_f32_cpu", "op": "GELU", "dtype": "f32", "mode": "cpu", "pt_time": 0.005499816449992067, "vnn_time": 0.00905772199994317, "ratio": 1.6469135074419137, "parity": true, "max_diff": 0.0, "cpu_temp": 45.0, "baseline": null}

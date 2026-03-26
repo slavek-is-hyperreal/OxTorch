@@ -1,0 +1,12 @@
+{
+    "name": "ReLU_15M_bf16_vulkan",
+    "op": "ReLU",
+    "dtype": "bf16",
+    "mode": "vulkan",
+    "pt_time": 0.03699839940018137,
+    "vnn_time": 0.0415432920002786,
+    "ratio": 1.1228402491399385,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 43.0
+}

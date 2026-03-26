@@ -1,0 +1,1 @@
+{"name": "LayerNorm_f16_cpu", "op": "LayerNorm", "dtype": "f16", "mode": "cpu", "pt_time": 0.0009284275998652447, "vnn_time": 0.0017691745000774973, "ratio": 1.905560003100168, "parity": true, "max_diff": 0.0, "cpu_temp": 45.0, "baseline": null}

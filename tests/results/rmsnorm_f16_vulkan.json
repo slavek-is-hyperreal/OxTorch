@@ -1,0 +1,12 @@
+{
+    "name": "RMSNorm_f16_vulkan",
+    "op": "RMSNorm",
+    "dtype": "f16",
+    "mode": "vulkan",
+    "pt_time": 0.005272573300135264,
+    "vnn_time": 0.0025787165001020184,
+    "ratio": 0.48908120443500774,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 42.0
+}

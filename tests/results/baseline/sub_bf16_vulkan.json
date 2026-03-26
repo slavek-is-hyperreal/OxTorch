@@ -1,0 +1,1 @@
+{"name": "Sub_bf16_vulkan", "op": "Sub", "dtype": "bf16", "mode": "vulkan", "pt_time": 0.0047712027000670785, "vnn_time": 0.024751507200016933, "ratio": 5.187687205087504, "parity": true, "max_diff": 0.0, "cpu_temp": 48.0, "baseline": null}

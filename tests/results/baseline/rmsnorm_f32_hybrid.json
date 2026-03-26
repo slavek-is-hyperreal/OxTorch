@@ -1,0 +1,1 @@
+{"name": "RMSNorm_f32_hybrid", "op": "RMSNorm", "dtype": "f32", "mode": "hybrid", "pt_time": 0.0010152613499485597, "vnn_time": 0.002385739749934146, "ratio": 2.3498774478660343, "parity": true, "max_diff": 0.0, "cpu_temp": 46.0, "baseline": null}

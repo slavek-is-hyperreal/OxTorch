@@ -1,0 +1,1 @@
+{"name": "Mul_f16_hybrid", "op": "Mul", "dtype": "f16", "mode": "hybrid", "pt_time": 0.0037215993001154858, "vnn_time": 0.021388114700130245, "ratio": 5.747022442600563, "parity": true, "max_diff": 0.0, "cpu_temp": 44.0, "baseline": null}

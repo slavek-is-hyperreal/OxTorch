@@ -1,0 +1,12 @@
+{
+    "name": "GELU_int8_hybrid",
+    "op": "GELU",
+    "dtype": "int8",
+    "mode": "hybrid",
+    "pt_time": 0.0091358316500191,
+    "vnn_time": 0.0028646470500461874,
+    "ratio": 0.31356171608527816,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 41.0
+}
