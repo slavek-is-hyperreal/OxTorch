@@ -1,0 +1,57 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) buffer A { float data[]; } a;
+layout(set = 0, binding = 1) buffer B { float data[]; } b;
+layout(set = 0, binding = 2) buffer C { float data[]; } c;
+layout(set = 0, binding = 3) buffer Bias { float data[]; } bias;
+
+layout(push_constant) uniform PushConsts {
+    uint M;
+    uint K;
+    uint N;
+    uint act_type;
+    uint has_bias;
+    uint transpose_b;
+} params;
+
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+    uint b_idx = gl_GlobalInvocationID.z;
+
+    if (row < params.M && col < params.N) {
+        float sum = 0.0;
+        
+        uint offset_a = b_idx * params.M * params.K;
+        uint offset_b = b_idx * params.K * params.N;
+        uint offset_c = b_idx * params.M * params.N;
+
+        for (uint k = 0; k < params.K; k++) {
+            float val_a = a.data[offset_a + row * params.K + k];
+            float val_b;
+            if (params.transpose_b == 1) {
+                // b is (N, K). index for [col, k] is col * K + k
+                val_b = b.data[offset_b + col * params.K + k];
+            } else {
+                // b is (K, N). index for [k, col] is k * N + col
+                val_b = b.data[offset_b + k * params.N + col];
+            }
+            sum += val_a * val_b;
+        }
+
+        if (params.has_bias == 1) {
+            sum += bias.data[col];
+        }
+
+        switch(params.act_type) {
+            case 1: sum = max(0.0, sum); break;
+            case 2: sum = 1.0 / (1.0 + exp(-sum)); break;
+            case 3: sum = 0.5 * sum * (1.0 + tanh(0.79788456 * (sum + 0.044715 * sum * sum * sum))); break;
+            case 4: sum = sum / (1.0 + exp(-sum)); break;
+            case 5: sum = tanh(sum); break;
+        }
+
+        c.data[offset_c + row * params.N + col] = sum;
+    }
+}

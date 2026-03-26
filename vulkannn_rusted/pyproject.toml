@@ -4,10 +4,13 @@ build-backend = "maturin"
 
 [project]
 name = "vulkannn_rusted"
+version = "3.7.0"
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dynamic = ["version"]
+[tool.maturin]
+module-name = "vulkannn_rusted"
+packages = ["oxtorch"]

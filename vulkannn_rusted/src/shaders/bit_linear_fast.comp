@@ -1,0 +1,67 @@
+#version 450
+layout(local_size_x = 32, local_size_y = 4) in;
+
+layout(set = 0, binding = 0) buffer InputA { uint data[]; } a; // Int8 activations (packed 4 per uint)
+layout(set = 0, binding = 1) buffer InputB { uint data[]; } b; // BitNet2 weights (packed 16 per uint)
+layout(set = 0, binding = 2) buffer InputScale { float data[]; } s;
+layout(set = 0, binding = 3) buffer InputBias { float data[]; } bias;
+layout(set = 0, binding = 4) buffer OutputC { float data[]; } c;
+
+layout(push_constant) uniform PushConsts {
+    uint M;
+    uint K;
+    uint N;
+    uint has_bias;
+    uint dtype; // 100 for BitNet2
+} params;
+
+// For BitNet2, 1 uint = 16 elements (32 bits).
+// Each 2-bit pair: 00 -> -1, 01 -> 0, 10 -> +1 (W+1 mapping)
+
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+
+    if (row < params.M && col < params.N) {
+        float acc_v = 0.0;
+        float acc_x = 0.0;
+        
+        uint K_uint_a = params.K / 4;
+        uint K_uint_b = params.K / 16;
+        
+        // Loop over weights (32 bits = 16 weights)
+        for (uint k = 0; k < K_uint_b; k++) {
+            uint wb = b.data[col * K_uint_b + k]; // 16 weights
+            
+            // For these 16 weights, we need 16 activations (4 uints)
+            uint a_base = row * K_uint_a + k * 4;
+            
+            // Manually unroll the 4 uints of activations
+            for (uint i = 0; i < 4; i++) {
+                uint wa = a.data[a_base + i];
+                
+                // Process 4 activations/weights at once
+                for (uint j = 0; j < 4; j++) {
+                    int xa = int((wa >> (j * 8)) & 0xFFu);
+                    if (xa > 127) xa -= 256;
+                    
+                    uint wv = (wb >> ((i * 4 + j) * 2)) & 0x03u;
+                    
+                    // Shifted-Sum: W = V-1
+                    // res += (V-1)*X = V*X - X
+                    acc_v += float(xa) * float(wv);
+                    acc_x += float(xa);
+                }
+            }
+        }
+        
+        float sum = acc_v - acc_x;
+        
+        float val = sum * s.data[col];
+        if (params.has_bias > 0) {
+            val += bias.data[col];
+        }
+        
+        c.data[row * params.N + col] = val;
+    }
+}

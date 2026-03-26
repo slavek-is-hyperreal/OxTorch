@@ -1,0 +1,67 @@
+#version 450
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 0) buffer InputA { uint data[]; } a;
+layout(set = 0, binding = 1) buffer InputB { uint data[]; } b; // Ternary weights
+layout(set = 0, binding = 2) buffer InputScale { float data[]; } s;
+layout(set = 0, binding = 3) buffer InputBias { float data[]; } bias;
+layout(set = 0, binding = 4) buffer OutputC { float data[]; } c;
+
+layout(push_constant) uniform PushConsts {
+    uint M;
+    uint K;
+    uint N;
+    uint has_bias;
+} params;
+
+// Fast unpack of 4 ternary trits from a byte
+// trit = (byte >> (bit*2)) & 0x03
+// w = trit - 1.0;
+void unpack_weights(uint packed, out float w[4]) {
+    w[0] = float(int(packed & 0x03u) - 1);
+    w[1] = float(int((packed >> 2) & 0x03u) - 1);
+    w[2] = float(int((packed >> 4) & 0x03u) - 1);
+    w[3] = float(int((packed >> 6) & 0x03u) - 1);
+}
+
+void main() {
+    uint col = gl_GlobalInvocationID.x;
+    uint row = gl_WorkGroupID.y; // One workgroup per output row? No, let's use global ID
+
+    if (row < params.M && col < params.N) {
+        float sum = 0.0;
+        float acc = 0.0; // Changed sum to acc
+        
+        uint k_packed_limit = params.K / 4; // 4 weights per byte, interleaved rows
+
+    uint k_uints = params.K / 4;
+    uint weight_group_idx = col / 4; // Output channels are interleaved 4-at-a-time
+    uint weight_shift = (3 - (col % 4)) * 2;
+
+    for (uint k = 0; k < k_uints; k++) {
+        // b.data (Weights) is [N/4][K/4] uints
+        uint packed_val = b.data[weight_group_idx * k_uints + k];
+        
+        // a.data (Activations) is [M][K/4] uints
+        uint packed_a_val = a.data[row * k_uints + k];
+        
+        for (uint j = 0; j < 4; j++) {
+            uint byte_val = (packed_val >> (j * 8)) & 0xFFu;
+            uint w_q = (byte_val >> weight_shift) & 0x03u;
+            int w = int(w_q) - 1;
+            
+            int va_i = int((packed_a_val >> (j * 8)) & 0xFFu);
+            if (va_i > 127) va_i -= 256;
+            
+            acc += float(va_i) * float(w);
+        }
+    }
+        
+        float val = acc * s.data[col]; // Changed sum to acc
+        if (params.has_bias > 0) {
+            val += bias.data[col];
+        }
+        
+        c.data[row * params.N + col] = val;
+    }
+}

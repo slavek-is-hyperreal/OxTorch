@@ -48,8 +48,14 @@ pub fn get_available_ram() -> usize {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() >= 2 {
                         if let Ok(kb) = parts[1].parse::<usize>() {
-                            // Leave 2GB safety margin for system/OS/Antigravity
-                            let bytes = kb * 1024;
+                            let mut bytes = kb * 1024;
+                            
+                            // Add back what the Capacitor already claimed, so tests see the true system capacity
+                            if let Some(cap) = crate::tensor::capacitor::GLOBAL_CAPACITOR.get() {
+                                bytes += cap.capacity;
+                            }
+
+                            // Leave 2GB safety margin
                             return bytes.saturating_sub(2 * 1024 * 1024 * 1024);
                         }
                     }

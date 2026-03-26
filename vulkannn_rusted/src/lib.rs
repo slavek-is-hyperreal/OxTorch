@@ -6,27 +6,34 @@ pub mod buf_pool;
 pub mod io_uring_engine;
 pub mod crook_scheduler;
 pub mod cpu;
-pub mod swar_int8;
-pub mod tiling_cpu;
 pub mod prng;
+pub mod models;
 
 use pyo3::prelude::*;
 
 /// A simple dummy function to verify that Python can talk to our compiled Rust library.
 #[pyfunction]
 fn rust_greeting(name: &str) -> PyResult<String> {
-    Ok(format!("Hello from VulkanNN-Rusted, {}! The Iron Age has begun.", name))
+    Ok(format!("Hello from OxTorch, {}! The Iron Age has begun.", name))
 }
 
-/// The main entry point mapped directly to the `vulkannn_rusted_main` Python module.
+#[pyfunction]
+fn get_available_ram_bytes() -> PyResult<usize> {
+    Ok(crate::streaming::get_available_ram())
+}
+
+/// The main entry point for the `vulkannn_rusted` Python extension module.
 #[pymodule]
-fn vulkannn_rusted_dev(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn vulkannn_rusted(m: &Bound<'_, PyModule>) -> PyResult<()> {
     backend::init_backend();
     streaming::init_budgets();
     streaming::init_prefetcher();
+    let _ = crate::tensor::capacitor::get_capacitor(); // Eager allocation
 
     m.add_function(wrap_pyfunction!(rust_greeting, m)?)?;
+    m.add_function(wrap_pyfunction!(get_available_ram_bytes, m)?)?;
     m.add_class::<DataType>()?;
     m.add_class::<Tensor>()?;
+    m.add_class::<models::bitnet::BitNetModel>()?;
     Ok(())
 }

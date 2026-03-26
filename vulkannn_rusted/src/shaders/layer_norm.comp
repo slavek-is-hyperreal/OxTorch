@@ -1,0 +1,64 @@
+#version 450
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer X { float data[]; } x;
+layout(set = 0, binding = 1) readonly buffer Weight { float data[]; } weight;
+layout(set = 0, binding = 2) readonly buffer Bias { float data[]; } bias;
+layout(set = 0, binding = 3) buffer Y { float data[]; } y;
+
+layout(push_constant) uniform PushConsts {
+    uint N;
+    uint D;
+    float eps;
+} params;
+
+shared float s_mean[64];
+shared float s_var[64];
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    if (row >= params.N) return;
+    uint tid = gl_LocalInvocationID.x;
+    
+    // 1. Compute Mean
+    float local_sum = 0.0;
+    for (uint i = tid; i < params.D; i += 64) {
+        local_sum += x.data[row * params.D + i];
+    }
+    s_mean[tid] = local_sum;
+    barrier();
+    
+    for (uint stride = 32; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            s_mean[tid] += s_mean[tid + stride];
+        }
+        barrier();
+    }
+    float row_mean = s_mean[0] / float(params.D);
+    barrier(); // make sure everyone is ready for var
+
+    // 2. Compute Variance
+    float local_var = 0.0;
+    for (uint i = tid; i < params.D; i += 64) {
+        float val = x.data[row * params.D + i] - row_mean;
+        local_var += val * val;
+    }
+    s_var[tid] = local_var;
+    barrier();
+    
+    for (uint stride = 32; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            s_var[tid] += s_var[tid + stride];
+        }
+        barrier();
+    }
+    float row_var = s_var[0] / float(params.D);
+    float inv_std = inversesqrt(row_var + params.eps);
+    
+    // 3. Write Output
+    for (uint i = tid; i < params.D; i += 64) {
+        float val = (x.data[row * params.D + i] - row_mean) * inv_std;
+        val = val * weight.data[i] + bias.data[i];
+        y.data[row * params.D + i] = val;
+    }
+}

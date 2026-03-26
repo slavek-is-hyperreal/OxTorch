@@ -1,0 +1,54 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0) buffer InputA { uint data[]; } a;
+layout(set = 0, binding = 1) buffer InputB { uint data[]; } b; // Ternary weights
+layout(set = 0, binding = 2) buffer InputScale { float data[]; } s;
+layout(set = 0, binding = 3) buffer InputBias { float data[]; } bias;
+layout(set = 0, binding = 4) buffer OutputC { float data[]; } c;
+
+layout(push_constant) uniform PushConsts {
+    uint M;
+    uint K;
+    uint N;
+    uint has_bias;
+} params;
+
+// Extract signed 8-bit from uint
+float get_i8(uint val, uint byte_idx) {
+    uint shift = byte_idx * 8;
+    int b = int((val >> shift) & 0xFFu);
+    if (b > 127) b -= 256;
+    return float(b);
+}
+
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+
+    if (row < params.M && col < params.N) {
+        float sum = 0.0;
+        
+        // Inner loop over K, processing 4 elements at a time might be better
+        // but for now let's keep it simple.
+        for (uint k = 0; k < params.K; k++) {
+            uint a_idx = (row * params.K + k);
+            uint b_idx = (col * params.K + k);
+            
+            uint a_val = a.data[a_idx / 4];
+            uint b_val = b.data[b_idx / 4];
+            
+            float va = get_i8(a_val, a_idx % 4);
+            float vb = get_i8(b_val, b_idx % 4);
+            
+            sum += va * vb;
+        }
+        
+        float val = sum * s.data[col];
+        if (params.has_bias > 0) {
+            val += bias.data[col];
+        }
+        
+        c.data[row * params.N + col] = val;
+    }
+}

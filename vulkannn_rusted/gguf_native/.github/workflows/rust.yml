@@ -1,0 +1,33 @@
+name: Rust
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.head_ref || github.sha }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Check format
+        run: cargo fmt --verbose --check
+
+      - name: Check lint
+        run: cargo clippy --verbose --features bin
+
+      - name: Build
+        run: cargo build --verbose --features bin
+
+      - name: Run tests
+        run: cargo test --verbose --features bin
