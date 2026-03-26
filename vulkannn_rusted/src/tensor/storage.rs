@@ -9,6 +9,7 @@ pub enum Storage {
     BF16(Vec<half::bf16>),
     Int8(Vec<i8>),
     BitNet(Vec<u8>), // Packed BitNet weights (BitNet2 or BitNet1_6)
+    #[allow(non_camel_case_types)]
     I2_S(Vec<u8>),   // Packed GGML I2_S chunks
     None,
 }

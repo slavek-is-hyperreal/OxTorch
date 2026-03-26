@@ -35,7 +35,7 @@ pub struct Tensor {
     #[pyo3(get)]
     pub dtype: DataType,
     pub storage: Storage,
-    pub mmap_data: Option<IoEngineType>,
+    pub ssd_engine: Option<IoEngineType>,
 }
 
 #[pymethods]
@@ -300,7 +300,7 @@ impl Tensor {
 
 impl Tensor {
     pub fn is_ssd(&self) -> bool {
-        self.mmap_data.is_some()
+        self.ssd_engine.is_some()
     }
 
     pub fn check_shape(&self, other: &Tensor) -> PyResult<()> {

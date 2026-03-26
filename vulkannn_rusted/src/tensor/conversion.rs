@@ -72,7 +72,7 @@ impl Tensor {
             storage: Storage::BitNet(packed_data),
             name: format!("{}_packed", self.name),
             is_transposed: false,
-            mmap_data: None,
+            ssd_engine: None,
         })
     }
 }

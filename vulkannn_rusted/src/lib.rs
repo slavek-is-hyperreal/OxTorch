@@ -1,5 +1,5 @@
 mod backend;
-mod streaming;
+mod sys_info;
 mod tensor;
 pub use tensor::{DataType, Tensor};
 pub mod buf_pool;
@@ -19,15 +19,14 @@ fn rust_greeting(name: &str) -> PyResult<String> {
 
 #[pyfunction]
 fn get_available_ram_bytes() -> PyResult<usize> {
-    Ok(crate::streaming::get_available_ram())
+    Ok((sys_info::get_sys_info().ram_available_gb * 1024.0 * 1024.0 * 1024.0) as usize)
 }
 
 /// The main entry point for the `vulkannn_rusted` Python extension module.
 #[pymodule]
 fn vulkannn_rusted(m: &Bound<'_, PyModule>) -> PyResult<()> {
     backend::init_backend();
-    streaming::init_budgets();
-    streaming::init_prefetcher();
+    sys_info::print_sys_info();
     let _ = crate::tensor::capacitor::get_capacitor(); // Eager allocation
 
     m.add_function(wrap_pyfunction!(rust_greeting, m)?)?;

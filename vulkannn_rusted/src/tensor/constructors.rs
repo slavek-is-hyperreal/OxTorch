@@ -76,7 +76,7 @@ impl Tensor {
             storage, 
             name: name.to_owned(),
             is_transposed: false,
-            mmap_data: None,
+            ssd_engine: None,
         })
     }
 
@@ -139,7 +139,7 @@ impl Tensor {
             is_transposed: false,
             dtype,
             storage, 
-            mmap_data: None 
+            ssd_engine: None 
         })
     }
 
@@ -185,7 +185,7 @@ impl Tensor {
             is_transposed: false, 
             dtype, 
             storage: Storage::None, 
-            mmap_data: Some(crate::tensor::IoEngineType::ReadOnly(std::sync::Arc::new(engine))) 
+            ssd_engine: Some(crate::tensor::IoEngineType::ReadOnly(std::sync::Arc::new(engine))) 
         })
     }
 
@@ -212,7 +212,7 @@ impl Tensor {
             is_transposed: false, 
             dtype, 
             storage: Storage::None, 
-            mmap_data: Some(crate::tensor::IoEngineType::ReadWrite(std::sync::Arc::new(engine))) 
+            ssd_engine: Some(crate::tensor::IoEngineType::ReadWrite(std::sync::Arc::new(engine))) 
         })
     }
 
@@ -260,7 +260,7 @@ impl Tensor {
             storage, 
             name: name.to_owned(),
             is_transposed: false,
-            mmap_data: None,
+            ssd_engine: None,
         })
     }
 
@@ -316,7 +316,7 @@ impl Tensor {
             storage, 
             name: "FromRawBytes".to_owned(),
             is_transposed: false,
-            mmap_data: None,
+            ssd_engine: None,
         })
     }
 }

@@ -3,10 +3,10 @@
     "op": "LayerNorm",
     "dtype": "f32",
     "mode": "hybrid",
-    "pt_time": 0.0005160583499673521,
-    "vnn_time": 0.001756573649981874,
-    "ratio": 3.4038275906067637,
+    "pt_time": 0.0032613405499432703,
+    "vnn_time": 0.0027600506498856705,
+    "ratio": 0.8462932979917355,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 44.0
+    "cpu_temp": 54.0
 }

@@ -5,8 +5,8 @@ pub static GLOBAL_CAPACITOR: OnceLock<Arc<GiantCapacitor>> = OnceLock::new();
 
 pub fn get_capacitor() -> Arc<GiantCapacitor> {
     GLOBAL_CAPACITOR.get_or_init(|| {
-        let avail_ram = crate::streaming::get_available_ram();
-        let capacity_bytes = (avail_ram as f64 * 0.05) as usize; // Reduced to 5% safe overhead to eliminate OOM host lockups
+        let avail_ram_gb = crate::sys_info::get_sys_info().ram_available_gb;
+        let capacity_bytes = (avail_ram_gb * 1024.0 * 1024.0 * 1024.0 * 0.05) as usize; // Reduced to 5% safe overhead to eliminate OOM host lockups
         GiantCapacitor::new_bytes(capacity_bytes)
     }).clone()
 }

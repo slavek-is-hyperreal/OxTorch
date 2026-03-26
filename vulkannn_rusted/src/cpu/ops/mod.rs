@@ -9,7 +9,7 @@ pub use binary::*;
 pub use reduction::*;
 
 pub mod bitnet;
-pub use bitnet::*;
+pub use bitnet::bit_linear_f32;
 
 pub mod quantization;
 pub use quantization::*;

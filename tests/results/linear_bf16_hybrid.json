@@ -3,9 +3,9 @@
     "op": "Linear",
     "dtype": "bf16",
     "mode": "hybrid",
-    "pt_time": 6.894241113199678,
-    "vnn_time": 0.640784073100076,
-    "ratio": 0.09294483070417049,
+    "pt_time": 6.7971552987000905,
+    "vnn_time": 0.6984957238004427,
+    "ratio": 0.10276294907283127,
     "parity": true,
     "max_diff": 0.0,
     "cpu_temp": 49.0

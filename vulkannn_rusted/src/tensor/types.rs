@@ -17,6 +17,7 @@ pub enum DataType {
     Int8,
     BitNet2,   // 2-bit packing: 4 trits per byte (Shannon limit ~79% efficient)
     BitNet1_6, // 1.6-bit packing: 5 trits per byte (Shannon limit ~99.1% efficient)
+    #[allow(non_camel_case_types)]
     I2_S,      // GGML type 36 (64 weights per 16 bytes + 4 byte scale = 20 byte block)
 }
 

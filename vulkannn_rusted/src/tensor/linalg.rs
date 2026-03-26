@@ -270,7 +270,7 @@ impl Tensor {
         if total % d != 0 {
             return Err(PyValueError::new_err("Invalid normalized_shape for subln"));
         }
-        let n = total / d;
+        let _n = total / d;
         let mut res = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
 
         if self.device == "cpu" {
@@ -427,7 +427,7 @@ impl Tensor {
             storage: self.storage.clone(),
             is_transposed: self.is_transposed,
             name: format!("{}_reshaped", self.name),
-            mmap_data: self.mmap_data.clone(),
+            ssd_engine: self.ssd_engine.clone(),
         })
     }
 
@@ -512,7 +512,7 @@ impl Tensor {
                         shape: t.shape.clone(), strides, offset: 0,
                         device: "cpu".to_string(), dtype: t.dtype, storage,
                         is_transposed: false,
-                        name: format!("{}_hssd", t.name), mmap_data: None,
+                        name: format!("{}_hssd", t.name), ssd_engine: None,
                     });
                 } else if t.device == "vulkan" {
                     let (slice, _) = t.get_slice_raw_bytes();
@@ -522,7 +522,7 @@ impl Tensor {
                         shape: t.shape.clone(), strides, offset: 0,
                         device: "cpu".to_string(), dtype: t.dtype, storage,
                         is_transposed: false,
-                        name: format!("{}_hv", t.name), mmap_data: None,
+                        name: format!("{}_hv", t.name), ssd_engine: None,
                     });
                 } else {
                     cpu_tensors_owned.push((*t).clone());
@@ -621,7 +621,7 @@ impl Tensor {
             storage,
             is_transposed: false,
             name: format!("{}_cat", first.name),
-            mmap_data: None,
+            ssd_engine: None,
         };
 
         if device == "vulkan" {
@@ -662,7 +662,7 @@ impl Tensor {
                 storage: self.storage.clone(),
                 is_transposed: self.is_transposed,
                 name: format!("{}_split_{}", self.name, results.len()),
-                mmap_data: self.mmap_data.clone(),
+                ssd_engine: self.ssd_engine.clone(),
             });
             
             current += size;

@@ -16,7 +16,7 @@ impl Tensor {
             device: self.device.clone(), 
             name: format!("{}_reshaped", self.name),
             is_transposed: true, // Mark as potentially non-contiguous
-            mmap_data: self.mmap_data.clone(),
+            ssd_engine: self.ssd_engine.clone(),
         })
     }
 
@@ -38,7 +38,7 @@ impl Tensor {
             storage: self.storage.clone(),
             name: format!("{}_transposed", self.name),
             is_transposed: true,
-            mmap_data: self.mmap_data.clone(),
+            ssd_engine: self.ssd_engine.clone(),
         })
     }
 
@@ -103,7 +103,7 @@ impl Tensor {
             storage: self.storage.clone(),
             name: format!("{}_narrow", self.name),
             is_transposed: self.is_transposed,
-            mmap_data: self.mmap_data.clone(),
+            ssd_engine: self.ssd_engine.clone(),
         })
     }
 

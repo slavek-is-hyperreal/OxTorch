@@ -3,10 +3,10 @@
     "op": "RMSNorm",
     "dtype": "f32",
     "mode": "vulkan",
-    "pt_time": 0.000767776299835532,
-    "vnn_time": 0.0017320755498076324,
-    "ratio": 2.25596381417174,
+    "pt_time": 0.002286480350085185,
+    "vnn_time": 0.002450440649772645,
+    "ratio": 1.071708597749966,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 43.0
+    "cpu_temp": 52.0
 }

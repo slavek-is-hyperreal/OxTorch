@@ -27,11 +27,11 @@ impl Tensor {
         let res_path = format!("{}_{}_dir.ssd", self.name, op);
         let res_tensor = Self::new_ssd_raw(&res_path, self.shape.clone(), self.dtype)?;
 
-        let engine_in = match self.mmap_data.as_ref().unwrap() {
+        let engine_in = match self.ssd_engine.as_ref().unwrap() {
             IoEngineType::ReadOnly(e) => e.clone(),
             IoEngineType::ReadWrite(e) => e.clone(),
         };
-        let engine_out = match res_tensor.mmap_data.as_ref().unwrap() {
+        let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
             IoEngineType::ReadWrite(e) => e.clone(),
             _ => unreachable!(),
         };
@@ -65,11 +65,11 @@ impl Tensor {
         let res_path = format!("{}_{}_msts.ssd", self.name, op);
         let res_tensor = Self::new_ssd_raw(&res_path, self.shape.clone(), self.dtype)?;
         
-        let engine_in = match self.mmap_data.as_ref().unwrap() {
+        let engine_in = match self.ssd_engine.as_ref().unwrap() {
             IoEngineType::ReadOnly(e) => e.clone(),
             IoEngineType::ReadWrite(e) => e.clone(),
         };
-        let engine_out = match res_tensor.mmap_data.as_ref().unwrap() {
+        let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
             IoEngineType::ReadWrite(e) => e.clone(),
             _ => unreachable!(),
         };
@@ -158,7 +158,7 @@ impl Tensor {
 
     /// Extreme I/O MERA-400 architecture for SSD tensors
     pub fn execute_load_to_f32_vec_msts(&self) -> Vec<f32> {
-        let engine = match &self.mmap_data {
+        let engine = match &self.ssd_engine {
             Some(IoEngineType::ReadOnly(e)) => e.clone(),
             Some(IoEngineType::ReadWrite(e)) => e.clone(),
             None => panic!("Not an SSD tensor"),
@@ -244,11 +244,11 @@ impl Tensor {
         let res_path = format!("{}_pt.ssd", self.name);
         let res_tensor = Self::new_ssd_raw(&res_path, self.shape.clone(), self.dtype)?;
 
-        let engine_in = match self.mmap_data.as_ref().unwrap() {
+        let engine_in = match self.ssd_engine.as_ref().unwrap() {
             IoEngineType::ReadOnly(e) => e.clone(),
             IoEngineType::ReadWrite(e) => e.clone(),
         };
-        let engine_out = match res_tensor.mmap_data.as_ref().unwrap() {
+        let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
             IoEngineType::ReadWrite(e) => e.clone(),
             _ => unreachable!(),
         };
@@ -345,7 +345,7 @@ impl Tensor {
     /// at `dest_offset_bytes`. The caller allocates RAM only for the final result.
     /// Supports all dtypes (raw byte copy of the correct width).
     pub fn load_to_buffer(&self, dest: &mut [u8], dest_offset_bytes: u64) -> PyResult<()> {
-        let engine = match &self.mmap_data {
+        let engine = match &self.ssd_engine {
             Some(IoEngineType::ReadOnly(e)) => e.clone(),
             Some(IoEngineType::ReadWrite(e)) => e.clone(),
             None => return Err(pyo3::exceptions::PyValueError::new_err("load_to_buffer: not an SSD tensor")),
@@ -444,7 +444,7 @@ impl Tensor {
     /// Proactively pulls SSD data into the Global RAM Capacitor in a background thread.
     /// This eliminates I/O wait times for subsequent MSTS operations.
     pub fn prefetch_ssd(&self) {
-        let engine = match &self.mmap_data {
+        let engine = match &self.ssd_engine {
             Some(IoEngineType::ReadOnly(e)) => e.clone(),
             Some(IoEngineType::ReadWrite(e)) => e.clone(),
             None => return,

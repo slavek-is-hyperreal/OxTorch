@@ -4,7 +4,8 @@ use ash::vk;
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc, Allocation, AllocationCreateDesc};
 use gpu_allocator::MemoryLocation;
 use crate::tensor::DataType;
-use crate::cpu::*;
+// use crate::cpu::*;
+use crate::cpu::{init_cpu_ops, execute_matmul, execute_layer_norm, convert_f32_to_bf16, convert_f32_to_i8, convert_bf16_to_f32, convert_i8_to_f32};
 // pub use crate::swar_int8::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -52,7 +53,9 @@ pub struct AshBackend {
     pub pipe_layout_layer_norm: vk::PipelineLayout,
     pub pipe_layout_rms_norm: vk::PipelineLayout,
     pub pipe_layout_index_select: vk::PipelineLayout,
+    #[allow(dead_code)]
     pub pipe_layout_bit_linear_fast: vk::PipelineLayout,
+    #[allow(dead_code)]
     pub pipe_layout_bit_linear_lut: vk::PipelineLayout,
     
     #[allow(dead_code)]
@@ -61,7 +64,9 @@ pub struct AshBackend {
     pub pipe_softmax: vk::Pipeline,
     pub pipe_matmul: vk::Pipeline,
     pub pipe_bit_linear: vk::Pipeline,
+    #[allow(dead_code)]
     pub pipe_bit_linear_fast: vk::Pipeline,
+    #[allow(dead_code)]
     pub pipe_bit_linear_lut: vk::Pipeline,
     pub pipe_layer_norm: vk::Pipeline,
     pub pipe_rms_norm: vk::Pipeline,

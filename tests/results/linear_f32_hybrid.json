@@ -3,10 +3,10 @@
     "op": "Linear",
     "dtype": "f32",
     "mode": "hybrid",
-    "pt_time": 0.12266347059994587,
-    "vnn_time": 0.6484878451003169,
-    "ratio": 5.286723438759469,
+    "pt_time": 0.10956111874984345,
+    "vnn_time": 0.7103176221000467,
+    "ratio": 6.483300190844954,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 44.0
+    "cpu_temp": 54.0
 }

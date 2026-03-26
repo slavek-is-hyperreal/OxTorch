@@ -3,10 +3,10 @@
     "op": "IndexSelect",
     "dtype": "bf16",
     "mode": "vulkan",
-    "pt_time": 0.005208564200438559,
-    "vnn_time": 0.054335051598900466,
-    "ratio": 10.431867498978985,
+    "pt_time": 0.0017509402008727194,
+    "vnn_time": 0.049433832601062024,
+    "ratio": 28.232736090257546,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 52.0
+    "cpu_temp": 51.0
 }

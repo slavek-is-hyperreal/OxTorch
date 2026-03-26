@@ -1,7 +1,6 @@
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::Read;
 use std::cmp::min;
 use crate::tensor::{Tensor, DataType};
 
@@ -546,7 +545,7 @@ impl BitNetModel {
     }
 
     fn load_norm(tensors: &GGUFLoader, prefix: &str, eps: f32) -> PyResult<BitNetRMSNorm> {
-        let (w_data, w_shape, d_type) = tensors.tensor(&format!("{}.weight", prefix))?;
+        let (w_data, w_shape, _d_type) = tensors.tensor(&format!("{}.weight", prefix))?;
         // Norm weights are F32 in GGUF
         let weight = Tensor::from_raw_bytes(w_data.to_vec(), vec![w_shape[0]], DataType::F32, "cpu")?;
         let w_f32 = weight.to_numpy_f32_vec();
