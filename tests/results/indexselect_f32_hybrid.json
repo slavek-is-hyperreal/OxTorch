@@ -3,9 +3,9 @@
     "op": "IndexSelect",
     "dtype": "f32",
     "mode": "hybrid",
-    "pt_time": 0.004595778399743722,
-    "vnn_time": 0.007227419799892232,
-    "ratio": 1.5726214737192856,
+    "pt_time": 0.0034927383996546267,
+    "vnn_time": 0.0069544136000331495,
+    "ratio": 1.991106348165332,
     "parity": true,
     "max_diff": 0.0,
     "cpu_temp": 44.0

@@ -3,10 +3,10 @@
     "op": "IndexSelect",
     "dtype": "bf16",
     "mode": "cpu",
-    "pt_time": 0.00276816619989404,
-    "vnn_time": 0.002577264000137802,
-    "ratio": 0.9310365830767151,
+    "pt_time": 0.002670858999772463,
+    "vnn_time": 0.0030119502000161445,
+    "ratio": 1.1277084264922783,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 46.0
+    "cpu_temp": 54.0
 }

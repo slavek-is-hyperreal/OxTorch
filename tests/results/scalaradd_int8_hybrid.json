@@ -3,10 +3,10 @@
     "op": "ScalarAdd",
     "dtype": "int8",
     "mode": "hybrid",
-    "pt_time": 0.006356274150039099,
-    "vnn_time": 0.0011313604999486416,
-    "ratio": 0.1779911428052049,
+    "pt_time": 0.011794719850149704,
+    "vnn_time": 0.0017430112002330134,
+    "ratio": 0.14777894026969113,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 42.0
+    "cpu_temp": 54.0
 }

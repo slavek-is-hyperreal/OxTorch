@@ -3,10 +3,10 @@
     "op": "LayerNorm",
     "dtype": "f32",
     "mode": "vulkan",
-    "pt_time": 0.0015016087000731203,
-    "vnn_time": 0.002002967499993247,
-    "ratio": 1.3338811235548336,
+    "pt_time": 0.0005128411001351196,
+    "vnn_time": 0.001837996899848804,
+    "ratio": 3.5839500760850527,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 42.0
+    "cpu_temp": 44.0
 }
