@@ -165,7 +165,8 @@ AMD Radeon R7 200 Series (Bonaire GCN 1.1, ~1GB GDDR5) | 24GB DDR3
 | **MatMul F32** | ✅ sgemm | ✅ sgemm | ✅ sgemm | ✅ gemm |
 | **MatMul F16** | ✅ SWAR | ✅ F16C | ✅ F16C | ✅ NEON |
 | **MatMul INT8** | ✅ Scalar | ✅ SSE4.1 | ✅ AVX2 | ✅ NEON |
-| **BitLinear** | ✅ Ternary | ✅ Ternary | ✅ Ternary | ✅ Ternary |
+| **BitNet-2B** | ✅ SWAR | ✅ SSSE3 | ✅ AVX2 | ✅ NEON |
+| **BitNet-3B** | ✅ SWAR | ✅ SSSE3 | ✅ AVX2 | ✅ NEON |
 | **ReLU / GELU** | ✅ Scalar | ✅ AVX1 | ✅ AVX2 | ✅ NEON |
 | **INT8 GELU** | ✅ LUT | ✅ LUT | ✅ LUT | ✅ LUT |
 | **INT8 Softmax** | ✅ dequant | ✅ dequant | ✅ dequant | ✅ dequant |

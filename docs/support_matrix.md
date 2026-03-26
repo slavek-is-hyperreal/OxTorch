@@ -54,6 +54,7 @@ These tables represent the level of SIMD instruction support for individual oper
 | **Sigmoid / GeLU** | ✅ LUT | ✅ LUT | ✅ LUT | ✅ LUT | ✅ LUT | ✅ LUT |
 | **Max Reduction** | ✅ Scalar | ✅ Native | ✅ Native | AVX2* | ✅ Scalar | ✅ Scalar |
 | **IndexSelect** | ✅ SWAR | ✅ Native | ✅ Native | ✅ Native | ✅ Scalar | ✅ Native |
+| **BitNet-2B** | ✅ SWAR | ✅ SSSE3 | ✅ AVX2 | ✅ AVX512 | ✅ Scalar | ✅ NEON |
 
 *\* SWAR in `add_i8` now has saturating fallback detection.*
 

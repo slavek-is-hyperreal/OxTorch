@@ -23,6 +23,7 @@ Welcome to the OxTorch Documentation Index. This guide serves as a "GPS" to help
 - **[New Op Tutorial](new_op_tutorial.md)**: Step-by-step guide for developers adding new operations from Rust to Python.
 - **[Implementation Guides](implementation_guides.md)**: Templates and roadmaps for upcoming feature phases.
 - **[How We Test](how_we_test.md)**: Documentation of the atomized benchmark suite and regression testing protocol.
+- **[BitNet Status](bitnet_status.md)**: Current technical state, blockers, and functional parity report for BitNet-2B/3B.
 - **[PyTorch Gap Analysis](pytorch_gap_analysis.md)**: Ongoing comparison of OxTorch features vs. PyTorch standard API.
 
 ## Project Management

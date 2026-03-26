@@ -16,7 +16,8 @@ vulkannn_rusted/src/cpu/ops/
 ├── indexing/        # index_select, embedding
 ├── reduction/       # sum, mean, max, softmax
 ├── sequence/        # cat, stack, split, chunk
-└── norm/            # layer_norm, rms_norm
+├── norm/            # layer_norm, rms_norm
+└── bitnet/          # BitNet Tiered Kernels (Scalar, SWAR, SSE, AVX2, AVX512)
 ```
 
 Each operation (e.g., `relu`) has its own folder, containing files for specific data types: `f32.rs`, `f16.rs`, `bf16.rs`, `i8.rs`.

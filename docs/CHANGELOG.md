@@ -4,6 +4,8 @@
 
 ### Added
 - **Tiled Matrix Multiplication (F16/BF16)** (`src/cpu/ops/matmul/`): Re-implemented MatMul and Linear for half-precision types with 256x256 tiling.
+- **BitNet Tiered Kernels** (`src/cpu/ops/bitnet/`): Modularized BitNet logic into specialized tiers (Scalar, SWAR, SSE, AVX2, AVX512).
+- **Native GGUF I2_S Loader** (`src/models/bitnet.rs`): Direct parsing of Microsoft BitNet i2_s weights with ternary offset correction.
 - **Zero-Allocation F32 Conversion**: Integrated `TensorPool` into the MatMul tiling loop to eliminate temporary allocations during on-the-fly precision upcasting.
 - **SIMD Transcendental Functions** (`src/cpu/ops/math_simd.rs`): Vectorized `exp`, `sigmoid`, `silu`, and `tanh` approximations for AVX2 and NEON.
 
