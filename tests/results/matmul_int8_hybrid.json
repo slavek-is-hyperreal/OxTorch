@@ -3,9 +3,9 @@
     "op": "MatMul",
     "dtype": "int8",
     "mode": "hybrid",
-    "pt_time": 1.2095838995010126,
-    "vnn_time": 0.17914469350216677,
-    "ratio": 0.14810439654171076,
+    "pt_time": 1.1876758544967743,
+    "vnn_time": 0.32074096948781516,
+    "ratio": 0.2700576662171137,
     "parity": true,
     "max_diff": 0.0,
     "cpu_temp": 41.0

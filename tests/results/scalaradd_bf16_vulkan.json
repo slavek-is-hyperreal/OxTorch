@@ -3,10 +3,10 @@
     "op": "ScalarAdd",
     "dtype": "bf16",
     "mode": "vulkan",
-    "pt_time": 0.004869733200757764,
-    "vnn_time": 0.0036949218992958777,
-    "ratio": 0.7587524299526147,
+    "pt_time": 0.004853942900081165,
+    "vnn_time": 0.0038379821984563024,
+    "ratio": 0.7906937262059934,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 43.0
+    "cpu_temp": 49.0
 }

@@ -3,10 +3,10 @@
     "op": "IndexSelect",
     "dtype": "f32",
     "mode": "cpu",
-    "pt_time": 0.003463317800196819,
-    "vnn_time": 0.00492362100048922,
-    "ratio": 1.4216486284364123,
+    "pt_time": 0.004716814798302949,
+    "vnn_time": 0.004340576799586415,
+    "ratio": 0.9202347315285944,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 44.0
+    "cpu_temp": 48.0
 }

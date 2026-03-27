@@ -3,10 +3,10 @@
     "op": "Linear",
     "dtype": "int8",
     "mode": "cpu",
-    "pt_time": 4.182095957200363,
-    "vnn_time": 0.14951011534940334,
-    "ratio": 0.03575004420737646,
+    "pt_time": 4.294302050149417,
+    "vnn_time": 0.1533194263000041,
+    "ratio": 0.03570299073272442,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 44.0
+    "cpu_temp": 47.0
 }

@@ -3,10 +3,10 @@
     "op": "ScalarMul",
     "dtype": "bf16",
     "mode": "hybrid",
-    "pt_time": 0.0066018926998367535,
-    "vnn_time": 0.004980935499770567,
-    "ratio": 0.7544708352945105,
+    "pt_time": 0.002481439901748672,
+    "vnn_time": 0.0034071754023898395,
+    "ratio": 1.3730638408727132,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 44.0
+    "cpu_temp": 50.0
 }
