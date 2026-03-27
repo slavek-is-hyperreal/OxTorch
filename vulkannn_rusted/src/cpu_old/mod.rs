@@ -1,4 +1,4 @@
-mod ops;
+pub mod ops;
 mod conversions;
 mod tiling_cpu;
 

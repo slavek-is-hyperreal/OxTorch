@@ -206,6 +206,9 @@ impl Tensor {
     }
 
     pub fn elementwise_op(&self, other: &Tensor, op: &str) -> PyResult<Tensor> {
+        if self.is_ssd() || other.is_ssd() {
+            return self.dispatch_binary_op(other, op);
+        }
         if self.shape != other.shape { return Err(pyo3::exceptions::PyValueError::new_err("Shapes must match")); }
         let mut out = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
         if self.device == "cpu" {

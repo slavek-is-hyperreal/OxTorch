@@ -1,4 +1,5 @@
 mod backend;
+pub mod hardware_config;
 pub mod vulkan;
 mod sys_info;
 mod tensor;

@@ -15,23 +15,37 @@ pub const TILE_WRITING_TO_DISK: u32 = 5;
 pub struct TileSlot {
     pub local_buf: UnsafeCell<crate::io_uring_engine::AlignedBuffer>,
     pub capacitor_ptr: AtomicPtr<u8>,
+    pub size: usize,
 }
 
 impl TileSlot {
     pub fn new(size: usize) -> Self {
+        // Enforce 4096-byte alignment for O_DIRECT / Direct I/O
+        let buf = crate::io_uring_engine::AlignedBuffer::new(size);
         Self {
-            local_buf: UnsafeCell::new(crate::io_uring_engine::AlignedBuffer::new(size)),
+            local_buf: UnsafeCell::new(buf),
             capacitor_ptr: AtomicPtr::new(std::ptr::null_mut()),
+            size,
         }
     }
 
-    pub fn get_ptr(&self, size: usize) -> *mut u8 {
+    pub fn get_ptr(&self) -> *mut u8 {
         let cap = self.capacitor_ptr.load(Ordering::Acquire);
         if !cap.is_null() {
             cap
         } else {
-            unsafe { (*self.local_buf.get()).as_mut_slice()[..size].as_mut_ptr() }
+            unsafe { (*self.local_buf.get()).as_mut_slice().as_mut_ptr() }
         }
+    }
+    
+    pub fn as_slice<T>(&self) -> &[T] {
+        let ptr = self.get_ptr();
+        unsafe { std::slice::from_raw_parts(ptr as *const T, self.size / std::mem::size_of::<T>()) }
+    }
+
+    pub fn as_slice_mut<T>(&self) -> &mut [T] {
+        let ptr = self.get_ptr();
+        unsafe { std::slice::from_raw_parts_mut(ptr as *mut T, self.size / std::mem::size_of::<T>()) }
     }
 }
 
@@ -39,7 +53,7 @@ impl TileSlot {
 /// Enhanced with Multi-Stream Bitmask Barrier.
 pub struct StatefulTile {
     pub state: AtomicU32,
-    pub ready_bits: AtomicU32, // Bit 0: Arg A, Bit 1: Arg B, Bit 2: Arg C...
+    pub ready_bits: AtomicU32, // Bit 0: Arg A, Bit 1: Arg B, Bit 2: Result...
     pub tile_id: AtomicU32,
     pub slot_a: TileSlot,
     pub slot_b: TileSlot,
@@ -192,7 +206,7 @@ impl CrookScheduler {
                 
                 let bytes_to_write = std::cmp::min(scheduler.tile_size as u64, total_bytes - offset);
                 // Flush from the RESULT slot
-                let payload_ptr = tile.slot_res.get_ptr(bytes_to_write as usize);
+                let payload_ptr = tile.slot_res.get_ptr();
                 let payload_slice = unsafe { std::slice::from_raw_parts(payload_ptr, bytes_to_write as usize) };
                 
                 engine.write_chunk(offset, payload_slice);

@@ -14,6 +14,18 @@ pub enum Storage {
     None,
 }
 
+impl Storage {
+    pub fn as_bf16(&self) -> Option<&[half::bf16]> {
+        if let Storage::BF16(v) = self { Some(v) } else { None }
+    }
+    pub fn as_bf16_mut(&mut self) -> Option<&mut [half::bf16]> {
+        if let Storage::BF16(v) = self { Some(v) } else { None }
+    }
+    pub fn as_f32(&self) -> Option<&[f32]> {
+        if let Storage::F32(v) = self { Some(v) } else { None }
+    }
+}
+
 impl Drop for Storage {
     fn drop(&mut self) {
         if let Storage::None = self { return; }

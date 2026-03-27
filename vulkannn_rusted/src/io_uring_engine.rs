@@ -31,14 +31,24 @@ impl AlignedBuffer {
         Self { ptr, layout, size: padded_size } // We track the padded size
     }
 
-    /// Returns the buffer as a mutable slice.
+    /// Returns the buffer as a read-only u8 slice.
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr, self.size) }
+    }
+
+    /// Returns the buffer as a mutable u8 slice.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.size) }
     }
-    
-    /// Returns the buffer as a read-only slice.
-    pub fn as_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.ptr, self.size) }
+
+    /// Returns the buffer as a generic read-only slice.
+    pub fn as_slice_generic<T>(&self) -> &[T] {
+        unsafe { std::slice::from_raw_parts(self.ptr as *const T, self.size / std::mem::size_of::<T>()) }
+    }
+
+    /// Returns the buffer as a generic mutable slice.
+    pub fn as_slice_mut_generic<T>(&mut self) -> &mut [T] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr as *mut T, self.size / std::mem::size_of::<T>()) }
     }
 }
 
@@ -72,8 +82,8 @@ impl DirectIoEngine {
         
         let file = options.open(path).expect("Failed to open file with O_DIRECT. Ensure filesystem supports it.");
         
-        // 128 queue depth
-        let ring = IoUring::new(128).expect("Failed to init io_uring");
+        // Use static depth from compile-time detection
+        let ring = IoUring::new(crate::hardware_config::URING_DEPTH).expect("Failed to init io_uring");
         Self { 
             ring: Mutex::new(ring), 
             file: Arc::new(file), 

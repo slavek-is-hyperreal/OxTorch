@@ -106,19 +106,66 @@ fn main() {
     let tile_large = std::env::var("MSTS_TILE_BYTES").map(|s| s.parse().unwrap()).unwrap_or(tile_large);
     let ring_large = std::env::var("MSTS_RING_DEPTH").map(|s| s.parse().unwrap()).unwrap_or(ring_large);
 
+    // 3. Static Disk Detection (NVMe vs SATA ZFS)
+    // Read .env to find our target cache path
+    let env_content = fs::read_to_string(".env").unwrap_or_default();
+    let mut cache_path = String::new();
+    for line in env_content.lines() {
+        if line.starts_with("VNN_CACHE_DIR=") {
+            cache_path = line.split('=').nth(1).unwrap_or("").to_string();
+            break;
+        }
+    }
+
+    let is_ssd = cache_path.to_lowercase().contains("ssd") || check_if_nvme();
+    let uring_depth = if is_ssd { 64u32 } else { 16u32 }; // SATA SSD depth (64) is safer for ZFS
+
+    // 4. Capacitor Static Safety Floor (50% of build-time RAM)
+    let mem_total_kb = read_mem_total().unwrap_or(8 * 1024 * 1024); // Default 8GB
+    let capacitor_floor_mb = (mem_total_kb / 1024) / 4; // 25% safety floor
+
     println!("cargo:rustc-env=MSTS_DIRECT_MAX={}", direct_max);
     println!("cargo:rustc-env=MSTS_TILE_SMALL={}", tile_small);
     println!("cargo:rustc-env=MSTS_RING_SMALL={}", ring_small);
     println!("cargo:rustc-env=MSTS_TILE_BYTES={}", tile_large);
     println!("cargo:rustc-env=MSTS_RING_DEPTH={}", ring_large);
+    println!("cargo:rustc-env=VNN_URING_DEPTH={}", uring_depth);
+    println!("cargo:rustc-env=VNN_CAPACITOR_FLOOR_MB={}", capacitor_floor_mb);
 
     // Also write a constants file to OUT_DIR for easier inclusion
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let dest_path = std::path::Path::new(&out_dir).join("msts_constants.rs");
     fs::write(&dest_path, format!(
-        "pub const DIRECT_MAX: usize = {};\npub const TILE_SMALL: usize = {};\npub const RING_SMALL: usize = {};\npub const TILE_LARGE: usize = {};\npub const RING_LARGE: usize = {};\n",
-        direct_max, tile_small, ring_small, tile_large, ring_large
+        "pub const DIRECT_MAX: usize = {};\n\
+         pub const TILE_SMALL: usize = {};\n\
+         pub const RING_SMALL: usize = {};\n\
+         pub const TILE_LARGE: usize = {};\n\
+         pub const RING_LARGE: usize = {};\n\
+         pub const URING_DEPTH: u32 = {};\n\
+         pub const CAPACITOR_FLOOR_MB: usize = {};\n",
+        direct_max, tile_small, ring_small, tile_large, ring_large, uring_depth, capacitor_floor_mb
     )).unwrap();
+}
+
+fn check_if_nvme() -> bool {
+    if let Ok(entries) = fs::read_dir("/sys/block") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("nvme") { return true; }
+        }
+    }
+    false
+}
+
+fn read_mem_total() -> Option<usize> {
+    if let Ok(content) = fs::read_to_string("/proc/meminfo") {
+        for line in content.lines() {
+            if line.starts_with("MemTotal:") {
+                return line.split_whitespace().nth(1).and_then(|s| s.parse::<usize>().ok());
+            }
+        }
+    }
+    None
 }
 
 fn read_cache_size(level: u32) -> Option<usize> {

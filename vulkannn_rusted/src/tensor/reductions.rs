@@ -112,6 +112,19 @@ impl Tensor {
             _ => self.dtype,
         };
 
+        if self.is_ssd() && dim.is_none() {
+            let res = self.execute_reduction_ssd(op)?;
+            let mut out_t = Tensor::new_zeros(vec![1], out_dtype, "cpu")?;
+            let (out_raw, _) = out_t.get_slice_raw_mut_bytes();
+            match out_dtype {
+                DataType::F32 => unsafe { *(out_raw.as_ptr() as *mut f32) = res; },
+                DataType::F16 => unsafe { *(out_raw.as_ptr() as *mut half::f16) = half::f16::from_f32(res); },
+                DataType::BF16 => unsafe { *(out_raw.as_ptr() as *mut half::bf16) = half::bf16::from_f32(res); },
+                _ => unreachable!(),
+            }
+            return Ok(out_t);
+        }
+
         let (in_raw, _) = self.get_slice_raw_bytes();
         let mut out_t = Tensor::new_zeros(out_shape, out_dtype, "cpu")?;
         let (out_raw, _) = out_t.get_slice_raw_mut_bytes();
