@@ -6,6 +6,7 @@ pub use tensor::{DataType, Tensor};
 pub mod buf_pool;
 pub mod io_uring_engine;
 pub mod crook_scheduler;
+pub mod cpu_old;
 pub mod cpu;
 pub mod prng;
 pub mod models;

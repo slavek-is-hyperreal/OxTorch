@@ -16,81 +16,151 @@ impl Tensor {
             self.unary_op_ssd_direct(op, param1, param2)
         } else if total_bytes <= 33_554_432 { // 32MB threshold
             // Path B: Single-thread (1 worker, small tiles in L2)
-            self.unary_op_ssd_streaming(op, param1, param2, TILE_SMALL, RING_SMALL, false)
+            self.execute_op_unified(None, op, param1, param2, TILE_SMALL, RING_SMALL, false)
         } else {
             // Path C: Full (2 workers, Rayon parallel, large tiles)
-            self.unary_op_ssd_streaming(op, param1, param2, TILE_LARGE, RING_LARGE, true)
+            self.execute_op_unified(None, op, param1, param2, TILE_LARGE, RING_LARGE, true)
         }
     }
 
-    fn unary_op_ssd_direct(&self, op: &str, _param1: f32, _param2: f32) -> PyResult<Tensor> {
-        let res_path = format!("{}_{}_dir.ssd", self.name, op);
+    /// Master Dispatcher for binary operations (A + B).
+    /// Automatically selects between Direct, Rayon (RAM), or Crook (SSD) paths.
+    pub fn dispatch_binary_op(&self, other: &Tensor, op: &str) -> PyResult<Tensor> {
+        self.check_shape(other)?;
+        
+        let is_any_ssd = self.is_ssd() || other.is_ssd();
+        let bytes_per_elem = self.dtype.size();
+        let total_elements = self.shape.iter().product::<usize>();
+        let total_bytes = (total_elements * bytes_per_elem) as u64;
+
+        if !is_any_ssd {
+            // RAM-only path: Directly use the CPU ops Smart Dispatcher
+            return match op {
+                "add" => crate::cpu::ops::binary::add::add_bf16(self, other),
+                "sub" => crate::cpu::ops::binary::sub::sub_bf16(self, other),
+                "mul" => crate::cpu::ops::binary::mul::mul_bf16(self, other),
+                "div" => crate::cpu::ops::binary::div::div_bf16(self, other),
+                _ => Err(pyo3::exceptions::PyValueError::new_err(format!("Unknown op: {}", op))),
+            };
+        }
+
+        // SSD involved: Use the Unified MSTS Orchestrator
+        if total_bytes <= DIRECT_MAX as u64 {
+             self.binary_op_ssd_direct(other, op)
+        } else if total_bytes <= 33_554_432 {
+             self.execute_op_unified(Some(other), op, 0.0, 0.0, TILE_SMALL, RING_SMALL, false)
+        } else {
+             self.execute_op_unified(Some(other), op, 0.0, 0.0, TILE_LARGE, RING_LARGE, true)
+        }
+    }
+
+    fn binary_op_ssd_direct(&self, other: &Tensor, op: &str) -> PyResult<Tensor> {
+        let res_path = format!("{}_{}_{}_dir.ssd", self.name, other.name, op);
         let res_tensor = Self::new_ssd_raw(&res_path, self.shape.clone(), self.dtype)?;
 
-        let engine_in = match self.ssd_engine.as_ref().unwrap() {
-            IoEngineType::ReadOnly(e) => e.clone(),
-            IoEngineType::ReadWrite(e) => e.clone(),
-        };
+        let total_bytes = (self.shape.iter().product::<usize>() * self.dtype.size()) as usize;
+        let mut buf_a = crate::io_uring_engine::AlignedBuffer::new(total_bytes);
+        let mut buf_b = crate::io_uring_engine::AlignedBuffer::new(total_bytes);
+
+        // Direct Load of both operands (if they are SSD)
+        if self.is_ssd() {
+            let engine = match self.ssd_engine.as_ref().unwrap() {
+                IoEngineType::ReadOnly(e) | IoEngineType::ReadWrite(e) => e.clone(),
+            };
+            engine.read_chunk(0, buf_a.as_mut_slice());
+        } else {
+            // Copy from RAM storage
+            self.load_to_buffer(buf_a.as_mut_slice(), 0)?;
+        }
+
+        if other.is_ssd() {
+            let engine = match other.ssd_engine.as_ref().unwrap() {
+                IoEngineType::ReadOnly(e) | IoEngineType::ReadWrite(e) => e.clone(),
+            };
+            engine.read_chunk(0, buf_b.as_mut_slice());
+        } else {
+            other.load_to_buffer(buf_b.as_mut_slice(), 0)?;
+        }
+
+        // Perform computation using the Serial Leaf Kernels
+        match (self.dtype, op) {
+            (DataType::BF16, "add") => {
+                let a = bytemuck::cast_slice::<u8, half::bf16>(buf_a.as_slice());
+                let b = bytemuck::cast_slice::<u8, half::bf16>(buf_b.as_slice());
+                let res = bytemuck::cast_slice_mut::<u8, half::bf16>(buf_a.as_mut_slice());
+                crate::cpu::ops::binary::add::bf16_add_avx_serial(a, b, res);
+            },
+            // ... (Add other ops/dtypes here)
+            _ => { return Err(pyo3::exceptions::PyValueError::new_err(format!("Direct SSD Binary Op not implemented for {:?} {}", self.dtype, op))); }
+        }
+
         let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
             IoEngineType::ReadWrite(e) => e.clone(),
             _ => unreachable!(),
         };
-
-        let total_bytes = (self.shape.iter().product::<usize>() * self.dtype.size()) as usize;
-        let mut buf = crate::io_uring_engine::AlignedBuffer::new(total_bytes);
-
-        // Zero thread overhead: just direct read/write
-        engine_in.read_chunk(0, buf.as_mut_slice());
-
-        match self.dtype {
-            DataType::F32 => {
-                let slice = bytemuck::cast_slice_mut::<u8, f32>(buf.as_mut_slice());
-                for x in slice.iter_mut() {
-                    if op == "relu" && *x < 0.0 { *x = 0.0; }
-                    else if op == "gelu" { *x = crate::cpu::gelu_f32_scalar_single(*x); }
-                }
-            },
-            DataType::Int8 => {
-                let slice = bytemuck::cast_slice_mut::<u8, i8>(buf.as_mut_slice());
-                for x in slice.iter_mut() { if op == "relu" && *x < 0 { *x = 0; } }
-            },
-            _ => {} // F16/BF16 scalar fallback if needed
-        }
-
-        engine_out.write_chunk(0, buf.as_slice());
+        engine_out.write_chunk(0, buf_a.as_slice());
         Ok(res_tensor)
     }
 
-    fn unary_op_ssd_streaming(&self, op: &str, param1: f32, param2: f32, tile_size: usize, ring_size: usize, parallel: bool) -> PyResult<Tensor> {
-        let res_path = format!("{}_{}_msts.ssd", self.name, op);
+    /// The Unified MSTS Orchestrator. Handles both Unary and Binary operations
+    /// by streaming data through the Capacitor and TensorPool. 
+    /// Follows the MERA-400 PPU/CPU decoupling model.
+    fn execute_op_unified(&self, other: Option<&Tensor>, op: &str, param1: f32, param2: f32, tile_size: usize, ring_size: usize, _parallel: bool) -> PyResult<Tensor> {
+        let res_name = if let Some(o) = other { format!("{}_{}_{}", self.name, o.name, op) } else { format!("{}_{}", self.name, op) };
+        let res_path = format!("{}_msts.ssd", res_name);
         let res_tensor = Self::new_ssd_raw(&res_path, self.shape.clone(), self.dtype)?;
-        
-        let engine_in = match self.ssd_engine.as_ref().unwrap() {
-            IoEngineType::ReadOnly(e) => e.clone(),
-            IoEngineType::ReadWrite(e) => e.clone(),
-        };
-        let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
-            IoEngineType::ReadWrite(e) => e.clone(),
-            _ => unreachable!(),
-        };
         
         let bytes_per_elem = self.dtype.size();
         let total_elements = self.shape.iter().product::<usize>();
         let total_bytes = (total_elements * bytes_per_elem) as u64;
-        
+
         let cap = Some(crate::tensor::capacitor::get_capacitor());
         let scheduler = crate::crook_scheduler::CrookScheduler::new_custom(ring_size, tile_size, cap);
-        let r_sched = scheduler.clone();
-        let w_sched = scheduler.clone();
-        let r_handle = crate::crook_scheduler::CrookScheduler::start_read_worker(r_sched, engine_in, total_bytes);
-        let w_handle = crate::crook_scheduler::CrookScheduler::start_write_worker(w_sched, engine_out, total_bytes);
+        
+        // 1. Start Reader for Self (Source A)
+        if self.is_ssd() {
+            let engine = match self.ssd_engine.as_ref().unwrap() {
+                IoEngineType::ReadOnly(e) | IoEngineType::ReadWrite(e) => e.clone(),
+            };
+            crate::crook_scheduler::CrookScheduler::start_read_worker(scheduler.clone(), engine, total_bytes, 0);
+        } else {
+            // RAM Source: In a true MSTS, we would "fake" a reader or just mark the bit.
+            // For now, let's just use the SSD-SSD path for full verification.
+        }
+
+        let mut expected_bits = 1;
+
+        // 2. Start Reader for Other (Source B if binary)
+        if let Some(other_t) = other {
+            if other_t.is_ssd() {
+                let engine = match other_t.ssd_engine.as_ref().unwrap() {
+                    IoEngineType::ReadOnly(e) | IoEngineType::ReadWrite(e) => e.clone(),
+                };
+                crate::crook_scheduler::CrookScheduler::start_read_worker(scheduler.clone(), engine, total_bytes, 1);
+                expected_bits = 3; // Binary: 0b11
+            }
+        }
+
+        // 3. Start Writer
+        let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
+            IoEngineType::ReadWrite(e) => e.clone(),
+            _ => unreachable!(),
+        };
+        crate::crook_scheduler::CrookScheduler::start_write_worker(scheduler.clone(), engine_out, total_bytes);
         
         let mut offset = 0;
         let mut tile_idx = 0;
         while offset < total_bytes {
             let tile = &scheduler.ring[tile_idx];
+            
+            // BARRIER: Wait for ALL sources to be ready (MERA-400 Handshake)
+            while tile.ready_bits.load(std::sync::atomic::Ordering::Acquire) != expected_bits {
+                std::hint::spin_loop();
+            }
+
+            // Enter COMPUTING state
             while tile.state.compare_exchange(
-                crate::crook_scheduler::TILE_READY_FOR_COMPUTE,
+                crate::crook_scheduler::TILE_READING_FROM_DISK,
                 crate::crook_scheduler::TILE_COMPUTING,
                 std::sync::atomic::Ordering::Acquire,
                 std::sync::atomic::Ordering::Relaxed
@@ -99,60 +169,73 @@ impl Tensor {
             }
             
             let bytes_in_tile = std::cmp::min(tile_size, (total_bytes - offset) as usize);
-            let payload = tile.get_data_mut(bytes_in_tile);
             
-            match self.dtype {
-                DataType::F32 => {
-                    let slice = bytemuck::cast_slice_mut::<u8, f32>(payload);
-                    if parallel {
-                        Self::act_into_raw_parallel_f32(slice, op, param1, param2);
-                    } else {
-                        for x in slice.iter_mut() {
-                            if op == "relu" && *x < 0.0 { *x = 0.0; }
-                            else if op == "gelu" { *x = crate::cpu::gelu_f32_scalar_single(*x); }
-                        }
+            // Execute the Leaf Kernel on the prepared slots
+            match (self.dtype, op) {
+                (DataType::BF16, "add") if other.is_some() => {
+                    let a_ptr = tile.slot_a.get_ptr(bytes_in_tile);
+                    let b_ptr = tile.slot_b.get_ptr(bytes_in_tile);
+                    let res_ptr = tile.slot_res.get_ptr(bytes_in_tile);
+                    
+                    let a = unsafe { std::slice::from_raw_parts(a_ptr as *const half::bf16, bytes_in_tile / 2) };
+                    let b = unsafe { std::slice::from_raw_parts(b_ptr as *const half::bf16, bytes_in_tile / 2) };
+                    let res = unsafe { std::slice::from_raw_parts_mut(res_ptr as *mut half::bf16, bytes_in_tile / 2) };
+                    
+                    crate::cpu::ops::binary::add::bf16::add_bf16_avx_serial(a, b, res);
+                },
+                (DataType::BF16, "sub") if other.is_some() => {
+                    let a_ptr = tile.slot_a.get_ptr(bytes_in_tile);
+                    let b_ptr = tile.slot_b.get_ptr(bytes_in_tile);
+                    let res_ptr = tile.slot_res.get_ptr(bytes_in_tile);
+                    
+                    let a = unsafe { std::slice::from_raw_parts(a_ptr as *const half::bf16, bytes_in_tile / 2) };
+                    let b = unsafe { std::slice::from_raw_parts(b_ptr as *const half::bf16, bytes_in_tile / 2) };
+                    let res = unsafe { std::slice::from_raw_parts_mut(res_ptr as *mut half::bf16, bytes_in_tile / 2) };
+                    
+                    crate::cpu::ops::binary::sub::bf16::sub_bf16_avx_serial(a, b, res);
+                },
+                (DataType::BF16, "mul") if other.is_some() => {
+                    let a_ptr = tile.slot_a.get_ptr(bytes_in_tile);
+                    let b_ptr = tile.slot_b.get_ptr(bytes_in_tile);
+                    let res_ptr = tile.slot_res.get_ptr(bytes_in_tile);
+                    
+                    let a = unsafe { std::slice::from_raw_parts(a_ptr as *const half::bf16, bytes_in_tile / 2) };
+                    let b = unsafe { std::slice::from_raw_parts(b_ptr as *const half::bf16, bytes_in_tile / 2) };
+                    let res = unsafe { std::slice::from_raw_parts_mut(res_ptr as *mut half::bf16, bytes_in_tile / 2) };
+                    
+                    crate::cpu::ops::binary::mul::bf16::mul_bf16_avx_serial(a, b, res);
+                },
+                (DataType::BF16, "div") if other.is_some() => {
+                    let a_ptr = tile.slot_a.get_ptr(bytes_in_tile);
+                    let b_ptr = tile.slot_b.get_ptr(bytes_in_tile);
+                    let res_ptr = tile.slot_res.get_ptr(bytes_in_tile);
+                    
+                    let a = unsafe { std::slice::from_raw_parts(a_ptr as *const half::bf16, bytes_in_tile / 2) };
+                    let b = unsafe { std::slice::from_raw_parts(b_ptr as *const half::bf16, bytes_in_tile / 2) };
+                    let res = unsafe { std::slice::from_raw_parts_mut(res_ptr as *mut half::bf16, bytes_in_tile / 2) };
+                    
+                    crate::cpu::ops::binary::div::bf16::div_bf16_avx_serial(a, b, res);
+                },
+                (DataType::BF16, "relu") if other.is_none() => {
+                    let a_ptr = tile.slot_a.get_ptr(bytes_in_tile);
+                    let res_ptr = tile.slot_res.get_ptr(bytes_in_tile);
+                    let a = unsafe { std::slice::from_raw_parts(a_ptr as *const half::bf16, bytes_in_tile / 2) };
+                    let res = unsafe { std::slice::from_raw_parts_mut(res_ptr as *mut half::bf16, bytes_in_tile / 2) };
+                    for (i, val) in a.iter().enumerate() {
+                        res[i] = if val.to_f32() < 0.0 { half::bf16::ZERO } else { *val };
                     }
                 },
-                DataType::F16 => {
-                    let slice = bytemuck::cast_slice_mut::<u8, half::f16>(payload);
-                    if parallel {
-                        slice.par_iter_mut().for_each(|x| { if op == "relu" && x.to_f32() < 0.0 { *x = half::f16::ZERO; } });
-                    } else {
-                        for x in slice.iter_mut() { if op == "relu" && x.to_f32() < 0.0 { *x = half::f16::ZERO; } }
-                    }
-                },
-                DataType::BF16 => {
-                    let slice = bytemuck::cast_slice_mut::<u8, half::bf16>(payload);
-                    if parallel {
-                        slice.par_iter_mut().for_each(|x| { if op == "relu" && x.to_f32() < 0.0 { *x = half::bf16::ZERO; } });
-                    } else {
-                        for x in slice.iter_mut() { if op == "relu" && x.to_f32() < 0.0 { *x = half::bf16::ZERO; } }
-                    }
-                },
-                DataType::Int8 => {
-                    let slice = bytemuck::cast_slice_mut::<u8, i8>(payload);
-                    if parallel {
-                        slice.par_iter_mut().for_each(|x| { if op == "relu" && *x < 0 { *x = 0; } });
-                    } else {
-                        for x in slice.iter_mut() { if op == "relu" && *x < 0 { *x = 0; } }
-                    }
-                },
-                DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => {
-                    let slice = bytemuck::cast_slice_mut::<u8, i8>(payload); // BitNet2/1.6/I2_S are stored as i8
-                    if parallel {
-                        slice.par_iter_mut().for_each(|x| { if op == "relu" && *x < 0 { *x = 0; } });
-                    } else {
-                        for x in slice.iter_mut() { if op == "relu" && *x < 0 { *x = 0; } }
-                    }
-                }
+                _ => {} 
             }
             
+            // Signal Writer
+            tile.ready_bits.store(0, std::sync::atomic::Ordering::Release); // Clear bits for reuse
             tile.state.store(crate::crook_scheduler::TILE_READY_FOR_WRITE, std::sync::atomic::Ordering::Release);
+            
             offset += bytes_in_tile as u64;
             tile_idx = (tile_idx + 1) % ring_size;
         }
-        r_handle.join().unwrap();
-        w_handle.join().unwrap();
+        
         Ok(res_tensor)
     }
 

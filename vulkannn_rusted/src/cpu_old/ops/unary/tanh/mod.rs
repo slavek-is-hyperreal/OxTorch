@@ -5,7 +5,7 @@ pub fn tanh_f32(buf: &mut [f32]) {
         for chunk in buf.chunks_exact_mut(8) {
             unsafe {
                 let v = std::arch::x86_64::_mm256_loadu_ps(chunk.as_ptr());
-                let res = crate::cpu::ops::math_simd::tanh_ps_avx2(v);
+                let res = crate::cpu_old::ops::math_simd::tanh_ps_avx2(v);
                 std::arch::x86_64::_mm256_storeu_ps(chunk.as_mut_ptr(), res);
             }
         }
@@ -20,7 +20,7 @@ pub fn tanh_f32(buf: &mut [f32]) {
         for chunk in buf.chunks_exact_mut(4) {
             unsafe {
                 let v = std::arch::aarch64::vld1q_f32(chunk.as_ptr());
-                let res = crate::cpu::ops::math_simd::tanh_ps_neon(v);
+                let res = crate::cpu_old::ops::math_simd::tanh_ps_neon(v);
                 std::arch::aarch64::vst1q_f32(chunk.as_mut_ptr(), res);
             }
         }

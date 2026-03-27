@@ -22,7 +22,7 @@ fn layer_norm_bf16_row(x: &[half::bf16], w_f32: &[f32], b_f32: &[f32], out: &mut
     
     for i in 0..d { x_f32[i] = x[i].to_f32(); }
     
-    crate::cpu::ops::norm::layer_norm::layer_norm_f32::layer_norm_f32(&x_f32, w_f32, b_f32, &mut out_f32, 1, d, eps);
+    crate::cpu_old::ops::norm::layer_norm::layer_norm_f32::layer_norm_f32(&x_f32, w_f32, b_f32, &mut out_f32, 1, d, eps);
     
     for i in 0..d { out[i] = half::bf16::from_f32(out_f32[i]); }
 }

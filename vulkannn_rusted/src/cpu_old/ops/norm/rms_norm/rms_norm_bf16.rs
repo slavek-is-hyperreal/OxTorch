@@ -20,7 +20,7 @@ fn rms_norm_bf16_row(x: &[half::bf16], w_f32: &[f32], out: &mut [half::bf16], d:
     
     for i in 0..d { x_f32[i] = x[i].to_f32(); }
     
-    crate::cpu::ops::norm::rms_norm::rms_norm_f32::rms_norm_f32(&x_f32, w_f32, &mut out_f32, 1, d, eps);
+    crate::cpu_old::ops::norm::rms_norm::rms_norm_f32::rms_norm_f32(&x_f32, w_f32, &mut out_f32, 1, d, eps);
     
     for i in 0..d { out[i] = half::bf16::from_f32(out_f32[i]); }
 }

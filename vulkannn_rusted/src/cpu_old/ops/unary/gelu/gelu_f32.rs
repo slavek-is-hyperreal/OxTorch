@@ -118,7 +118,7 @@ fn gelu_f32_neon(buf: &mut [f32]) {
             let tmp = vaddq_f32(x, vmulq_f32(vc, x3));
             let inner = vmulq_f32(vk, tmp);
             
-            let tanh_v = crate::cpu::ops::math_simd::tanh_ps_neon(inner);
+            let tanh_v = crate::cpu_old::ops::math_simd::tanh_ps_neon(inner);
             let res = vmulq_f32(vhalf, vmulq_f32(x, vaddq_f32(vone, tanh_v)));
             vst1q_f32(buf.as_mut_ptr().add(i), res);
         }

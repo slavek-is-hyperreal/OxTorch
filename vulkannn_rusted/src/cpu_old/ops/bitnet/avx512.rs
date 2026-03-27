@@ -51,7 +51,7 @@ pub unsafe fn execute_bit_linear_avx512(m: usize, k: usize, weights_packed: &[u8
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw")))]
 pub unsafe fn execute_bit_linear_avx512(m: usize, k: usize, weights_packed: &[u8], activations_i8: &[i8], scales: &[f32], output: &mut [f32]) {
     #[cfg(target_arch = "x86_64")]
-    crate::cpu::ops::bitnet::avx2::execute_bit_linear_avx2(m, k, weights_packed, activations_i8, scales, output);
+    crate::cpu_old::ops::bitnet::avx2::execute_bit_linear_avx2(m, k, weights_packed, activations_i8, scales, output);
     #[cfg(not(target_arch = "x86_64"))]
-    crate::cpu::ops::bitnet::scalar::execute_bit_linear_scalar(m, k, weights_packed, activations_i8, scales, output);
+    crate::cpu_old::ops::bitnet::scalar::execute_bit_linear_scalar(m, k, weights_packed, activations_i8, scales, output);
 }
