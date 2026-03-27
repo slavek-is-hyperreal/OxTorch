@@ -3,10 +3,10 @@
     "op": "Softmax",
     "dtype": "bf16",
     "mode": "vulkan",
-    "pt_time": 0.0173664155008737,
-    "vnn_time": 0.011347753999871202,
-    "ratio": 0.6534309857610109,
+    "pt_time": 0.013547483898582869,
+    "vnn_time": 0.019033277998096308,
+    "ratio": 1.4049308447664794,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 44.0
+    "cpu_temp": 50.0
 }
