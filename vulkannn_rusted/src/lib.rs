@@ -1,4 +1,5 @@
 mod backend;
+pub mod vulkan;
 mod sys_info;
 mod tensor;
 pub use tensor::{DataType, Tensor};

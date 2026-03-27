@@ -87,6 +87,7 @@ pub enum GGMLType {
     I16 = 17,
     I32 = 18,
     Count = 19,
+    #[allow(non_camel_case_types)]
     I2_S = 36,
 }
 

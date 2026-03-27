@@ -3,10 +3,10 @@
     "op": "LayerNorm",
     "dtype": "bf16",
     "mode": "hybrid",
-    "pt_time": 0.0029384187000687234,
-    "vnn_time": 0.004808508499991149,
-    "ratio": 1.6364272728997702,
+    "pt_time": 0.000870633999875281,
+    "vnn_time": 0.002711955999257043,
+    "ratio": 3.1149208503751664,
     "parity": true,
     "max_diff": 0.0,
-    "cpu_temp": 46.0
+    "cpu_temp": 45.0
 }

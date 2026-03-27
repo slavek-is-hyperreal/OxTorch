@@ -123,53 +123,66 @@ class BenchmarkBase:
             gc.collect()
 
             # PyTorch Benchmark
-            t0 = time.perf_counter()
-            for _ in range(self.iterations):
+            t_pt = 0.0
+            res_torch = None
+
+            def run_torch_op_internal(a, b):
                 if self.op == "MatMul":
-                    res_torch = torch.matmul(a_torch, b_torch)
+                    return torch.matmul(a, b)
                 elif self.op == "ScalarAdd":
-                    res_torch = a_torch + b_torch
+                    return a + b
                 elif self.op == "ScalarMul":
-                    res_torch = a_torch * b_torch
+                    return a * b
                 elif self.op == "Cat":
-                    res_torch = torch.cat([a_torch, b_torch], dim=0)
+                    return torch.cat([a, b], dim=0)
                 elif self.op == "Stack":
-                    res_torch = torch.stack([a_torch, b_torch], dim=0)
+                    return torch.stack([a, b], dim=0)
                 elif self.op == "Split":
-                    res_torch = torch.split(a_torch, _op_kwargs.get("split_size", 1), dim=_op_kwargs.get("dim", 0))
+                    return torch.split(a, _op_kwargs.get("split_size", 1), dim=_op_kwargs.get("dim", 0))
                 elif self.op == "Chunk":
-                    res_torch = torch.chunk(a_torch, _op_kwargs.get("chunks", 2), dim=_op_kwargs.get("dim", 0))
+                    return torch.chunk(a, _op_kwargs.get("chunks", 2), dim=_op_kwargs.get("dim", 0))
                 elif self.op == "LayerNorm":
-                    res_torch = torch.layer_norm(a_torch, [self.shape[-1]], weight=b_torch, bias=None, eps=1e-5)
+                    return torch.layer_norm(a, [self.shape[-1]], weight=b, bias=None, eps=1e-5)
                 elif self.op == "RMSNorm":
-                    res_torch = a_torch * torch.rsqrt(a_torch.pow(2).mean(-1, keepdim=True) + 1e-5) * b_torch
+                    return a * torch.rsqrt(a.pow(2).mean(-1, keepdim=True) + 1e-5) * b
                 elif self.op == "IndexSelect":
-                    a_torch_in = a_torch.to(torch.float32) if self.dtype == "int8" else a_torch
-                    res_torch = torch.index_select(a_torch_in, dim=self.kwargs.get("dim", 0), index=b_torch.to(torch.int64))
-                    if self.dtype == "int8":
-                        res_torch = res_torch.to(torch.int8)
+                    a_in = a.to(torch.float32) if self.dtype == "int8" else a
+                    return torch.index_select(a_in, dim=self.kwargs.get("dim", 0), index=b.to(torch.int64))
                 elif hasattr(torch.nn.functional, _resolved_op):
                     op_func = getattr(torch.nn.functional, _resolved_op)
-                    # Hack for INT8: PyTorch doesn't support it for these ops on CPU
-                    a_torch_in = a_torch.to(torch.float32) if self.dtype == "int8" and self.op in ["GELU", "Softmax"] else a_torch
-                    if b_torch is not None:
-                        res_torch = op_func(a_torch_in, b_torch, **_op_kwargs)
+                    a_in = a.to(torch.float32) if self.dtype == "int8" and self.op in ["GELU", "Softmax"] else a
+                    if b is not None:
+                        res = op_func(a_in, b, **_op_kwargs)
                     else:
-                        res_torch = op_func(a_torch_in, **_op_kwargs)
-                    if self.dtype == "int8" and self.op in ["GELU", "Softmax"]:
-                        res_torch = res_torch.to(torch.int8)
+                        res = op_func(a_in, **_op_kwargs)
+                    return res.to(torch.int8) if self.dtype == "int8" and self.op in ["GELU", "Softmax"] else res
                 elif hasattr(torch, _resolved_op):
                     op_func = getattr(torch, _resolved_op)
-                    a_torch_in = a_torch.to(torch.float32) if self.dtype == "int8" and self.op in ["GELU", "Softmax"] else a_torch
-                    if b_torch is not None:
-                        res_torch = op_func(a_torch_in, b_torch, **_op_kwargs)
+                    a_in = a.to(torch.float32) if self.dtype == "int8" and self.op in ["GELU", "Softmax"] else a
+                    if b is not None:
+                        res = op_func(a_in, b, **_op_kwargs)
                     else:
-                        res_torch = op_func(a_torch_in, **_op_kwargs)
-                    if self.dtype == "int8" and self.op in ["GELU", "Softmax"]:
-                        res_torch = res_torch.to(torch.int8)
+                        res = op_func(a_in, **_op_kwargs)
+                    return res.to(torch.int8) if self.dtype == "int8" and self.op in ["GELU", "Softmax"] else res
                 else:
                     raise AttributeError(f"Op {self.op} (resolved: {_resolved_op}) not found in torch or torch.nn.functional")
-            t_pt = (time.perf_counter() - t0) / self.iterations
+
+            if not self.is_ssd:
+                try:
+                    t0 = time.perf_counter()
+                    for _ in range(self.iterations):
+                        res_torch = run_torch_op_internal(a_torch, b_torch)
+                    t_pt = (time.perf_counter() - t0) / self.iterations
+                except RuntimeError as e:
+                    if "not implemented for" in str(e) or "not implemented on" in str(e):
+                        a_torch_f32 = a_torch.to(torch.float32)
+                        b_torch_f32 = b_torch.to(torch.float32) if isinstance(b_torch, torch.Tensor) else b_torch
+                        t0 = time.perf_counter()
+                        for _ in range(self.iterations):
+                            res_torch = run_torch_op_internal(a_torch_f32, b_torch_f32)
+                        t_pt = (time.perf_counter() - t0) / self.iterations
+                    else:
+                        raise e
         else:
             # SSD Mapped setup (special case for Monster tests)
             t_pt = 0.0

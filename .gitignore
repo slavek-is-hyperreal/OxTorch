@@ -57,4 +57,4 @@ dist/
 # Research Repos (External)
 BitNet_repo/
 pytorch/
-/models/
+models/bitnet-2B-4T-gguf/
