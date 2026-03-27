@@ -1,0 +1,12 @@
+{
+    "name": "Mul_int8_vulkan",
+    "op": "Mul",
+    "dtype": "int8",
+    "mode": "vulkan",
+    "pt_time": 0.00130923049946432,
+    "vnn_time": 0.017155283600004623,
+    "ratio": 13.103333299234793,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 42.0
+}

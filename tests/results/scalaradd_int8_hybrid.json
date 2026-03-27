@@ -1,0 +1,12 @@
+{
+    "name": "ScalarAdd_int8_hybrid",
+    "op": "ScalarAdd",
+    "dtype": "int8",
+    "mode": "hybrid",
+    "pt_time": 0.007290178699622629,
+    "vnn_time": 0.001309272600337863,
+    "ratio": 0.17959403387541603,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 51.0
+}

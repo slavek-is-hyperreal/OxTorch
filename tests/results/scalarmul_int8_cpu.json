@@ -1,0 +1,12 @@
+{
+    "name": "ScalarMul_int8_cpu",
+    "op": "ScalarMul",
+    "dtype": "int8",
+    "mode": "cpu",
+    "pt_time": 0.00966579140003887,
+    "vnn_time": 0.0037296565496944822,
+    "ratio": 0.38586147738295734,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 41.0
+}

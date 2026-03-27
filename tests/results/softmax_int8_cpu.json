@@ -1,0 +1,12 @@
+{
+    "name": "Softmax_int8_cpu",
+    "op": "Softmax",
+    "dtype": "int8",
+    "mode": "cpu",
+    "pt_time": 0.019372276499780128,
+    "vnn_time": 0.018343967299733775,
+    "ratio": 0.9469185152267456,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 41.0
+}

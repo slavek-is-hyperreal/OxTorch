@@ -1,0 +1,12 @@
+{
+    "name": "Sub_f16_hybrid",
+    "op": "Sub",
+    "dtype": "f16",
+    "mode": "hybrid",
+    "pt_time": 0.00572770290018525,
+    "vnn_time": 0.02190661490021739,
+    "ratio": 3.8246772365774895,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 42.0
+}

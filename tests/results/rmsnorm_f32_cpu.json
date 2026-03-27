@@ -1,0 +1,12 @@
+{
+    "name": "RMSNorm_f32_cpu",
+    "op": "RMSNorm",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.0007385515498754102,
+    "vnn_time": 0.00024713534949114544,
+    "ratio": 0.33462166524846626,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 41.0
+}

@@ -1,0 +1,12 @@
+{
+    "name": "IndexSelect_int8_vulkan",
+    "op": "IndexSelect",
+    "dtype": "int8",
+    "mode": "vulkan",
+    "pt_time": 0.028508522198535502,
+    "vnn_time": 0.04249714920006227,
+    "ratio": 1.4906822915656208,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 47.0
+}

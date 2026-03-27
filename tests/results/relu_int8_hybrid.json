@@ -1,0 +1,12 @@
+{
+    "name": "ReLU_int8_hybrid",
+    "op": "ReLU",
+    "dtype": "int8",
+    "mode": "hybrid",
+    "pt_time": 0.00011974974986515008,
+    "vnn_time": 0.0032102302502607927,
+    "ratio": 26.80782426581956,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 41.0
+}

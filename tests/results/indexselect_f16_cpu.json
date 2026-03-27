@@ -1,0 +1,12 @@
+{
+    "name": "IndexSelect_f16_cpu",
+    "op": "IndexSelect",
+    "dtype": "f16",
+    "mode": "cpu",
+    "pt_time": 0.0020721257984405383,
+    "vnn_time": 0.0027729268011171372,
+    "ratio": 1.3382038885882388,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 42.0
+}

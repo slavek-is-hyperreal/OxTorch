@@ -1,0 +1,12 @@
+{
+    "name": "IndexSelect_f32_vulkan",
+    "op": "IndexSelect",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.003305995199480094,
+    "vnn_time": 0.048096884400001726,
+    "ratio": 14.548383012644882,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 42.0
+}

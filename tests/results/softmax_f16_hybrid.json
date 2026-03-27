@@ -1,0 +1,12 @@
+{
+    "name": "Softmax_f16_hybrid",
+    "op": "Softmax",
+    "dtype": "f16",
+    "mode": "hybrid",
+    "pt_time": 0.014675835699017625,
+    "vnn_time": 0.010645523099810816,
+    "ratio": 0.7253776424141495,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 41.0
+}
