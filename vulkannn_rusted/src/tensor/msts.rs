@@ -78,12 +78,11 @@ impl Tensor {
                     let (res, _) = res_tensor.get_slice_raw_mut_bf16();
                     core_ops::binary::div::div_bf16(a, b, res);
                 },
-                // Fallback for non-migrated ops (MUL, DIV)
                 (DataType::F32, "sub") => {
                     let (a, _) = self.get_slice_raw_f32();
                     let (b, _) = other.get_slice_raw_f32();
                     let (res, _) = res_tensor.get_slice_raw_mut_f32();
-                    legacy_ops::sub_f32(a, b, res);
+                    core_ops::binary::sub::sub_f32(a, b, res);
                 },
                 (DataType::F32, "mul") => {
                     let (a, _) = self.get_slice_raw_f32();
@@ -96,6 +95,25 @@ impl Tensor {
                     let (b, _) = other.get_slice_raw_f32();
                     let (res, _) = res_tensor.get_slice_raw_mut_f32();
                     legacy_ops::div_f32(a, b, res);
+                },
+                
+                (DataType::Int8, "add") => {
+                    let (a, _) = self.get_slice_raw_i8();
+                    let (b, _) = other.get_slice_raw_i8();
+                    let (res, _) = res_tensor.get_slice_raw_mut_i8();
+                    legacy_ops::add_i8(a, b, res);
+                },
+                (DataType::Int8, "sub") => {
+                    let (a, _) = self.get_slice_raw_i8();
+                    let (b, _) = other.get_slice_raw_i8();
+                    let (res, _) = res_tensor.get_slice_raw_mut_i8();
+                    legacy_ops::sub_i8(a, b, res);
+                },
+                (DataType::Int8, "mul") => {
+                    let (a, _) = self.get_slice_raw_i8();
+                    let (b, _) = other.get_slice_raw_i8();
+                    let (res, _) = res_tensor.get_slice_raw_mut_i8();
+                    legacy_ops::mul_i8(a, b, res);
                 },
                 
                 _ => return Err(pyo3::exceptions::PyValueError::new_err(format!("RAM-FastPath not implemented for {:?} {}", self.dtype, op))),
@@ -150,6 +168,42 @@ impl Tensor {
                 let mut buf_res = crate::io_uring_engine::AlignedBuffer::new(total_bytes);
                 let res = bytemuck::cast_slice_mut::<u8, half::bf16>(buf_res.as_mut_slice());
                 unsafe { crate::cpu::ops::binary::add::bf16::add_bf16_avx_serial(a, b, res); }
+                let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
+                    IoEngineType::ReadWrite(e) => e.clone(),
+                    _ => unreachable!(),
+                };
+                engine_out.write_chunk(0, buf_res.as_slice());
+            },
+            (DataType::Int8, "add") => {
+                let a = bytemuck::cast_slice::<u8, i8>(buf_a.as_slice());
+                let b = bytemuck::cast_slice::<u8, i8>(buf_b.as_slice());
+                let mut buf_res = crate::io_uring_engine::AlignedBuffer::new(total_bytes);
+                let res = bytemuck::cast_slice_mut::<u8, i8>(buf_res.as_mut_slice());
+                legacy_ops::add_i8(a, b, res);
+                let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
+                    IoEngineType::ReadWrite(e) => e.clone(),
+                    _ => unreachable!(),
+                };
+                engine_out.write_chunk(0, buf_res.as_slice());
+            },
+            (DataType::Int8, "sub") => {
+                let a = bytemuck::cast_slice::<u8, i8>(buf_a.as_slice());
+                let b = bytemuck::cast_slice::<u8, i8>(buf_b.as_slice());
+                let mut buf_res = crate::io_uring_engine::AlignedBuffer::new(total_bytes);
+                let res = bytemuck::cast_slice_mut::<u8, i8>(buf_res.as_mut_slice());
+                legacy_ops::sub_i8(a, b, res);
+                let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
+                    IoEngineType::ReadWrite(e) => e.clone(),
+                    _ => unreachable!(),
+                };
+                engine_out.write_chunk(0, buf_res.as_slice());
+            },
+            (DataType::Int8, "mul") => {
+                let a = bytemuck::cast_slice::<u8, i8>(buf_a.as_slice());
+                let b = bytemuck::cast_slice::<u8, i8>(buf_b.as_slice());
+                let mut buf_res = crate::io_uring_engine::AlignedBuffer::new(total_bytes);
+                let res = bytemuck::cast_slice_mut::<u8, i8>(buf_res.as_mut_slice());
+                legacy_ops::mul_i8(a, b, res);
                 let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
                     IoEngineType::ReadWrite(e) => e.clone(),
                     _ => unreachable!(),

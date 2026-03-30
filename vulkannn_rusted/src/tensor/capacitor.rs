@@ -34,7 +34,7 @@ impl GiantCapacitor {
         
         // Ensure 4096-byte alignment for O_DIRECT
         let layout = Layout::from_size_align(capacity, 4096).expect("Invalid layout");
-        let ptr = unsafe { alloc_zeroed(layout) };
+        let ptr = unsafe { std::alloc::alloc(layout) };
         if ptr.is_null() {
             panic!("[VNN] Failed to allocate {} bytes for RAM Capacitor", capacity);
         }

@@ -25,7 +25,7 @@ fn mul_i8_serial(a: &[i8], b: &[i8], res: &mut [i8]) {
         return mul_i8_neon(a, b, res);
     }
 
-    add_i8_scalar(a, b, res);
+    mul_i8_scalar(a, b, res);
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -48,7 +48,7 @@ unsafe fn mul_i8_avx2(a: &[i8], b: &[i8], res: &mut [i8]) {
         let res_ordered = _mm256_permute4x64_epi64(res_vec, 0xD8); 
         _mm256_storeu_si256(res.as_mut_ptr().add(i) as *mut __m256i, res_ordered);
     }
-    add_i8_scalar(&a[n32..], &b[n32..], &mut res[n32..]);
+    mul_i8_scalar(&a[n32..], &b[n32..], &mut res[n32..]);
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -72,10 +72,10 @@ fn mul_i8_neon(a: &[i8], b: &[i8], res: &mut [i8]) {
             vst1q_s8(res.as_mut_ptr().add(i), vcombine_s8(vqmovn_s16(prod_lo), vqmovn_s16(prod_hi)));
         }
     }
-    add_i8_scalar(&a[n16..], &b[n16..], &mut res[n16..]);
+    mul_i8_scalar(&a[n16..], &b[n16..], &mut res[n16..]);
 }
 
-fn add_i8_scalar(a: &[i8], b: &[i8], res: &mut [i8]) {
+fn mul_i8_scalar(a: &[i8], b: &[i8], res: &mut [i8]) {
     for i in 0..a.len() {
         res[i] = a[i].saturating_mul(b[i]);
     }
