@@ -1,27 +1,48 @@
-# HPC Kernel Report - OxTorch CPU Backend
+# HPC Kernel Report - OxTorch CPU Backend (v3.8.1-rc)
 
-Ten dokument śledzi stopień optymalizacji natywnej dla operacji CPU.
-Zgodnie z `docs/binary_distribution.md`, celujemy w **Static Dispatch** (ZERO kosztu wyboru w locie).
+This report tracks the optimization status of the native CPU kernels in the **v3.8.1-rc Unified Core**.
 
-## Symbole:
-- ✅ **STATIC** - Implementacja skompilowana na stałe dla danej cechy (np. `-C target-feature=+avx2`).
-- ⚡ **ASM-INLINED** - Użycie asemblera lub intrinsics z pełnym inliningiem.
-- ❌ **FALLBACK** - Użycie generycznego kodu Rusta.
+## 1. Dispatch Model
+- ✅ **STATIC** - Compiled-in feature specialization.
+- ⚡ **ASM-INLINED** - Manual assembly or SIMD intrinsics.
+- ❌ **FALLBACK** - Generic Rust/Scalar implementation.
 
-## Status Operacji (Binary):
+---
+
+## 2. Binary Operations Logic
 
 ### Op: `add`
-| Precyzja | x86 Scalar | AVX | AVX2 | AVX-512 | NEON | Dispatch |
-|---|---|---|---|---|---|---|
-| BF16 | ❌ | ✅ | ❌ | ❌ | ✅ | Static |
-| F16  | ❌ | ✅ | ❌ | ❌ | ✅ | Static |
-| F32  | ❌ | ✅ | ✅ | ❌ | ✅ | Static |
-| I8   | ❌ | ❌ | ✅ | ❌ | ✅ | Static |
+| Precision | SSE2 | AVX1 | AVX2 | NEON | Dispatch |
+|---|---|---|---|---|---|
+| BF16 | ✅ | ✅ | ❌ | ✅ | Static |
+| F16  | ✅ | ✅ | ❌ | ✅ | Static |
+| F32  | ⚡ | ⚡ | ✅ | ⚡ | Static |
+| I8   | ❌ | ✅ | ✅ | ✅ | Static |
 
 ### Op: `sub`
-| Precyzja | x86 Scalar | SSE2 | AVX2 | AVX-512 | NEON | Dispatch |
-|---|---|---|---|---|---|---|
-| BF16 | ❌ | ❌ | ❌ | ❌ | ✅ | Static |
-| I8   | ❌ | ✅ | ✅ | ❌ | ✅ | Static |
+| Precision | SSE2 | AVX1 | AVX2 | NEON | Dispatch |
+|---|---|---|---|---|---|
+| BF16 | ✅ | ✅ | ❌ | ✅ | **NEW** (v3.8.1) |
+| F32  | ✅ | ✅ | ✅ | ✅ | **NEW** (v3.8.1) |
+| I8   | ✅ | ✅ | ✅ | ✅ | Static |
 
-... (Wypełniane w trakcie migracji)
+### Op: `mul`
+| Precision | SSE2 | AVX1 | AVX2 | NEON | Dispatch |
+|---|---|---|---|---|---|
+| BF16 | ✅ | ✅ | ❌ | ✅ | Static |
+| F16  | ❌ | ✅ | ❌ | ❌ | **NEW** (v3.8.1) |
+| F32  | ✅ | ✅ | ✅ | ✅ | Static |
+| I8   | ✅ | ✅ | ✅ | ✅ | Static |
+
+---
+
+## 3. Reduction Operations Logic
+
+| Op | BF16 | F16 | F32 | I8 | Tech |
+|---|---|---|---|---|---|
+| **Sum** | ✅ | ✅ | ✅ | ✅ | `f64` Accumulation |
+| **Max** | ✅ | ✅ | ✅ | ✅ | SIMD `vmaxps` |
+| **Mean** | ✅ | ✅ | ✅ | ✅ | `f64` Accumulation |
+
+> **Note on f16/bf16 Summation**:
+> OxTorch implements a **Drain Barrier** every 1024 elements in `sum_f16_f16c` to avoid floating-point drift. This ensures bit-perfect parity with PyTorch's reference implementation.

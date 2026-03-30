@@ -97,6 +97,31 @@ impl Tensor {
                     legacy_ops::div_f32(a, b, res);
                 },
                 
+                (DataType::F16, "add") => {
+                    let (a, _) = self.get_slice_raw_f16();
+                    let (b, _) = other.get_slice_raw_f16();
+                    let (res, _) = res_tensor.get_slice_raw_mut_f16();
+                    legacy_ops::add_f16(a, b, res);
+                },
+                (DataType::F16, "sub") => {
+                    let (a, _) = self.get_slice_raw_f16();
+                    let (b, _) = other.get_slice_raw_f16();
+                    let (res, _) = res_tensor.get_slice_raw_mut_f16();
+                    legacy_ops::sub_f16(a, b, res);
+                },
+                (DataType::F16, "mul") => {
+                    let (a, _) = self.get_slice_raw_f16();
+                    let (b, _) = other.get_slice_raw_f16();
+                    let (res, _) = res_tensor.get_slice_raw_mut_f16();
+                    legacy_ops::mul_f16(a, b, res);
+                },
+                (DataType::F16, "div") => {
+                    let (a, _) = self.get_slice_raw_f16();
+                    let (b, _) = other.get_slice_raw_f16();
+                    let (res, _) = res_tensor.get_slice_raw_mut_f16();
+                    legacy_ops::div_f16(a, b, res);
+                },
+                
                 (DataType::Int8, "add") => {
                     let (a, _) = self.get_slice_raw_i8();
                     let (b, _) = other.get_slice_raw_i8();
@@ -371,15 +396,15 @@ impl Tensor {
             match (self.dtype, op) {
             // EXHAUSTIVE BINARY DISPATCH (F32, BF16, F16, Int8)
                 (DataType::F32, "add") if other.is_some() => core_ops::add_f32(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
-                (DataType::F32, "sub") if other.is_some() => legacy_ops::sub_f32(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
+                (DataType::F32, "sub") if other.is_some() => core_ops::sub_f32(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::F32, "mul") if other.is_some() => legacy_ops::mul_f32(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::F32, "div") if other.is_some() => legacy_ops::div_f32(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::F32, "atan2") if other.is_some() => core_ops::atan2_f32(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
 
                 (DataType::BF16, "add") if other.is_some() => core_ops::add_bf16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
-                (DataType::BF16, "sub") if other.is_some() => legacy_ops::sub_bf16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
-                (DataType::BF16, "mul") if other.is_some() => legacy_ops::mul_bf16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
-                (DataType::BF16, "div") if other.is_some() => legacy_ops::div_bf16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
+                (DataType::BF16, "sub") if other.is_some() => core_ops::sub_bf16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
+                (DataType::BF16, "mul") if other.is_some() => core_ops::mul_bf16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
+                (DataType::BF16, "div") if other.is_some() => core_ops::div_bf16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
 
                 (DataType::F16, "add") if other.is_some() => legacy_ops::add_f16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::F16, "sub") if other.is_some() => legacy_ops::sub_f16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),

@@ -1,67 +1,44 @@
-# OxTorch SSD Storage Guide
+# OxTorch SSD Storage Guide (v3.8.1-rc)
 
-OxTorch supports Multi-Source Tensor Streaming (MSTS), allowing you to process datasets that are much larger than your available RAM. Large tensors can be mapped directly to files on NVMe/SSD.
+OxTorch supports Multi-Source Tensor Streaming (MSTS), allowing you to process datasets that are much larger than your available RAM. Large tensors can be mapped directly to files on NVMe/SSD via `io_uring` and `O_DIRECT`.
 
-## Binary Storage Format
+---
 
-To ensure maximum performance (via `io_uring` and `O_DIRECT`), OxTorch uses a **strictly raw** binary format:
+## 1. Binary Storage Format
+
+To ensure maximum performance (via zero-copy DMA), OxTorch uses a **strictly raw** binary format:
 
 1.  **No Headers**: The file must contain only the raw numerical data. No metadata, JSON, or magic numbers.
 2.  **C-order (Row-Major)**: Data must be stored in contiguous row-major order.
-3.  **Alignment**: While MSTS handles offsets internally, for best performance, the files should be stored on systems with at least 512-byte block alignment.
+3.  **Alignment**: **IMPORTANT:** Files must be stored on systems with at least 512-byte block alignment. Internally, OxTorch uses **4096-byte aligned** memory buffers for all SSD operations to ensure compatibility with NVMe `O_DIRECT`.
 4.  **Data Types**:
-    - `float32`: 4-byte IEEE float (Little Endian).
-    - `bf16`: 2-byte Brain Floating Point.
-    - `int8`: 1-byte signed integer.
+    - `float32` (4-byte), `float16` (2-byte), `bf16` (2-byte).
+    - `int8` (1-byte).
+    - `BitNet` / `I2_S` (Sub-byte quantized packed formats).
 
-## Preparing Data in Python
+---
 
-The easiest way to prepare SSD-compatible files is using **NumPy** or **PyTorch**.
+## 2. Dispatch Mechanics: SSD Direct vs. MSTS
 
-### Using NumPy
-```python
-import numpy as np
-import oxtorch
+MSTS automatically selects how to read and compute SSD data based on the tensor's size:
 
-# Create a large array
-data = np.random.randn(8192, 8192).astype(np.float32)
+### SSD Direct Path
+- **Threshold**: Tensor size <= `DIRECT_MAX` (typically ~3MB-8MB, 50% of L3 cache).
+- **Behavior**: OxTorch loads the *entire* tensor into a single aligned buffer and executes a serial kernel.
+- **Reason**: The overhead of setting up a triple-buffered ring is not worth it for small results.
 
-# Save as raw binary
-data.tofile("large_tensor.bin")
+### Tiled Hybrid Path
+- **Threshold**: Tensor size > `DIRECT_MAX`.
+- **Behavior**: Uses the **CrookScheduler** to stream tiles in 8MB chunks.
+- **Overlap**: Compute on Tile N occurs while Tile N+1 is being read from disk and Tile N-1 is being written. This hides disk latency completely.
 
-# Load in OxTorch
-t_ssd = oxtorch.from_ssd("large_tensor.bin", shape=(8192, 8192), dtype=oxtorch.f32)
-```
+---
 
-### Using PyTorch
-```python
-import torch
-import oxtorch
+## 3. High-Speed Prefetching
 
-# Create a torch tensor
-t_pt = torch.randn(4096, 4096).to(torch.float32)
+For sequential models, use `tensor.prefetch_ssd()`. This spawns a background Parallel-Async-Reader (PAR) that proactively fills the **Global RAM Capacitor** with up to 512MB of in-flight data, ensuring the compute engine never waits for the ring buffer to fill.
 
-# Save raw bytes
-with open("torch_data.bin", "wb") as f:
-    f.write(t_pt.numpy().tobytes())
+---
 
-# Load in OxTorch
-t_ssd = oxtorch.from_ssd("torch_data.bin", shape=(4096, 4096), dtype=oxtorch.f32)
-```
-
-## Hybrid Computation
-
-Once a tensor is loaded via `from_ssd`, you can use it in standard operations. OxTorch will automatically stream the disk data into CPU registers in high-performance tiles.
-
-```python
-import oxtorch
-
-a_ram = oxtorch.randn(8192, 8192)
-b_ssd = oxtorch.from_ssd("large_tensor.bin", (8192, 8192), oxtorch.f32)
-
-# This triggers the MSTS Tiled Hybrid Path
-result = a_ram + b_ssd
-```
-
-> [!IMPORTANT]
-> **O_DIRECT Requirement**: SSD-backed tensors use `O_DIRECT` for zero-copy I/O. This means the file must exist and have a size exactly matching `shape * dtype_size`. If the file is smaller, OxTorch will throw an I/O error.
+## 4. O_DIRECT Caution
+SSD-backed tensors use `O_DIRECT`. This means the file size must **exactly match** the calculated tensor bytes (`shape * dtype_size`). If the file is smaller or truncated, OxTorch will throw an I/O error during the MSTS handshake.
