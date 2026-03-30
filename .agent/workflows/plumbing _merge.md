@@ -2,12 +2,18 @@
 description: Zautomatyzowany protokół niskopoziomowej synchronizacji gałęzi (Git Plumbing) dedykowany dla projektu OxTorch. Służy do wymuszania spójności między gałęziami dev i main
 ---
 
-🛠️ OxTorch Plumbing Protocol (v1.0)Cel: Bezpieczna synchronizacja gałęzi Dev ↔ Main bez „Tech-Bro” błędów„Ad impossibilia nemo tenetur” (Nikt nie jest zobowiązany do rzeczy niemożliwych), ale Agent jest zobowiązany do przestrzegania ścieżek.1. Pre-flight Checks (Weryfikacja Topologii)Zanim wykonasz jakąkolwiek komendę git, musisz potwierdzić swoją lokalizację.ZASADA: Wszystkie operacje Git odbywają się w korzeniu projektu.Lokalizacja: pwd musi zwracać /my_data/gaussian_room/.Obecność Gita: ls -d .git musi istnieć w tej lokalizacji.Zakaz Podfolderów: Nigdy nie wywołuj komend synchronizacji będąc w vulkannn_rusted/ lub głębiej.2. Scenariusz A: „Zjebałem” (Praca wykonana na Main zamiast na Dev)Jeśli zmiany zostały zrobione na main, a powinny być na dev:# Będąc na dowolnej gałęzi, wymuś przesunięcie wskaźnika dev tam, gdzie jest main
+🛠️ OxTorch Plumbing Protocol (v1.0)Cel: Bezpieczna synchronizacja gałęzi Dev ↔ Main bez „Tech-Bro” błędów„Ad impossibilia nemo tenetur” (Nikt nie jest zobowiązany do rzeczy niemożliwych), ale Agent jest zobowiązany do przestrzegania ścieżek.
+
+
+1. Pre-flight Checks (Weryfikacja Topologii)
+
+Zanim wykonasz jakąkolwiek komendę git, musisz potwierdzić swoją lokalizację.ZASADA: Wszystkie operacje Git odbywają się w korzeniu projektu.Lokalizacja: pwd musi zwracać /my_data/gaussian_room/.Obecność Gita: ls -d .git musi istnieć w tej lokalizacji.Zakaz Podfolderów: Nigdy nie wywołuj komend synchronizacji będąc w vulkannn_rusted/ lub głębiej.2. Scenariusz A: „Zjebałem” (Praca wykonana na Main zamiast na Dev)Jeśli zmiany zostały zrobione na main, a powinny być na dev:# Będąc na dowolnej gałęzi, wymuś przesunięcie wskaźnika dev tam, gdzie jest main
 git branch -f dev main
 
 # Teraz obie gałęzie wskazują na ten sam (najnowszy) commit
 # Możesz teraz bezpiecznie wrócić na dev
 git checkout dev
+
 3. Scenariusz B: Plumbing Sync (Wyrównanie Main do Dev)Gdy dev jest gotowy i chcesz, aby main stał się jego idealnym lustrem:# 1. Przejdź na main
 git checkout main
 
