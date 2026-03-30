@@ -1,4 +1,4 @@
-# OxTorch (v3.8.0 — "Scientific-Grade CPU & Compile-Time Dispatch")
+# OxTorch (v3.8.1 -rc — "Scientific-Grade CPU & Compile-Time Dispatch")
 
 **Run modern AI inference on hardware that PyTorch left behind.**
 
@@ -11,11 +11,13 @@ pushes compute to whatever GPU the machine has via raw Vulkan, and falls back to
 - **No code changes.** `import oxtorch as torch` — existing PyTorch inference scripts run unchanged.
 
 > [!IMPORTANT]
-> **Documentation In Progress**: We are currently standardizing the CPU backend and moving to Compile-Time Dispatch. Some parts of this documentation may be outdated. Refer to [.agent/workflows/how_to_add_kernels.md](file:///.agent/workflows/how_to_add_kernels.md) for the latest kernel standards.
+> **Documentation In Progress**: We are currently standardizing the CPU backend and moving to Compile-Time Dispatch. Some parts of this documentation may be outdated. Refer to author for the latest kernel standards.
 
-## ⚠️ Known Issues & Status (v3.8.0)
+## ⚠️ Known Issues & Status (v3.8.1-rc)
 
-- **Sum_f16_hybrid Parity Error**: Current parity check fails with `max_diff=8.44e-01`. Investigation in progress.
+- **Mul_f16_* (CPU/Hybrid/Vulkan)**: Fails with `ValueError: RAM-FastPath not implemented for F16 mul`.
+- **SSD Benchmarks (MSTS)**: `msts_path_a/b/c_relu_f32` currently hitting TIMEOUT (exceeded 600s).
+- **Sum_f16_hybrid Parity Error**: Current parity check fails with `max_diff=8.44e-01`.
 - **INT8 Support**: Partially broken/incomplete. Bug reports are being processed.
 - **Vulkan Backend**: Secondary priority during CPU standardization. Some hybrid paths may exhibit numerical instability.
 

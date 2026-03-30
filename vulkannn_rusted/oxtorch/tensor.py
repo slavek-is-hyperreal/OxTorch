@@ -216,6 +216,9 @@ class Tensor:
                 pt_attr = getattr(pt_tensor, target_name)
                 if callable(pt_attr):
                     def fallback_wrapper(*args, **kwargs):
+                        # Explicit Developer Logging for Fallbacks
+                        print(f"[OxTorch] ⚠️  FALLBACK to PyTorch: '{target_name}' (Operation not implemented in native CPU/Vulkan backend)")
+                        
                         # Convert all proxy arguments to Torch tensors for the call
                         pt_args = []
                         for a in args:
@@ -291,6 +294,7 @@ class Tensor:
 
     def __getitem__(self, key):
         # Indexing is complex; fallback to PyTorch
+        print(f"[OxTorch] ⚠️  FALLBACK to PyTorch: '__getitem__'")
         pt_res = self.to_torch().__getitem__(key)
         if isinstance(pt_res, torch.Tensor):
             return Tensor.from_torch(pt_res)
@@ -298,6 +302,7 @@ class Tensor:
 
     def __setitem__(self, key, value):
         # Advanced assignment; fallback to PyTorch
+        print(f"[OxTorch] ⚠️  FALLBACK to PyTorch: '__setitem__'")
         pt_tensor = self.to_torch()
         val = value.to_torch() if isinstance(value, Tensor) else value
         pt_tensor.__setitem__(key, val)
