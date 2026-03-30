@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex, OnceLock};
-use std::alloc::{alloc_zeroed, dealloc, Layout};
+use std::alloc::{dealloc, Layout};
 
 pub static GLOBAL_CAPACITOR: OnceLock<Arc<GiantCapacitor>> = OnceLock::new();
 

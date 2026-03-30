@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "vulkannn_rusted"
-version = "3.7.0"
+version = "3.8.1-rc"
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Rust",

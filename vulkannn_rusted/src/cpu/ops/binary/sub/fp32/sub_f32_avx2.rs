@@ -1,7 +1,5 @@
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
-
-#[cfg(target_arch = "x86_64")]
+#[allow(unused_assignments)]
 pub unsafe fn sub_f32_avx2(a: &[f32], b: &[f32], res: &mut [f32]) {
     let n = a.len();
     let n64 = (n / 64) * 64;
