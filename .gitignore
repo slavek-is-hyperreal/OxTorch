@@ -58,3 +58,7 @@ dist/
 BitNet_repo/
 pytorch/
 models/bitnet-2B-4T-gguf/ggml-model-i2_s.gguf/
+
+# Research & Analysis (Local Only)
+docs/analysis/
+docs/experminental_plans/
