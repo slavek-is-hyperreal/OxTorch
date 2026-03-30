@@ -134,9 +134,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Clear old results (but keep baselines)
-    for f in os.listdir(results_dir):
-        if f.endswith(".json"):
-            os.remove(os.path.join(results_dir, f))
+    # for f in os.listdir(results_dir):
+    #     if f.endswith(".json"):
+    #         os.remove(os.path.join(results_dir, f))
 
     mods = discover_benchmarks(base_dir)
     if args.filter:
