@@ -49,7 +49,7 @@ def aggregate_results(results_dir, baseline_dir):
                     baselines[data["name"]] = data["vnn_time"]
 
     for file in os.listdir(results_dir):
-        if file.endswith(".json"):
+        if file.endswith("_latest.json"):
             with open(os.path.join(results_dir, file), 'r') as f:
                 res = json.load(f)
                 res["baseline"] = baselines.get(res["name"])
@@ -72,17 +72,22 @@ def print_summary(data, total_found):
     passed_count = 0
     
     for res in data:
+        t_pt = res["pt_time"]
         ratio = res["ratio"]
-        ratio_str = f"{ratio:.2f}x" if ratio > 0.1 else f"{ratio:.4f}x"
+        if t_pt > 0:
+            ratio_str = f"{ratio:.2f}x" if ratio > 0.1 else f"{ratio:.4f}x"
+        else:
+            ratio_str = "N/A"
         
         is_pass = res["parity"]
         status = "✅ PASS" if is_pass else "❌ FAIL"
         if is_pass: passed_count += 1
         
-        if ratio < 0.95: # 5% margin for noise
-            faster_count += 1
-        elif ratio > 1.05:
-            slower_count += 1
+        if t_pt > 0:
+            if ratio < 0.95: # 5% margin for noise
+                faster_count += 1
+            elif ratio > 1.05:
+                slower_count += 1
             
         baseline = res.get("baseline")
         b_str = f"{baseline:.4f}s" if baseline else "-"
@@ -97,11 +102,12 @@ def print_summary(data, total_found):
             ratio_str,
             b_str,
             f"{res['cpu_temp']:.0f}°",
-            status
+            status,
+            ratio # Keep raw ratio for sorting (use 0 for N/A)
         ])
     
-    # Sort by performance ratio (FASTER first)
-    rows.sort(key=lambda x: float(x[3].replace("x", "")))
+    # Sort by performance ratio (FASTER first). N/A results (ratio 0) go to end.
+    rows.sort(key=lambda x: x[7] if x[7] > 0 else 9999.0)
     
     print(f"{headers[0]:<35} | {headers[1]:<10} | {headers[2]:<10} | {headers[3]:<8} | {headers[4]:<10} | {headers[5]:<6} | {headers[6]}")
     print("-" * 115)

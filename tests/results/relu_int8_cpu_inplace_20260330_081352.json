@@ -1,0 +1,12 @@
+{
+    "name": "ReLU_int8_cpu_inplace",
+    "op": "ReLU",
+    "dtype": "int8",
+    "mode": "cpu",
+    "pt_time": 0.009124317550231353,
+    "vnn_time": 0.0002954645999125205,
+    "ratio": 0.032382104007880434,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 54.0
+}

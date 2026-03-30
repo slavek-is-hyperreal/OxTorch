@@ -1,0 +1,12 @@
+{
+    "name": "IndexSelect_f32_cpu",
+    "op": "IndexSelect",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.0036082642007386314,
+    "vnn_time": 0.005269302599481307,
+    "ratio": 1.4603427870948729,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 49.0
+}

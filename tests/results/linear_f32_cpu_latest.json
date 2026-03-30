@@ -1,0 +1,12 @@
+{
+    "name": "Linear_f32_cpu",
+    "op": "Linear",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.1393695858998399,
+    "vnn_time": 0.15755101020004075,
+    "ratio": 1.130454748665661,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 52.0
+}

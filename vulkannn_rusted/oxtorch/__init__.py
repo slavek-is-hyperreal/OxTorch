@@ -158,5 +158,5 @@ bfloat16 = DataType.BF16
 int8 = DataType.Int8
 
 # Branding
-__version__ = "3.7.0"
+__version__ = "3.8.0"
 __name__ = "oxtorch"

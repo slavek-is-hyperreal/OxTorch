@@ -1,0 +1,12 @@
+{
+    "name": "RMSNorm_bf16_cpu",
+    "op": "RMSNorm",
+    "dtype": "bf16",
+    "mode": "cpu",
+    "pt_time": 0.0014927642005204689,
+    "vnn_time": 0.00047285690015996806,
+    "ratio": 0.3167659701345338,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 50.0
+}

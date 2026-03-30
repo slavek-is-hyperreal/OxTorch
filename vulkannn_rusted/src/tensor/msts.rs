@@ -60,7 +60,25 @@ impl Tensor {
                     let (res, _) = res_tensor.get_slice_raw_mut_bf16();
                     core_ops::binary::add::add_bf16(a, b, res);
                 },
-                // Fallback for non-migrated ops (MUL, SUB, DIV)
+                (DataType::BF16, "sub") => {
+                    let (a, _) = self.get_slice_raw_bf16();
+                    let (b, _) = other.get_slice_raw_bf16();
+                    let (res, _) = res_tensor.get_slice_raw_mut_bf16();
+                    core_ops::binary::sub::sub_bf16(a, b, res);
+                },
+                (DataType::BF16, "mul") => {
+                    let (a, _) = self.get_slice_raw_bf16();
+                    let (b, _) = other.get_slice_raw_bf16();
+                    let (res, _) = res_tensor.get_slice_raw_mut_bf16();
+                    core_ops::binary::mul::mul_bf16(a, b, res);
+                },
+                (DataType::BF16, "div") => {
+                    let (a, _) = self.get_slice_raw_bf16();
+                    let (b, _) = other.get_slice_raw_bf16();
+                    let (res, _) = res_tensor.get_slice_raw_mut_bf16();
+                    core_ops::binary::div::div_bf16(a, b, res);
+                },
+                // Fallback for non-migrated ops (MUL, DIV)
                 (DataType::F32, "sub") => {
                     let (a, _) = self.get_slice_raw_f32();
                     let (b, _) = other.get_slice_raw_f32();

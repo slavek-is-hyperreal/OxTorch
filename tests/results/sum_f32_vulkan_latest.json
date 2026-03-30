@@ -1,0 +1,12 @@
+{
+    "name": "Sum_f32_vulkan",
+    "op": "Sum",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.006698488199981511,
+    "vnn_time": 0.009623041749728145,
+    "ratio": 1.4365990448045733,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 54.0
+}

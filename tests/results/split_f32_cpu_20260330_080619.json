@@ -1,0 +1,12 @@
+{
+    "name": "Split_f32_cpu",
+    "op": "Split",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 2.7574249907047486e-05,
+    "vnn_time": 0.0056567440999060635,
+    "ratio": 205.14589223550558,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 45.0
+}

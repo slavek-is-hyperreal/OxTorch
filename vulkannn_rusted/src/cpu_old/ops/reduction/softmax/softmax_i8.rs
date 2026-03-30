@@ -2,7 +2,7 @@
 pub fn softmax_i8(buf: &mut [i8], is_log: bool) {
     if buf.is_empty() { return; }
     // Dequantize to f32 for accurate softmax using pooled workspace
-    let mut f32_buf = crate::tensor::pool::TensorPool::get_f32_buffer(buf.len());
+    let mut f32_buf = crate::tensor::pool::TensorPool::get_buffer::<f32>(buf.len());
     for i in 0..buf.len() {
         f32_buf[i] = buf[i] as f32;
     }

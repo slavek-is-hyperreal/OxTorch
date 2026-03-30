@@ -79,12 +79,12 @@ impl Drop for Storage {
             Storage::None => return,
         };
         
-        // Critical: Only return to pool if the original pointer is 8-byte aligned.
+        // Critical: Only return to pool if the original pointer is 64-byte aligned.
         // This ensures that when the buffer is pulled for any typed tensor later,
-        // it satisfies the alignment requirement of the destination type (up to f64).
-        if ptr_val % 8 == 0 {
+        // it satisfies the alignment requirement of the destination type (up to AVX-512).
+        if ptr_val % 64 == 0 {
             super::pool::TENSOR_POOL.with(|pool| {
-                pool.borrow_mut().free(buf);
+                pool.borrow_mut().free_raw(buf);
             });
         }
     }

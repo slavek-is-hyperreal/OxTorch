@@ -1,0 +1,12 @@
+{
+    "name": "IndexSelect_f16_hybrid",
+    "op": "IndexSelect",
+    "dtype": "f16",
+    "mode": "hybrid",
+    "pt_time": 0.0018275930007803254,
+    "vnn_time": 0.0024653458007378505,
+    "ratio": 1.3489577820035556,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

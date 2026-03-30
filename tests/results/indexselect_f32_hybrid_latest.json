@@ -1,0 +1,12 @@
+{
+    "name": "IndexSelect_f32_hybrid",
+    "op": "IndexSelect",
+    "dtype": "f32",
+    "mode": "hybrid",
+    "pt_time": 0.004739320800581481,
+    "vnn_time": 0.004677208200155292,
+    "ratio": 0.9868941979157502,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 49.0
+}

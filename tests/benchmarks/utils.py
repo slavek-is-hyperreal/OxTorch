@@ -83,12 +83,23 @@ def check_parity(vnn_tensor, torch_tensor, name, op=""):
         diff = np.abs(v_np - t_np)
         return False, np.max(diff)
 
+from datetime import datetime
+
 def save_benchmark_result(name, result_data):
     results_dir = "/my_data/gaussian_room/tests/results"
     os.makedirs(results_dir, exist_ok=True)
-    file_path = os.path.join(results_dir, f"{name.replace(' ', '_').lower()}.json")
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = name.replace(' ', '_').lower()
+    file_path = os.path.join(results_dir, f"{safe_name}_{timestamp}.json")
     
     # Save the individual result
     with open(file_path, 'w') as f:
         json.dump(result_data, f, indent=4)
-    print(f"[benchmark] Result saved to {file_path}")
+        
+    # Also maintain a 'latest' file for easy access
+    latest_path = os.path.join(results_dir, f"{safe_name}_latest.json")
+    with open(latest_path, 'w') as f:
+        json.dump(result_data, f, indent=4)
+        
+    print(f"[benchmark] Result saved to {file_path} (Latest: {latest_path})")

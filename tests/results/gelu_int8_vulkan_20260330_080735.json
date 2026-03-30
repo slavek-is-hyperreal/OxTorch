@@ -1,0 +1,12 @@
+{
+    "name": "GELU_int8_vulkan",
+    "op": "GELU",
+    "dtype": "int8",
+    "mode": "vulkan",
+    "pt_time": 0.025001227750180988,
+    "vnn_time": 0.003027645499969367,
+    "ratio": 0.12109987278314559,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 48.0
+}

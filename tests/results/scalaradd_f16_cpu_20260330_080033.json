@@ -1,0 +1,12 @@
+{
+    "name": "ScalarAdd_f16_cpu",
+    "op": "ScalarAdd",
+    "dtype": "f16",
+    "mode": "cpu",
+    "pt_time": 0.00588215549942106,
+    "vnn_time": 0.0013295883996761403,
+    "ratio": 0.2260376149197352,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 55.0
+}

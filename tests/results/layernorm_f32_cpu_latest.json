@@ -1,0 +1,12 @@
+{
+    "name": "LayerNorm_f32_cpu",
+    "op": "LayerNorm",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.0006437520500185201,
+    "vnn_time": 0.0003500524500850588,
+    "ratio": 0.5437690646188826,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 52.0
+}

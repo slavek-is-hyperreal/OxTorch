@@ -1,0 +1,12 @@
+{
+    "name": "Div_f32_cpu",
+    "op": "Div",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.0011434694497438613,
+    "vnn_time": 0.0014220626500900835,
+    "ratio": 1.2436385164541366,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 49.0
+}

@@ -1,0 +1,12 @@
+{
+    "name": "Ext_Trunc_f32_cpu",
+    "op": "trunc",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.003702709000208415,
+    "vnn_time": 0.01245443295010773,
+    "ratio": 3.3636002584612252,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 49.0
+}

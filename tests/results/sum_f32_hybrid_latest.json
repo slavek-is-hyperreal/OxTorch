@@ -1,0 +1,12 @@
+{
+    "name": "Sum_f32_hybrid",
+    "op": "Sum",
+    "dtype": "f32",
+    "mode": "hybrid",
+    "pt_time": 0.0011370543998054927,
+    "vnn_time": 0.005807384500076296,
+    "ratio": 5.107393719306413,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 53.0
+}

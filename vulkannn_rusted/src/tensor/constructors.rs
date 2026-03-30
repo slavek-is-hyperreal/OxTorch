@@ -14,7 +14,7 @@ impl Tensor {
                               else { size * dtype.size() };
                 super::pool::TENSOR_POOL.with(|pool| {
                     let mut p = pool.borrow_mut();
-                    let mut buf = p.alloc(n_bytes);
+                    let mut buf = p.alloc_raw(n_bytes);
                     let (ptr, _len, cap) = (buf.as_mut_ptr(), buf.len(), buf.capacity());
                     std::mem::forget(buf);
                     
@@ -87,7 +87,7 @@ impl Tensor {
         let storage = if device == "cpu" {
             super::pool::TENSOR_POOL.with(|pool| {
                 let mut p = pool.borrow_mut();
-                let mut buf = p.alloc(n_bytes);
+                let mut buf = p.alloc_raw(n_bytes);
                 let (ptr, _len, cap) = (buf.as_mut_ptr(), buf.len(), buf.capacity());
                 std::mem::forget(buf);
                 

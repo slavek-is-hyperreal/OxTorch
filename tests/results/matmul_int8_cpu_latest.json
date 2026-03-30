@@ -1,0 +1,12 @@
+{
+    "name": "MatMul_int8_cpu",
+    "op": "MatMul",
+    "dtype": "int8",
+    "mode": "cpu",
+    "pt_time": 1.1657543875007832,
+    "vnn_time": 0.1575791975010361,
+    "ratio": 0.13517358303824548,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 48.0
+}

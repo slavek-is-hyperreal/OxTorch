@@ -1,4 +1,4 @@
-# OxTorch (v3.7.1 — "MSTS Tiered-SIMD & BitNet Refactor")
+# OxTorch (v3.8.0 — "Scientific-Grade CPU & Compile-Time Dispatch")
 
 **Run modern AI inference on hardware that PyTorch left behind.**
 
@@ -9,6 +9,15 @@ pushes compute to whatever GPU the machine has via raw Vulkan, and falls back to
 - **No CUDA.** Works on any Vulkan-capable GPU, including decade-old AMD/Intel cards.
 - **No RAM limit.** Model weights live on SSD and stream through an 8MB ring buffer.
 - **No code changes.** `import oxtorch as torch` — existing PyTorch inference scripts run unchanged.
+
+> [!IMPORTANT]
+> **Documentation In Progress**: We are currently standardizing the CPU backend and moving to Compile-Time Dispatch. Some parts of this documentation may be outdated. Refer to [.agent/workflows/how_to_add_kernels.md](file:///.agent/workflows/how_to_add_kernels.md) for the latest kernel standards.
+
+## ⚠️ Known Issues & Status (v3.8.0)
+
+- **Sum_f16_hybrid Parity Error**: Current parity check fails with `max_diff=8.44e-01`. Investigation in progress.
+- **INT8 Support**: Partially broken/incomplete. Bug reports are being processed.
+- **Vulkan Backend**: Secondary priority during CPU standardization. Some hybrid paths may exhibit numerical instability.
 
 [![Engine: Rust + Vulkan](https://img.shields.io/badge/Engine-Rust%20%2B%20Vulkan%20ash-blue.svg)](#technical-overview)
 [![Precision: Quad-Mode](https://img.shields.io/badge/Precision-F32%20%7C%20F16%20%7C%20BF16%20%7C%20INT8-green.svg)](#architecture-support-matrix)

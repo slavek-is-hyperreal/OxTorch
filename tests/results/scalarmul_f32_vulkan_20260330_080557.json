@@ -1,0 +1,12 @@
+{
+    "name": "ScalarMul_f32_vulkan",
+    "op": "ScalarMul",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.004518309950071853,
+    "vnn_time": 0.003929407949908636,
+    "ratio": 0.8696632133096909,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 52.0
+}

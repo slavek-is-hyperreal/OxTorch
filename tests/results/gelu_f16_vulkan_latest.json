@@ -1,0 +1,12 @@
+{
+    "name": "GELU_f16_vulkan",
+    "op": "GELU",
+    "dtype": "f16",
+    "mode": "vulkan",
+    "pt_time": 0.021939959000155794,
+    "vnn_time": 0.009725213300407631,
+    "ratio": 0.44326488031899114,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 44.0
+}

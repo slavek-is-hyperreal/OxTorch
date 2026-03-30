@@ -1,0 +1,12 @@
+{
+    "name": "RMSNorm_f32_vulkan",
+    "op": "RMSNorm",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.0011650938497041353,
+    "vnn_time": 0.0018070850499498192,
+    "ratio": 1.5510210189580107,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 43.0
+}

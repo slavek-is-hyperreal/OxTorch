@@ -1,0 +1,12 @@
+{
+    "name": "Sum_bf16_vulkan",
+    "op": "Sum",
+    "dtype": "bf16",
+    "mode": "vulkan",
+    "pt_time": 0.0022173786004714203,
+    "vnn_time": 0.0075299987998732835,
+    "ratio": 3.39590126750226,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 42.0
+}

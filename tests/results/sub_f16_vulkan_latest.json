@@ -1,0 +1,12 @@
+{
+    "name": "Sub_f16_vulkan",
+    "op": "Sub",
+    "dtype": "f16",
+    "mode": "vulkan",
+    "pt_time": 0.007405412100342801,
+    "vnn_time": 0.02471030430024257,
+    "ratio": 3.3367898997948697,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 53.0
+}

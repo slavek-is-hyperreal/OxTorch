@@ -21,15 +21,15 @@ pub fn matmul_f16(m: usize, k: usize, n: usize, a: &[half::f16], b: &[half::f16]
             let j_end = (j + TILE_SIZE).min(n);
             let cur_n = j_end - j;
 
-            let mut c_tile = crate::tensor::pool::TensorPool::get_f32_buffer(cur_m * cur_n);
+            let mut c_tile = crate::tensor::pool::TensorPool::get_buffer::<f32>(cur_m * cur_n);
             for v in c_tile.iter_mut() { *v = 0.0; }
 
             for kk in (0..k).step_by(TILE_SIZE) {
                 let kk_end = (kk + TILE_SIZE).min(k);
                 let cur_k = kk_end - kk;
 
-                let mut a_tile = crate::tensor::pool::TensorPool::get_f32_buffer(cur_m * cur_k);
-                let mut b_tile = crate::tensor::pool::TensorPool::get_f32_buffer(cur_k * cur_n);
+                let mut a_tile = crate::tensor::pool::TensorPool::get_buffer::<f32>(cur_m * cur_k);
+                let mut b_tile = crate::tensor::pool::TensorPool::get_buffer::<f32>(cur_k * cur_n);
 
                 // Convert A panel
                 for row in 0..cur_m {
@@ -90,15 +90,15 @@ pub fn linear_f16(m: usize, k: usize, n: usize, a: &[half::f16], b: &[half::f16]
             let j_end = (j + TILE_SIZE).min(n);
             let cur_n = j_end - j;
 
-            let mut c_tile = crate::tensor::pool::TensorPool::get_f32_buffer(cur_m * cur_n);
+            let mut c_tile = crate::tensor::pool::TensorPool::get_buffer::<f32>(cur_m * cur_n);
             for v in c_tile.iter_mut() { *v = 0.0; }
 
             for kk in (0..k).step_by(TILE_SIZE) {
                 let kk_end = (kk + TILE_SIZE).min(k);
                 let cur_k = kk_end - kk;
 
-                let mut a_tile = crate::tensor::pool::TensorPool::get_f32_buffer(cur_m * cur_k);
-                let mut b_tile = crate::tensor::pool::TensorPool::get_f32_buffer(cur_n * cur_k); // B block is (cur_n, cur_k)
+                let mut a_tile = crate::tensor::pool::TensorPool::get_buffer::<f32>(cur_m * cur_k);
+                let mut b_tile = crate::tensor::pool::TensorPool::get_buffer::<f32>(cur_n * cur_k); // B block is (cur_n, cur_k)
 
                 // Convert A panel
                 for row in 0..cur_m {

@@ -1,0 +1,12 @@
+{
+    "name": "Stack_f32_cpu",
+    "op": "Stack",
+    "dtype": "f32",
+    "mode": "cpu",
+    "pt_time": 0.005461844099772861,
+    "vnn_time": 0.0030494075999740744,
+    "ratio": 0.5583109924541582,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 51.0
+}

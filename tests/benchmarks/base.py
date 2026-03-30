@@ -287,6 +287,9 @@ class BenchmarkBase:
             max_diff = 0.0
         max_diff = float(max_diff)
         
+        # Calculate Ratio (Handle 0.0 baseline for SSD tests)
+        ratio = t_vnn / t_pt if t_pt > 0 else 0.0
+        
         result = {
             "name": self.name,
             "op": self.op,
@@ -294,7 +297,7 @@ class BenchmarkBase:
             "mode": self.mode,
             "pt_time": t_pt,
             "vnn_time": t_vnn,
-            "ratio": t_vnn / t_pt if t_pt > 0 else 0,
+            "ratio": ratio,
             "parity": parity_ok,
             "max_diff": max_diff,
             "cpu_temp": cpu_temp
@@ -302,10 +305,14 @@ class BenchmarkBase:
         
         save_benchmark_result(self.name, result)
 
-        ratio = result["ratio"]
-        ratio_str = f"{ratio:.2f}x" if ratio > 0.1 else f"{ratio:.4f}x"
+        if t_pt > 0:
+            ratio_str = f"{ratio:.2f}x" if ratio > 0.1 else f"{ratio:.4f}x"
+            faster = "OxTorch FASTER" if ratio < 1.0 else "PyTorch faster"
+        else:
+            ratio_str = "N/A"
+            faster = "SSD-STREAMING"
+            
         parity_str = f"✅ PASS (max_diff={max_diff:.2e})" if parity_ok else f"❌ FAIL (max_diff={max_diff:.2e})"
-        faster = "OxTorch FASTER" if ratio < 1.0 else "PyTorch faster"
         print(f"    [PyTorch] {t_pt:.4f}s", flush=True)
         print(f"    [OxTorch] {t_vnn:.4f}s | Ratio: {ratio_str} ({faster}) | Parity: {parity_str}", flush=True)
 

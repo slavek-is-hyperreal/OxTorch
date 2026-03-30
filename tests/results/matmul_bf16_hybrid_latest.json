@@ -1,0 +1,12 @@
+{
+    "name": "MatMul_bf16_hybrid",
+    "op": "MatMul",
+    "dtype": "bf16",
+    "mode": "hybrid",
+    "pt_time": 68.53159342149957,
+    "vnn_time": 0.17938376999882166,
+    "ratio": 0.002617533914548466,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 45.0
+}

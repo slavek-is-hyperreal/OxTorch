@@ -111,7 +111,7 @@ impl Tensor {
                  let total_elems = (b * m * n) as usize;
                  let mut c_f32_vec = super::pool::TENSOR_POOL.with(|pool| {
                      let mut p = pool.borrow_mut();
-                     let mut buf = p.alloc(total_elems * 4);
+                     let mut buf = p.alloc_raw(total_elems * 4);
                      let (ptr, _len, cap) = (buf.as_mut_ptr(), buf.len(), buf.capacity());
                      std::mem::forget(buf);
                      unsafe { Vec::from_raw_parts(ptr as *mut f32, total_elems, cap / 4) }
@@ -138,7 +138,7 @@ impl Tensor {
                      let mut v = std::mem::take(&mut c_f32_vec);
                      let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
                      std::mem::forget(v);
-                     pool.borrow_mut().free(unsafe { Vec::from_raw_parts(ptr as *mut u8, len * 4, cap * 4) });
+                     pool.borrow_mut().free_raw(unsafe { Vec::from_raw_parts(ptr as *mut u8, len * 4, cap * 4) });
                  });
              }
         } else {
@@ -186,7 +186,7 @@ impl Tensor {
                     let total_elems = (m * n) as usize;
                     let mut c_f32_vec = super::pool::TENSOR_POOL.with(|pool| {
                         let mut p = pool.borrow_mut();
-                        let mut buf = p.alloc(total_elems * 4);
+                        let mut buf = p.alloc_raw(total_elems * 4);
                         let (ptr, _len, cap) = (buf.as_mut_ptr(), buf.len(), buf.capacity());
                         std::mem::forget(buf);
                         unsafe { Vec::from_raw_parts(ptr as *mut f32, total_elems, cap / 4) }
@@ -206,7 +206,7 @@ impl Tensor {
                         let mut v = std::mem::take(&mut c_f32_vec);
                         let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
                         std::mem::forget(v);
-                        pool.borrow_mut().free(unsafe { Vec::from_raw_parts(ptr as *mut u8, len * 4, cap * 4) });
+                        pool.borrow_mut().free_raw(unsafe { Vec::from_raw_parts(ptr as *mut u8, len * 4, cap * 4) });
                     });
                 }
             }

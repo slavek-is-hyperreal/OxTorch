@@ -1,0 +1,12 @@
+{
+    "name": "MatMul_int8_vulkan",
+    "op": "MatMul",
+    "dtype": "int8",
+    "mode": "vulkan",
+    "pt_time": 1.2230431834977935,
+    "vnn_time": 0.1775172144989483,
+    "ratio": 0.1451438648235339,
+    "parity": true,
+    "max_diff": 0.0,
+    "cpu_temp": 51.0
+}

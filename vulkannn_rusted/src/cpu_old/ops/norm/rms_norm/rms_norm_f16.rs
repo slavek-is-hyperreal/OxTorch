@@ -2,7 +2,7 @@ use rayon::prelude::*;
 
 pub fn rms_norm_f16(x: &[half::f16], w: &[half::f16], out: &mut [half::f16], n: usize, d: usize, eps: f32) {
     // Convert weights once
-    let mut w_f32 = crate::tensor::pool::TensorPool::get_f32_buffer(w.len());
+    let mut w_f32 = crate::tensor::pool::TensorPool::get_buffer::<f32>(w.len());
     for i in 0..w.len() { w_f32[i] = w[i].to_f32(); }
 
     if n > 1 {
@@ -15,8 +15,8 @@ pub fn rms_norm_f16(x: &[half::f16], w: &[half::f16], out: &mut [half::f16], n: 
 }
 
 fn rms_norm_f16_row(x: &[half::f16], w_f32: &[f32], out: &mut [half::f16], d: usize, eps: f32) {
-    let mut x_f32 = crate::tensor::pool::TensorPool::get_f32_buffer(d);
-    let mut out_f32 = crate::tensor::pool::TensorPool::get_f32_buffer(d);
+    let mut x_f32 = crate::tensor::pool::TensorPool::get_buffer::<f32>(d);
+    let mut out_f32 = crate::tensor::pool::TensorPool::get_buffer::<f32>(d);
     
     for i in 0..d { x_f32[i] = x[i].to_f32(); }
     
