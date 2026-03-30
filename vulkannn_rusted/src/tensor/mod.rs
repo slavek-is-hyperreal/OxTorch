@@ -197,9 +197,10 @@ impl Tensor {
     pub fn neg(&self) -> PyResult<Tensor> { self.execute_neg() }
     pub fn neg_into(&self, target: &mut Tensor) -> PyResult<()> { self.unary_op_into(target, "neg", 0.0, 0.0) }
 
-    pub fn py_pow(&self, exponent: f32) -> PyResult<Tensor> { self.execute_pow(exponent) }
     pub fn pow(&self, exponent: f32) -> PyResult<Tensor> { self.execute_pow(exponent) }
     pub fn pow_into(&self, target: &mut Tensor, exponent: f32) -> PyResult<()> { self.unary_op_into(target, "pow", exponent, 0.0) }
+
+    pub fn atan2(&self, other: &Tensor) -> PyResult<Tensor> { self.elementwise_op(other, "atan2") }
 
     #[pyo3(signature = (dim=0))]
     pub fn argmax(&self, dim: i64) -> PyResult<Tensor> {

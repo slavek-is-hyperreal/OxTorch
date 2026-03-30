@@ -206,77 +206,10 @@ impl Tensor {
     }
 
     pub fn elementwise_op(&self, other: &Tensor, op: &str) -> PyResult<Tensor> {
-        if self.is_ssd() || other.is_ssd() {
-            return self.dispatch_binary_op(other, op);
-        }
-        if self.shape != other.shape { return Err(pyo3::exceptions::PyValueError::new_err("Shapes must match")); }
-        let mut out = Tensor::new_zeros(self.shape.clone(), self.dtype, &self.device)?;
-        if self.device == "cpu" {
-            match self.dtype {
-                DataType::F32 => {
-                    let (a, _) = self.get_slice_raw_f32();
-                    let (b, _) = other.get_slice_raw_f32();
-                    let (res, _) = out.get_slice_raw_mut_f32();
-                    match op {
-                        "add" => crate::cpu::add_f32(a, b, res),
-                        "sub" => crate::cpu::sub_f32(a, b, res),
-                        "mul" => crate::cpu::mul_f32(a, b, res),
-                        "div" => crate::cpu::div_f32(a, b, res),
-                        _ => {},
-                    }
-                },
-                DataType::F16 => {
-                    let (a, _) = self.get_slice_raw_f16();
-                    let (b, _) = other.get_slice_raw_f16();
-                    let (res, _) = out.get_slice_raw_mut_f16();
-                    match op {
-                        "add" => crate::cpu::add_f16(a, b, res),
-                        "sub" => crate::cpu::sub_f16(a, b, res),
-                        "mul" => crate::cpu::mul_f16(a, b, res),
-                        "div" => crate::cpu::div_f16(a, b, res),
-                        _ => {},
-                    }
-                },
-                DataType::BF16 => {
-                    let (a, _) = self.get_slice_raw_bf16();
-                    let (b, _) = other.get_slice_raw_bf16();
-                    let (res, _) = out.get_slice_raw_mut_bf16();
-                    match op {
-                        "add" => crate::cpu::add_bf16(a, b, res),
-                        "sub" => crate::cpu::sub_bf16(a, b, res),
-                        "mul" => crate::cpu::mul_bf16(a, b, res),
-                        "div" => crate::cpu::div_bf16(a, b, res),
-                        _ => {},
-                    }
-                },
-                DataType::Int8 => {
-                    let (a, _) = self.get_slice_raw_i8();
-                    let (b, _) = other.get_slice_raw_i8();
-                    let (res, _) = out.get_slice_raw_mut_i8();
-                    match op {
-                        "add" => crate::cpu::add_i8(a, b, res),
-                        "sub" => crate::cpu::sub_i8(a, b, res),
-                        "mul" => crate::cpu::mul_i8(a, b, res),
-                        "div" => crate::cpu::div_i8(a, b, res),
-                        _ => {},
-                    }
-                },
-                DataType::BitNet2 | DataType::BitNet1_6 | DataType::I2_S => { return Err(pyo3::exceptions::PyValueError::new_err("Ops not supported for BitNet")); },
-            }
-        } else {
-            let (a_raw, _) = self.get_slice_raw_bytes();
-            let (b_raw, _) = other.get_slice_raw_bytes();
-            let (out_raw, _) = out.get_slice_raw_mut_bytes();
-            let op_id = match op {
-                "mul" => 0,
-                "sub" => 1,
-                "div" => 2,
-                "add" => 3,
-                _ => 3,
-            };
-            crate::backend::execute_elementwise_into(a_raw, b_raw, out_raw, op_id, self.dtype);
-        }
-        Ok(out)
+        // DECISION CENTRALIZATION (MSTS v2)
+        // All binary operations are routed to the MSTS Hybrid Hub to determine
+        // the optimal execution path (RAM-Parallel vs SSD-Tiled).
+        self.dispatch_binary_op(other, op)
     }
 
     pub fn execute_mul_broadcast(&self, other: &Tensor) -> PyResult<Tensor> {

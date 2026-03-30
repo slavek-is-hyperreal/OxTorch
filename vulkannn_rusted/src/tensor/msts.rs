@@ -25,7 +25,7 @@ impl Tensor {
     }
 
     /// Master Dispatcher for binary operations (A + B).
-    /// Automatically selects between Direct, Rayon (RAM), or Crook (SSD) paths.
+    /// Automatically selects between Fast-RAM (Rayon) or Tiled-SSD (Crook) paths.
     pub fn dispatch_binary_op(&self, other: &Tensor, op: &str) -> PyResult<Tensor> {
         self.check_shape(other)?;
         
@@ -33,45 +33,60 @@ impl Tensor {
         let bytes_per_elem = self.dtype.size();
         let total_elements = self.shape.iter().product::<usize>();
         let total_bytes = (total_elements * bytes_per_elem) as u64;
+        let op_lower = op.to_lowercase();
+        let op = op_lower.as_str();
 
         if !is_any_ssd {
-            // RAM-only path: Directly use the CPU ops serial kernels
-            let res_tensor = Self::new_zeros(self.shape.clone(), self.dtype, "cpu")?;
-            match op {
-                "add" => {
-                    let a = self.storage.as_bf16().unwrap();
-                    let b = other.storage.as_bf16().unwrap();
-                    let mut res_storage = res_tensor.storage.clone();
-                    let res = res_storage.as_bf16_mut().unwrap();
-                    unsafe { crate::cpu::ops::binary::add::bf16::add_bf16_avx_serial(a, b, res); }
+            // Path A: FAST RAM-ONLY (Rayon Bridge)
+            // Bypasses MSTS tiling to avoid synchronization overhead for in-memory tensors.
+            let mut res_tensor = Self::new_zeros(self.shape.clone(), self.dtype, "cpu")?;
+            
+            match (self.dtype, op) {
+                (DataType::F32, "add") => {
+                    let (a, _) = self.get_slice_raw_f32();
+                    let (b, _) = other.get_slice_raw_f32();
+                    let (res, _) = res_tensor.get_slice_raw_mut_f32();
+                    core_ops::binary::add::add_f32(a, b, res);
                 },
-                "sub" => {
-                    let a = self.storage.as_bf16().unwrap();
-                    let b = other.storage.as_bf16().unwrap();
-                    let mut res_storage = res_tensor.storage.clone();
-                    let res = res_storage.as_bf16_mut().unwrap();
-                    unsafe { crate::cpu::ops::binary::sub::bf16::sub_bf16_avx_serial(a, b, res); }
+                (DataType::F32, "atan2") => {
+                    let (y, _) = self.get_slice_raw_f32();
+                    let (x, _) = other.get_slice_raw_f32();
+                    let (res, _) = res_tensor.get_slice_raw_mut_f32();
+                    core_ops::binary::atan2::atan2_f32(y, x, res);
                 },
-                "mul" => {
-                    let a = self.storage.as_bf16().unwrap();
-                    let b = other.storage.as_bf16().unwrap();
-                    let mut res_storage = res_tensor.storage.clone();
-                    let res = res_storage.as_bf16_mut().unwrap();
-                    unsafe { crate::cpu::ops::binary::mul::bf16::mul_bf16_avx_serial(a, b, res); }
+                (DataType::BF16, "add") => {
+                    let (a, _) = self.get_slice_raw_bf16();
+                    let (b, _) = other.get_slice_raw_bf16();
+                    let (res, _) = res_tensor.get_slice_raw_mut_bf16();
+                    core_ops::binary::add::add_bf16(a, b, res);
                 },
-                "div" => {
-                    let a = self.storage.as_bf16().unwrap();
-                    let b = other.storage.as_bf16().unwrap();
-                    let mut res_storage = res_tensor.storage.clone();
-                    let res = res_storage.as_bf16_mut().unwrap();
-                    unsafe { crate::cpu::ops::binary::div::bf16::div_bf16_avx_serial(a, b, res); }
+                // Fallback for non-migrated ops (MUL, SUB, DIV)
+                (DataType::F32, "sub") => {
+                    let (a, _) = self.get_slice_raw_f32();
+                    let (b, _) = other.get_slice_raw_f32();
+                    let (res, _) = res_tensor.get_slice_raw_mut_f32();
+                    legacy_ops::sub_f32(a, b, res);
                 },
-                _ => return Err(pyo3::exceptions::PyValueError::new_err(format!("Unknown op: {}", op))),
+                (DataType::F32, "mul") => {
+                    let (a, _) = self.get_slice_raw_f32();
+                    let (b, _) = other.get_slice_raw_f32();
+                    let (res, _) = res_tensor.get_slice_raw_mut_f32();
+                    legacy_ops::mul_f32(a, b, res);
+                },
+                (DataType::F32, "div") => {
+                    let (a, _) = self.get_slice_raw_f32();
+                    let (b, _) = other.get_slice_raw_f32();
+                    let (res, _) = res_tensor.get_slice_raw_mut_f32();
+                    legacy_ops::div_f32(a, b, res);
+                },
+                
+                _ => return Err(pyo3::exceptions::PyValueError::new_err(format!("RAM-FastPath not implemented for {:?} {}", self.dtype, op))),
             }
             return Ok(res_tensor);
         }
 
-        // SSD involved: Use the Unified MSTS Orchestrator
+        // Path B: HYBRID / SSD (Tiled MSTS v2)
+        // Uses CrookScheduler for triple-buffered I/O or massive parallel streaming.
         if total_bytes <= DIRECT_MAX as u64 {
              self.binary_op_ssd_direct(other, op)
         } else if total_bytes <= (TILE_LARGE * RING_LARGE / 2) as u64 {

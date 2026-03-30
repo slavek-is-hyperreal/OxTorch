@@ -12,8 +12,8 @@ except ImportError:
     HAS_TORCH = False
 
 def __getattr__(name):
-    # Normalize case for common ops (GELU -> gelu, ReLU -> relu)
-    if name in ["GELU", "ReLU", "Softmax"]:
+    # Normalize case for common ops (GELU -> gelu, Atan2 -> atan2)
+    if name in ["GELU", "ReLU", "Softmax", "Atan2"]:
         name = name.lower()
     """
     Module-level dynamic dispatcher.

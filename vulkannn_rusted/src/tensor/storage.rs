@@ -24,6 +24,9 @@ impl Storage {
     pub fn as_f32(&self) -> Option<&[f32]> {
         if let Storage::F32(v) = self { Some(v) } else { None }
     }
+    pub fn as_f32_mut(&mut self) -> Option<&mut [f32]> {
+        if let Storage::F32(v) = self { Some(v) } else { None }
+    }
 }
 
 impl Drop for Storage {

@@ -177,9 +177,10 @@ class Tensor:
         return np_data.flatten()[0] if np_data.size == 1 else np_data.item()
 
     def __getattr__(self, name):
+        name_lower = name.lower()
         # 1. Check if it's a native method in vulkannn_rusted
-        if hasattr(self._vnn, name):
-            attr = getattr(self._vnn, name)
+        if hasattr(self._vnn, name_lower):
+            attr = getattr(self._vnn, name_lower)
             if callable(attr):
                 def wrapper(*args, **kwargs):
                     # Convert arguments back to native VNN tensors if they are proxies
@@ -191,23 +192,28 @@ class Tensor:
                 return wrapper
             return attr
 
-        # 2. SSD Fallback: Auto-apply PyTorch for missing ops on SSD device
+        # 2. SSD Fallback: Auto-apply PyTorch for missing ops on SSD device (TILED)
         if self.device == "ssd" and HAS_TORCH:
             import torch.nn.functional as F
             # Check F then torch
-            op = getattr(F, name, None) or getattr(torch, name, None)
+            op = getattr(F, name_lower, None) or getattr(torch, name_lower, None)
             if op and callable(op):
                 return lambda *args, **kwargs: self.msts_pytorch_apply(lambda x: op(x, *args, **kwargs))
 
         # 3. Standard Fallback to PyTorch (PULLS TO RAM!)
         if HAS_TORCH:
             if self.device == "ssd":
-                # LOG A WARNING: pulling SSD to RAM
-                print(f"WARNING: OxTorch is pulling SSD tensor '{self.name}' ({self.shape}) into RAM for fallback op '{name}'. This may OOM.")
+                # PROTECTION: Do not pull massive SSD tensors to RAM silently!
+                raise MemoryError(
+                    f"OxTorch: Operation '{name}' is not supported natively on SSD and tiling fallback failed. "
+                    f"Refusing to pull SSD tensor ({self.shape}) into RAM to prevent OOM. "
+                    f"Call '.to_ram()' explicitly if this is intended."
+                )
             
             pt_tensor = self.to_torch()
-            if hasattr(pt_tensor, name):
-                pt_attr = getattr(pt_tensor, name)
+            if hasattr(pt_tensor, name_lower) or hasattr(pt_tensor, name):
+                target_name = name if hasattr(pt_tensor, name) else name_lower
+                pt_attr = getattr(pt_tensor, target_name)
                 if callable(pt_attr):
                     def fallback_wrapper(*args, **kwargs):
                         # Convert all proxy arguments to Torch tensors for the call

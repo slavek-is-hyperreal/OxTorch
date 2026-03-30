@@ -85,6 +85,9 @@ class BenchmarkBase:
         b_torch = None
         b_ox = None
 
+        # OxTorch Setup
+        import oxtorch as torch_ox
+        
         # Data Setup
         if not self.is_ssd:
             a_np = np.random.randn(*self.shape).astype(np.float32)
@@ -187,10 +190,27 @@ class BenchmarkBase:
             # SSD Mapped setup (special case for Monster tests)
             t_pt = 0.0
             res_torch = None
-            a_vnn = self.vnn.Tensor.from_ssd(f"/my_data/gaussian_room/ssd_temp_{np.prod(self.shape)}.bin", self.shape, vnn_dtype)
+            
+            # Ensure scratch files exist for O_DIRECT access
+            import os
+            num_elements = np.prod(self.shape)
+            file_a = f"/my_data/gaussian_room/ssd_temp_a_{num_elements}.bin"
+            file_b = f"/my_data/gaussian_room/ssd_temp_b_{num_elements}.bin"
+            
+            if not os.path.exists(file_a):
+                print(f"    [ssd] Creating scratch file {file_a}...")
+                data = np.random.randn(*self.shape).astype(np.float32)
+                data.tofile(file_a)
+            if not os.path.exists(file_b):
+                print(f"    [ssd] Creating scratch file {file_b}...")
+                data = np.random.randn(*self.shape).astype(np.float32)
+                data.tofile(file_b)
+                
+            a_vnn = self.vnn.Tensor.from_ssd(file_a, self.shape, vnn_dtype)
+            b_vnn = self.vnn.Tensor.from_ssd(file_b, self.shape, vnn_dtype)
+            b_ox = torch_ox.Tensor(b_vnn)
 
         # OxTorch Benchmark
-        import oxtorch as torch_ox
         a_ox = torch_ox.Tensor(a_vnn)
         if b_ox is None and b_vnn is not None:
             b_ox = torch_ox.Tensor(b_vnn)

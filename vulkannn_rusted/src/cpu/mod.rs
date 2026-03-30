@@ -12,3 +12,4 @@ pub use ops::binary::add::add_bf16;
 pub use ops::binary::sub::sub_bf16;
 pub use ops::binary::mul::mul_bf16;
 pub use ops::binary::div::div_bf16;
+pub use ops::binary::atan2::atan2_f32;
