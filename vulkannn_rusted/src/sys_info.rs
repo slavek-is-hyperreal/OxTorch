@@ -1,6 +1,5 @@
 use std::fs;
-use std::sync::OnceLock;
-use ash::Entry;
+use std::sync::{OnceLock, Mutex};
 
 #[derive(Debug, Clone)]
 pub struct SystemInfo {
@@ -17,13 +16,47 @@ pub struct SystemInfo {
     pub is_nvme: bool,
 }
 
-pub static SYS_INFO: OnceLock<SystemInfo> = OnceLock::new();
+pub static SYS_INFO_STATIC: OnceLock<SystemInfo> = OnceLock::new();
+pub static GPU_INFO_VOLATILE: Mutex<(String, String)> = Mutex::new((String::new(), String::new()));
 
-pub fn get_sys_info() -> &'static SystemInfo {
-    SYS_INFO.get_or_init(detect_system)
+pub fn get_sys_info() -> SystemInfo {
+    let mut info = SYS_INFO_STATIC.get_or_init(detect_static_system).clone();
+    
+    // 1. Dynamic RAM Detection (Always fresh)
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(content) = fs::read_to_string("/proc/meminfo") {
+            let mut mem_avail = 0;
+            let mut mem_total = 0;
+            for line in content.lines() {
+                if line.starts_with("MemAvailable:") {
+                    mem_avail = line.split_whitespace().nth(1).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0) * 1024;
+                }
+                if line.starts_with("MemTotal:") {
+                    mem_total = line.split_whitespace().nth(1).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0) * 1024;
+                }
+            }
+            info.ram_total_gb = mem_total as f64 / 1024.0 / 1024.0 / 1024.0;
+            info.ram_available_gb = mem_avail.saturating_sub(512 * 1024 * 1024) as f64 / 1024.0 / 1024.0 / 1024.0;
+        }
+    }
+
+    // 2. Dynamic GPU Info (Updated by backend)
+    let gpu = GPU_INFO_VOLATILE.lock().unwrap();
+    if !gpu.0.is_empty() {
+        info.gpu_name = gpu.0.clone();
+        info.vulkan_api_version = gpu.1.clone();
+    }
+
+    info
 }
 
-fn detect_system() -> SystemInfo {
+pub fn update_gpu_info(name: String, api_version: String) {
+    let mut gpu = GPU_INFO_VOLATILE.lock().unwrap();
+    *gpu = (name, api_version);
+}
+
+fn detect_static_system() -> SystemInfo {
     let mut info = SystemInfo {
         cpu_model: "Unknown".to_string(),
         cpu_cores: 0,
@@ -31,7 +64,7 @@ fn detect_system() -> SystemInfo {
         has_neon: false,
         ram_total_gb: 0.0,
         ram_available_gb: 0.0,
-        gpu_name: "None/CPU".to_string(),
+        gpu_name: "Detection Deferred...".to_string(),
         vulkan_api_version: "N/A".to_string(),
         has_fp16: false,
         has_cooperative_matrix: false,
@@ -57,74 +90,7 @@ fn detect_system() -> SystemInfo {
         }
     }
 
-    // 2. RAM Detection
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(content) = fs::read_to_string("/proc/meminfo") {
-            let mut mem_avail = 0;
-            let mut mem_total = 0;
-            for line in content.lines() {
-                if line.starts_with("MemAvailable:") {
-                    mem_avail = line.split_whitespace().nth(1).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0) * 1024;
-                }
-                if line.starts_with("MemTotal:") {
-                    mem_total = line.split_whitespace().nth(1).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0) * 1024;
-                }
-            }
-            info.ram_total_gb = mem_total as f64 / 1024.0 / 1024.0 / 1024.0;
-            
-            // Logika OxTorch: rezerwa 2GB i uwzględnienie Capacitora (jeśli już istnieje)
-            let mut avail_bytes = mem_avail;
-            if let Some(cap) = crate::tensor::capacitor::GLOBAL_CAPACITOR.get() {
-                avail_bytes += cap.capacity;
-            }
-            info.ram_available_gb = avail_bytes.saturating_sub(2 * 1024 * 1024 * 1024) as f64 / 1024.0 / 1024.0 / 1024.0;
-        }
-    }
-
-    // 3. GPU / Vulkan Detection (Minimal Ash)
-    let entry = unsafe { Entry::load() };
-    if let Ok(entry) = entry {
-        if let Ok(instance) = unsafe { entry.create_instance(&ash::vk::InstanceCreateInfo::default(), None) } {
-            if let Ok(pdevices) = unsafe { instance.enumerate_physical_devices() } {
-                if let Some(&pdevice) = pdevices.first() {
-                    let props = unsafe { instance.get_physical_device_properties(pdevice) };
-                    info.gpu_name = unsafe {
-                        std::ffi::CStr::from_ptr(props.device_name.as_ptr())
-                            .to_string_lossy()
-                            .into_owned()
-                    };
-                    info.vulkan_api_version = format!(
-                        "{}.{}.{}",
-                        ash::vk::api_version_major(props.api_version),
-                        ash::vk::api_version_minor(props.api_version),
-                        ash::vk::api_version_patch(props.api_version)
-                    );
-
-                    // Check for FP16 / Coop Matrix (properly via features2 and pointers)
-                    let mut feat16 = ash::vk::PhysicalDeviceShaderFloat16Int8FeaturesKHR::default();
-                    let mut feat2 = ash::vk::PhysicalDeviceFeatures2::default();
-                    feat2.p_next = &mut feat16 as *mut _ as *mut std::ffi::c_void;
-                    
-                    unsafe { instance.get_physical_device_features2(pdevice, &mut feat2) };
-                    info.has_fp16 = feat16.shader_float16 == ash::vk::TRUE;
-                    
-                    // Cooperative matrix check requires extension enumeration (simplified here)
-                    if let Ok(exts) = unsafe { instance.enumerate_device_extension_properties(pdevice) } {
-                        for ext in exts {
-                            let name = unsafe { std::ffi::CStr::from_ptr(ext.extension_name.as_ptr()).to_string_lossy() };
-                            if name == "VK_KHR_cooperative_matrix" || name == "VK_NV_cooperative_matrix" {
-                                info.has_cooperative_matrix = true;
-                            }
-                        }
-                    }
-                }
-            }
-            unsafe { instance.destroy_instance(None) };
-        }
-    }
-
-    // 4. SSD Detection (NVMe vs SATA)
+    // 2. Static SSD Detection
     #[cfg(target_os = "linux")]
     {
         if let Ok(entries) = fs::read_dir("/sys/block") {
@@ -147,7 +113,6 @@ pub fn print_sys_info() {
     println!("CPU: {} ({} cores, AVX2: {}, NEON: {})", info.cpu_model, info.cpu_cores, info.has_avx2, info.has_neon);
     println!("RAM: {:.2} GB Available / {:.2} GB Total", info.ram_available_gb, info.ram_total_gb);
     println!("GPU: {} (Vulkan {})", info.gpu_name, info.vulkan_api_version);
-    println!("Features: FP16: {}, CoopMatrix: {}", info.has_fp16, info.has_cooperative_matrix);
     println!("Disk: NVMe Detected: {}", info.is_nvme);
     println!("---------------------------------");
 }

@@ -1,4 +1,4 @@
-# Documentation Index (v3.8.1-rc)
+# Documentation Index (v8.2 "Iron Age")
 
 Welcome to the OxTorch Documentation Index. This guide serves as a "GPS" to help you navigate the various technical documents, guides, and specifications of the project.
 
@@ -6,15 +6,16 @@ Welcome to the OxTorch Documentation Index. This guide serves as a "GPS" to help
 
 ## 1. Core Architecture & Design
 - **[Architecture](architecture.md)**: A high-level deep dive into OxTorch's components, including the MSTS v2 engine and unified pipeline.
-- **[MSTS Logic](msts_logic.md)**: Theoretical foundation of the Multi-Stage Tensor Streaming system, bitmask barriers, and handshakes.
+- **[Vulkan Backend Internals](vulkan_internals.md)**: Ash, Tiling, 2D Strides, and Synchronization.
+- **[MSTS Logic](msts_logic.md)**: Theoretical foundation of the Multi-Stage Tensor Streaming system, bitmask barriers, and handshaking.
 - **[SSD Storage](ssd_storage.md)**: Specification of the binary raw format, `O_DIRECT` requirements, and SSD-Direct dispatch.
 - **[Tensor Pool](tensor_pool.md)**: Technical breakdown of the Deterministic Ring Buffer used for zero-copy memory management.
 
 ## 2. Backend & Performance
 - **[CPU Backend](cpu_backend.md)**: Guide to SIMD specialized kernels (AVX/NEON) and S.O.P. for adding new functions.
-- **[Kernel Report](kernel_report.md)**: Detailed optimization status and dispatch tiers for every operation.
-- **[Performance Guide](performance_guide.md)**: Tips for maximizing throughput and understanding the 400x gain on legacy hardware.
+- **[Performance Guide](performance_guide.md)**: Tips for maximizing throughput and understanding the 100x+ gains on legacy hardware.
 - **[Support Matrix](support_matrix.md)**: Table of supported SIMD features and precisions across architectures.
+- **[Execution Modes](execution_modes.md)**: Characteristics of CPU, Vulkan GPU, Hybrid, and SSD Streaming modes.
 
 ## 3. Python API & Integration
 - **[API Reference](api_reference.md)**: Comprehensive list of available Python methods and classes in the `oxtorch` proxy.
@@ -22,9 +23,10 @@ Welcome to the OxTorch Documentation Index. This guide serves as a "GPS" to help
 - **[PyTorch Gap Analysis](pytorch_gap_analysis.md)**: Ongoing comparison of OxTorch features vs. PyTorch standard API.
 
 ## 4. Developer Resources
+- **[New Op Tutorial](new_op_tutorial.md)**: Step-by-step guide for developers adding new 2D Stride-Aware operations from Rust to Python.
 - **[How We Test](how_we_test.md)**: Documentation of the atomized benchmark suite and numerical parity protocols.
-- **[Execution Modes](execution_modes.md)**: Characteristics of CPU, Vulkan GPU, Hybrid, and SSD Streaming modes.
-- **[New Op Tutorial](new_op_tutorial.md)**: Step-by-step guide for developers adding new operations from Rust to Python.
+- **[Roadmap](roadmap.md)**: Current milestones and long-term goals for the Iron Age and beyond.
+- **[Changelog](CHANGELOG.md)**: Complete version history.
 
 ---
-*Last updated: 2026-03-30 (v3.8.1-rc)*
+*Last updated: 2026-04-01 (v8.2 "Iron Age")*

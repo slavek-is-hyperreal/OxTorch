@@ -7,7 +7,7 @@ def run_command(command):
     print(f"Running: {' '.join(command)}")
     subprocess.run(command, check=True)
 
-def run_sfm(image_path, output_path, use_gpu=0):
+def run_sfm(image_path, output_path, use_gpu=0, use_oxtorch=False):
     if not os.path.exists(output_path):
         os.makedirs(output_path)
     
@@ -25,13 +25,23 @@ def run_sfm(image_path, output_path, use_gpu=0):
         "--SiftExtraction.use_gpu", str(use_gpu)
     ])
 
-    # 2. Matching (Sequential for video)
-    run_command([
-        "colmap", "sequential_matcher",
-        "--database_path", database_path,
-        "--SiftMatching.use_gpu", str(use_gpu),
-        "--SequentialMatching.overlap", "10"  # Match with 10 surrounding frames
-    ])
+    # 2. Matching
+    if use_oxtorch:
+        print("[OxTorch] Using High-Speed Vulkan Matcher...")
+        # Get path to oxtorch_matcher.py relative to this script
+        matcher_script = os.path.join(os.path.dirname(__file__), "oxtorch_matcher.py")
+        run_command([
+            "python3", matcher_script,
+            "--database_path", database_path,
+            "--overlap", "10"
+        ])
+    else:
+        run_command([
+            "colmap", "sequential_matcher",
+            "--database_path", database_path,
+            "--SiftMatching.use_gpu", str(use_gpu),
+            "--SequentialMatching.overlap", "10"  # Match with 10 surrounding frames
+        ])
 
     # 3. Mapping
     run_command([
@@ -59,6 +69,7 @@ if __name__ == "__main__":
     parser.add_argument("--images", type=str, required=True, help="Directory containing input images.")
     parser.add_argument("--output", type=str, default="output/colmap", help="Directory to save COLMAP output.")
     parser.add_argument("--use_gpu", type=int, default=0, help="Use GPU for SIFT (0=No, 1=Yes).")
+    parser.add_argument("--use_oxtorch", action="store_true", help="Use OxTorch Vulkan Matcher.")
     
     args = parser.parse_args()
-    run_sfm(args.images, args.output, args.use_gpu)
+    run_sfm(args.images, args.output, args.use_gpu, args.use_oxtorch)

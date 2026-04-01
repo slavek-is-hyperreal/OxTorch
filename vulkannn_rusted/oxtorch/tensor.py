@@ -130,6 +130,22 @@ class Tensor:
     def cpu(self):
         return self # We are already on CPU or mapped
 
+    def t(self):
+        return self.transpose()
+
+    def transpose(self, dim0=0, dim1=1):
+        try:
+            # Try native optimized 2D transpose (Iron Age engine)
+            return Tensor(self._vnn.transpose())
+        except Exception as e:
+            if not HAS_TORCH:
+                raise e # Propagate error if no fallback available
+            
+            # Pamiętamy o fallbacku: jeśli Rust nie obsługuje np. 3D, przekierowujemy do PyTorcha
+            print(f"[OxTorch] ⚠️  TRANSPOSE FALLBACK to PyTorch: (Reason: {e})")
+            pt_res = self.to_torch().transpose(dim0, dim1)
+            return Tensor.from_torch(pt_res)
+
     def detach(self):
         return self # No autograd yet
 

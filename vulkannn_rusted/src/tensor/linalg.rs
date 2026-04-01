@@ -59,6 +59,15 @@ impl Tensor {
                 crate::cpu::relu_f32_inplace(c);
             }
         } else {
+             let s_row_a = input.strides[0] as u32;
+             let s_col_a = input.strides[1] as u32;
+             let s_row_b = weight.strides[0] as u32;
+             let s_col_b = weight.strides[1] as u32;
+             let s_row_c = res.strides[0] as u32;
+             let s_col_c = res.strides[1] as u32;
+             let offset_a = input.offset as u32;
+             let offset_b = weight.offset as u32;
+
              let (a_raw, _) = input.get_slice_raw_bytes();
              let (b_raw, _) = weight.get_slice_raw_bytes();
              let bias_raw = bias.map(|b| b.get_slice_raw_bytes().0).unwrap_or(&[]);
@@ -68,7 +77,13 @@ impl Tensor {
                  "sigmoid" => 2,
                  _ => 0,
              };
-             crate::backend::execute_linear_into(a_raw, b_raw, bias_raw, out_raw, m as u32, k as u32, n as u32, act_type, 1, input.dtype);
+             
+             crate::backend::execute_linear_into(
+                 a_raw, b_raw, bias_raw, out_raw, 
+                 m as u32, k as u32, n as u32, 
+                 s_row_a, s_col_a, s_row_b, s_col_b, s_row_c, s_col_c, offset_a, offset_b,
+                 act_type, 1, input.dtype
+             );
         }
         Ok(res)
     }
@@ -141,14 +156,24 @@ impl Tensor {
                      pool.borrow_mut().free_raw(unsafe { Vec::from_raw_parts(ptr as *mut u8, len * 4, cap * 4) });
                  });
              }
-        } else {
-             // Vulkan single shader dispatch
+             let s_row_a = self.strides[1] as u32;
+             let s_col_a = self.strides[2] as u32;
+             let s_row_b = other.strides[1] as u32;
+             let s_col_b = other.strides[2] as u32;
+             let s_row_c = res.strides[1] as u32;
+             let s_col_c = res.strides[2] as u32;
+             let offset_a = self.offset as u32;
+             let offset_b = other.offset as u32;
+
              let (a_raw, _) = self.get_slice_raw_bytes();
              let (b_raw, _) = other.get_slice_raw_bytes();
              let (out_raw, _) = res.get_slice_raw_mut_bytes();
-             crate::backend::execute_matmul_into(a_raw, b_raw, out_raw, b as u32, m as u32, k as u32, n as u32, self.dtype);
 
-
+             crate::backend::execute_matmul_into(
+                 a_raw, b_raw, out_raw, b as u32, m as u32, k as u32, n as u32, 
+                 s_row_a, s_col_a, s_row_b, s_col_b, s_row_c, s_col_c, offset_a, offset_b,
+                 self.dtype
+             );
         }
         Ok(res)
     }
@@ -211,10 +236,24 @@ impl Tensor {
                 }
             }
         } else {
+             let s_row_a = self.strides[0] as u32;
+             let s_col_a = self.strides[1] as u32;
+             let s_row_b = other.strides[0] as u32;
+             let s_col_b = other.strides[1] as u32;
+             let s_row_c = res.strides[0] as u32;
+             let s_col_c = res.strides[1] as u32;
+             let offset_a = self.offset as u32;
+             let offset_b = other.offset as u32;
+
              let (a_raw, _) = self.get_slice_raw_bytes();
              let (b_raw, _) = other.get_slice_raw_bytes();
              let (out_raw, _) = res.get_slice_raw_mut_bytes();
-             crate::backend::execute_matmul_into(a_raw, b_raw, out_raw, 1, m as u32, k as u32, n as u32, self.dtype);
+
+             crate::backend::execute_matmul_into(
+                 a_raw, b_raw, out_raw, 1, m as u32, k as u32, n as u32, 
+                 s_row_a, s_col_a, s_row_b, s_col_b, s_row_c, s_col_c, offset_a, offset_b,
+                 self.dtype
+             );
         }
         Ok(res)
     }
@@ -417,16 +456,17 @@ impl Tensor {
     pub fn execute_transpose(&self) -> PyResult<Tensor> {
         if self.shape.len() != 2 { return Err(PyValueError::new_err("2D required for transpose")); }
         let new_shape = vec![self.shape[1], self.shape[0]];
-        let strides = Self::calculate_default_strides(new_shape.clone());
+        let new_strides = vec![self.strides[1], self.strides[0]];
+        
         Ok(Tensor {
             shape: new_shape,
-            strides,
+            strides: new_strides,
             offset: self.offset,
             device: self.device.clone(),
             dtype: self.dtype,
             storage: self.storage.clone(),
-            is_transposed: self.is_transposed,
-            name: format!("{}_reshaped", self.name),
+            is_transposed: !self.is_transposed,
+            name: format!("{}_t", self.name),
             ssd_engine: self.ssd_engine.clone(),
         })
     }

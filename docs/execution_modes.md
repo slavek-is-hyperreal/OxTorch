@@ -24,7 +24,7 @@ A high-throughput mode utilizing the computing power of the graphics card via th
 *   **Raw Ash Setup**: We do not use high-level wrappers. We directly manage `CommandPool`, `PipelineLayout`, and `DescriptorSet`.
 *   **Timeline Semaphores**: For asynchronous synchronization, we use timeline semaphores, allowing GPU progress tracking without blocking the main thread (zero-block polling).
 *   **PCIe Bottleneck (Legacy Hardware)**: On older hardware (PCIe 3.0), transfer costs to `staging` buffers are approximately 80ms.
-*   **Break-even Point**: The GPU only becomes faster than the CPU above **4,194,304 elements** (4M). Below this threshold, the dispatch and transfer overhead exceeds the computational gain.
+*   **Break-even Point**: The GPU becomes faster than the CPU above **1,048,576 elements** (1M) for Tiled MatMul. For simpler ops, the older 4M threshold may still apply.
 
 ---
 

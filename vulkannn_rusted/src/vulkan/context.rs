@@ -207,7 +207,13 @@ pub fn init_backend() {
             let props = unsafe { instance.get_physical_device_properties(pd) };
             if props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU || props.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU {
                 let name = unsafe { CStr::from_ptr(props.device_name.as_ptr()) };
-                println!("[vulkannn_rusted] Selected Physical Device: {:?}", name);
+                let name_str = name.to_string_lossy().into_owned();
+                let ver = format!("{}.{}.{}", 
+                    vk::api_version_major(props.api_version),
+                    vk::api_version_minor(props.api_version),
+                    vk::api_version_patch(props.api_version));
+                println!("[vulkannn_rusted] Selected Physical Device: {}", name_str);
+                crate::sys_info::update_gpu_info(name_str, ver);
                 true
             } else { false }
         }).expect("No suitable GPU found");
@@ -420,7 +426,7 @@ pub fn init_backend() {
         let pc_index_select_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(8)]; 
         let pipe_layout_index_select = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_index_select]).push_constant_ranges(&pc_index_select_range), None) }.unwrap();
 
-        let pc_matmul_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(24)];
+        let pc_matmul_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(44)];
         let pipe_layout_matmul = unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&[dsl_matmul]).push_constant_ranges(&pc_matmul_range), None) }.unwrap();
 
         let pc_bit_linear_range = [vk::PushConstantRange::default().stage_flags(vk::ShaderStageFlags::COMPUTE).offset(0).size(16)];

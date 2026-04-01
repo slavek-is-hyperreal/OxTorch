@@ -28,18 +28,33 @@ If the operation is computationally expensive, add a Vulkan shader.
 1.  **Create Shader**: Add `src/shaders/sin.comp`.
     ```glsl
     #version 450
-    layout(local_size_x = 256) in;
+    layout(local_size_x = 16, local_size_y = 16) in; // 2D Workgroups for Tiling
+    
+    layout(push_constant) uniform PushConstants {
+        uint M, N, K;
+        uint sa_row, sa_col; // Strides for Input A
+        uint sb_row, sb_col; // Strides for Input B (if binary)
+        uint sc_row, sc_col; // Strides for Output C
+        uint offset_a, offset_b;
+    } pc;
+
     layout(set = 0, binding = 0) readonly buffer In { float a[]; };
     layout(set = 0, binding = 1) buffer Out { float b[]; };
+
     void main() {
-        uint i = gl_GlobalInvocationID.x;
-        b[i] = sin(a[i]);
+        uint r = gl_GlobalInvocationID.y;
+        uint c = gl_GlobalInvocationID.x;
+        if (r < pc.M && c < pc.N) {
+            uint in_idx = pc.offset_a + r * pc.sa_row + c * pc.sa_col;
+            uint out_idx = r * pc.sc_row + c * pc.sc_col;
+            b[out_idx] = sin(a[in_idx]);
+        }
     }
     ```
-2.  **Integrate with AshBackend**: Update `src/backend.rs`.
-    - Add `pipe_sin: vk::Pipeline` to the `AshBackend` struct.
-    - Load the shader and create the pipeline in `init_backend`.
-    - Implement `execute_sin_into()`.
+2.  **Integrate with Backend**: Update `src/vulkan/ops/activation.rs` (or create a new op file).
+    - Use the **44-byte** `pc_data` array (11 x 4 bytes).
+    - Pass `s_row` and `s_col` for both input and output tensors to ensure **2D Stride-Awareness**.
+    - Dispatch using `((N + 15) / 16, (M + 15) / 16, 1)` to match the 16x16 local workgroup size.
 
 ---
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [8.2.0] - 2026-04-01 "Iron Age - Tiled 2D Strides & Vulkan MSTS v2"
+
+### Added
+- **2D Stride-Aware indexing**: Vulkan backend now handles non-contiguous tensors (transposed/sliced) natively without CPU-side copies.
+- **LDS Tiling (v2)**: Implemented 16x16 shared-memory tiling in `matmul_tiled.comp` for significant bandwidth reduction.
+- **44-Byte Push Constants**: Expanded metadata payload to 11 fields to support 2D strides and offsets for Inputs A, B, and C.
+- **Enhanced `from_ssd`**: Support for streaming non-contiguous weight blocks directly into Vulkan tiles.
+
+### Fixed
+- **Numerical Divergence in MatMul**: Resolved parity bridge errors (max_diff ~244) by enforcing correct 2D index calculation in SPIR-V.
+- **VRAM Alignment**: Standardized buffer pool alignment to 1MB for ZFS compatibility and 256-byte storage offset alignment.
+
 ## [3.7.1] - 2026-03-22 "HPC CPU Optimization & Parallel Fix"
 
 ### Added

@@ -1,4 +1,4 @@
-# OxTorch (v3.8.1-rc — "Unified Core & MSTS v2")
+# OxTorch (v8.2 — "Iron Age: 2D Stride-Aware Tiling")
 
 **Run modern AI inference on hardware that PyTorch left behind.**
 
@@ -10,7 +10,7 @@ It streams model weights from SSD tile-by-tile (never loading the full model int
 - **No code changes.** `import oxtorch as torch` — existing PyTorch inference scripts run unchanged.
 
 > [!IMPORTANT]
-> **V3.8.1-rc Status**: The CPU backend has been fully unified. F16 Multiplication crashes and BF16 precision drift have been resolved. The system is now baseline-parity with PyTorch across all data types (F16, BF16, F32, I8).
+> **V8.2 "Iron Age" Status**: The Vulkan backend is now **2D Stride-Aware**. Numerical divergence in MatMul (parity drift ~244) has been resolved via native SPIR-V stride indexing. OxTorch now supports transposed and sliced tensors directly on GPU without CPU-side copies.
 
 ---
 
@@ -42,9 +42,9 @@ OxTorch specializes in **Large-Vector SIMD** and **Asynchronous I/O**.
 
 ---
 
-## 🛠️ Technical Overview: MSTS v2
+## 🛠️ Technical Overview: Iron Age (v8.2)
 
-Version 3.8.1 introduces the **Unified Core**. There is no longer a gap between "RAM-Only" and "SSD-Streaming" code.
+Version 8.2 introduces **2D Stride-Aware Tiling**. The backend now handles memory layout metadata natively.
 
 1.  **CrookScheduler**: A triple-buffered ring of 8MB tiles.
 2.  **Bitmask Barrier**: A multi-stream handshake (`A_ready | B_ready`) that allows sources to load in parallel.
@@ -55,12 +55,12 @@ Version 3.8.1 introduces the **Unified Core**. There is no longer a gap between 
 
 ## 📚 Documentation Index
 
+For full developer guides and architecture specs, see the **[Documentation Index](docs/doc_index.md)**.
+
 *   **[Core Architecture](docs/architecture.md)**: Decoding the Unified Pipeline.
-*   **[MSTS Logic](docs/msts_logic.md)**: The "Mera Style" tiling and handshake model.
-*   **[CPU Backend Guide](docs/cpu_backend.md)**: S.O.P. for adding new SIMD kernels.
+*   **[Vulkan Internals](docs/vulkan_internals.md)**: Ash, Tiling, and 2D Strides.
+*   **[API Reference](docs/api_reference.md)**: Native and Python interface documentation.
 *   **[Performance Guide](docs/performance_guide.md)**: How we achieve 400x speedups on Ivy Bridge.
-*   **[SSD Storage](docs/ssd_storage.md)**: Raw binary format and `O_DIRECT` requirements.
-*   **[PyTorch Gap Analysis](docs/pytorch_gap_analysis.md)**: Current operation status and roadmap.
 
 ---
 

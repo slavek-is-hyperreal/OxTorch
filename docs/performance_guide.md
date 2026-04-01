@@ -50,11 +50,11 @@ Linear_bf16_cpu | PT: 6.8389s | VNN: 0.2599s | 0.0380x | ✅ PASS
 ### GPU (AMD Radeon R7 200 Series, Bonaire GCN 1.1)
 - ~1GB GDDR5 VRAM
 - PCIe 3.0 — round-trip staging cost: ~80ms on Bonaire
-- **GPU break-even**: **≥4M elements** (~16MB F32, ~8MB F16)
-- Below threshold: The CPU is always faster due to PCIe overhead.
+- **GPU break-even**: **≥1M elements** (~4MB F32, ~2MB F16) for Tiled MatMul.
+- Below threshold: The CPU is often faster due to PCIe latency (80ms round-trip).
 
 ### SSD (ZFS/NVMe Environment)
-- `io_uring` + `O_DIRECT` + **4096-byte recordsize alignment**.
+- `io_uring` + `O_DIRECT` + **1MB recordsize alignment** (ZFS optimal).
 - **MSTS Strategy**:
     - `DIRECT_MAX`: 50% of L3 cache size (approx 3MB for i5-3450).
     - `TILE_LARGE`: Fixed 8MB for high-speed sequential I/O.

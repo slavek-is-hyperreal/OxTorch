@@ -28,9 +28,9 @@ fn get_available_ram_bytes() -> PyResult<usize> {
 /// The main entry point for the `vulkannn_rusted` Python extension module.
 #[pymodule]
 fn vulkannn_rusted(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    backend::init_backend();
     sys_info::print_sys_info();
-    let _ = crate::tensor::capacitor::get_capacitor(); // Eager allocation
+    backend::init_backend();
+    // get_capacitor() is now lazy (v4 True Adaptive); it will trigger on demand.
 
     m.add_function(wrap_pyfunction!(rust_greeting, m)?)?;
     m.add_function(wrap_pyfunction!(get_available_ram_bytes, m)?)?;

@@ -10,7 +10,7 @@ In the new architecture, there is only ONE entry point for all CPU operations. T
 
 ```mermaid
 graph TD
-    A[Python: Tensor.add] --> B[Rust: dispatch_binary_op]
+    A[Python: Tensor.add] --> B[Rust: dispatch_op]
     B --> C{Decision Node}
     C -->|Small & RAM| D[RAM-FastPath: Direct SIMD]
     C -->|Large / Hybrid / SSD| F[MSTS v2: Unified Tiling]
@@ -18,9 +18,12 @@ graph TD
     F --> G[PPU: io_uring Engine]
     G --> H[Capacitor: Global RAM reservoir]
     H --> I[CrookScheduler: Triple-Buffered Ring]
-    I --> J[Leaf Kernel: Optimized SIMD]
-    J --> K[Result Tile]
-    K --> L[Writer: io_uring]
+    I --> J{Execution Engine}
+    J -->|CPU Path| K[Leaf Kernel: Optimized SIMD]
+    J -->|GPU Path| L[Vulkan Backend: Tiled Shaders]
+    K --> M[Result Tile]
+    L --> M
+    M --> N[Writer: io_uring]
 ```
 
 ## 2. Component Roles
@@ -38,6 +41,7 @@ graph TD
 ### C. MSTS v2 (The Brain)
 - **Role**: Master orchestrator. Determines the tiling strategy (`TILE_LARGE` vs `TILE_SMALL`) and ring depth (`RING_LARGE`) based on build-time hardware discovery (L2/L3 cache sizes).
 - **Unification**: Handles both Unary and Binary operations through a standardized `execute_op_unified` loop.
+- **Stride-Aware**: Native support for **2D Stride indexing** (`row * s_row + col * s_col`), eliminating the need for CPU-side memory layouts (transposes/slices) before GPU dispatch.
 
 ### D. Leaf Kernels (The Bricks)
 - **Role**: Optimized SIMD functions with auto-dispatch (AVX2 -> AVX1 -> SSE2 -> NEON).
@@ -50,8 +54,8 @@ graph TD
 
 1.  **Dysk (Source)**: The distant quarry.
 2.  **Capacitor**: The huge reservoir next to the building site (up to 50% RAM). **io_uring** is the high-speed pipeline filling it.
-3.  **Crook Ring**: The standardized jerry cans (Tiles). Always **4096-byte aligned** for direct hardware access.
-4.  **MSTS**: The logistics manager filling jerry cans from the reservoir and handing them to the builders.
+3.  **Crook Ring**: The standardized jerry cans (Tiles). Always **1MB aligned** for optimal ZFS/Direct I/O throughput.
+4.  **MSTS**: The logistics manager. Knows how to handle non-contiguous weight blocks (Strides) while filling jerry cans from the reservoir.
 5.  **Leaf Kernels**: The builders. They perform the computation (SIMD) on the content of the jerry cans.
 
 This architecture ensures that the **Builders (CPU)** are never waiting for the **Pipes (SSD)**, thanks to the **Reservoir (Capacitor)**.

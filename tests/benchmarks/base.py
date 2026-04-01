@@ -45,7 +45,7 @@ _OP_KWARGS = {
 }
 
 class BenchmarkBase:
-    def __init__(self, name, op, shape, mode="cpu", dtype="f32", iterations=None, is_ssd=False, inplace=False, kwargs=None):
+    def __init__(self, name, op, shape, mode="cpu", dtype="f32", iterations=None, is_ssd=False, inplace=False, transpose_a=False, transpose_b=False, kwargs=None):
         self.name = name
         self.op = op
         self.shape = shape
@@ -54,6 +54,8 @@ class BenchmarkBase:
         self.iterations = iterations
         self.is_ssd = is_ssd
         self.inplace = inplace
+        self.transpose_a = transpose_a
+        self.transpose_b = transpose_b
         self.kwargs = kwargs or {}
         self.vnn, self.vnn_mod_name = load_vnn()
 
@@ -214,6 +216,17 @@ class BenchmarkBase:
         a_ox = torch_ox.Tensor(a_vnn)
         if b_ox is None and b_vnn is not None:
             b_ox = torch_ox.Tensor(b_vnn)
+
+        # Apply transposition for Stride-Aware tests
+        if self.transpose_a:
+            a_ox = a_ox.t()
+            if 'a_torch' in locals() and a_torch is not None:
+                a_torch = a_torch.t()
+        if self.transpose_b:
+            if b_ox is not None:
+                b_ox = b_ox.t()
+            if 'b_torch' in locals() and b_torch is not None and hasattr(b_torch, 't'):
+                b_torch = b_torch.t()
 
         t0 = time.perf_counter()
         for _ in range(self.iterations):

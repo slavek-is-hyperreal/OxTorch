@@ -1,0 +1,12 @@
+{
+    "name": "MatMul_f32_stride_vulkan",
+    "op": "MatMul",
+    "dtype": "f32",
+    "mode": "vulkan",
+    "pt_time": 0.026618724002037197,
+    "vnn_time": 0.10464050119917374,
+    "ratio": 3.9310862981698653,
+    "parity": false,
+    "max_diff": 229.43646240234375,
+    "cpu_temp": 52.0
+}

@@ -32,8 +32,8 @@ Every Vulkan operation follows a standardized execution flow to ensure data cons
 2.  **Staging-to-Device Copy**: A `vkCmdCopyBuffer` command is recorded to move data into the high-speed `GpuOnly` memory.
 3.  **Compute Dispatch**: 
     - Descriptor sets are bound.
-    - Op-specific metadata is passed via **Push Constants** (standardized to 16/24 bytes).
-    - The compute shader is dispatched with `vkCmdDispatch`.
+    - Op-specific metadata is passed via **Push Constants** (expanded to **44 bytes** in v8.2 to support 2D Strides).
+    - The compute shader is dispatched with `vkCmdDispatch`. For Tiled MatMul, this uses a 16x16 local workgroup size.
 4.  **Device-to-Staging Copy**: Results are moved from `GpuOnly` memory back to a `GpuToCpu` readback staging buffer.
 5.  **Synchronization**: 
     - `vkCmdPipelineBarrier` ensures that Transfers finish before Compute starts, and vice-versa.
@@ -44,9 +44,10 @@ Every Vulkan operation follows a standardized execution flow to ensure data cons
     - Results are downloaded from the staging buffer (converting back from F32 if necessary).
 
 ## Shader Structure
-Shaders are written in HLSL/GLSL/WGSL and compiled to SPIR-V. They are embedded in the Rust binary using `include_bytes!`. 
-- **Layout**: Standardized layout with 2-5 Storage Buffers (bindings 0, 1, 2...).
-- **Push Constants**: Used for dynamic parameters like tensor dimensions and operation IDs.
+Shaders are written in GLSL and compiled to SPIR-V via `naga`. 
+- **MSTS v2 Layout**: Incorporates **2D Stride-Aware indexing** (`idx = row * s_row + col * s_col`).
+- **Tiled Execution**: Uses Local Data Share (LDS) to cache matrix tiles, significantly reducing VRAM bandwidth pressure for MatMul operations.
+- **Push Constants**: Used for dynamic parameters: M, N, K, 6 strides (A, B, C), and 2 offsets.
 
 ## Asynchronous Operations
 Asynchronous tasks are tracked via the `AsyncOp` struct. The `poll_async_ops` function is called periodically to check for completed tasks and reclaim their associated staging and device buffers.

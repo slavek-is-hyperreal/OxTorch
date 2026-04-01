@@ -44,6 +44,8 @@ OxTorch uses a **Dynamic Attribute Proxy** (`__getattr__`):
 - **`rand(shape, dtype, device)`**: Allocates random memory.
 - **`from_ssd(path, shape, dtype)`**: Maps a raw binary file via `io_uring`.
 - **`new_ssd(path, shape, dtype)`**: Creates a new mapped file for output.
+- **`to_vulkan()`**: Moves the tensor to GPU VRAM (using the high-speed `GpuOnly` pool).
+- **`to_cpu()`**: Moves the tensor back to Host RAM (reclaims VRAM immediately).
 
 ### Operations
 - **`linear(weight, bias=None)`**: High-performance linear layer (SIMD).
@@ -63,7 +65,7 @@ OxTorch uses a **Dynamic Attribute Proxy** (`__getattr__`):
 
 - **Capacitor**: Global RAM reservoir (50% RAM) for prefetching.
 - **Crook Ring**: Local 8MB triple-buffered recycler (Zero-Allocation).
-- **Alignment**: Hard-enforced **4096-byte** alignment for `O_DIRECT`.
+- **Alignment**: Hard-enforced **1MB** alignment for optimal ZFS/Direct I/O throughput.
 
 ---
-*Reference version: v3.8.1-rc (2026-03-30)*
+*Reference version: v8.2 "Iron Age" (2026-04-01)*

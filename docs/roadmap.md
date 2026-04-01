@@ -1,12 +1,12 @@
-# Roadmap - OxTorch v3.7.0
+# Roadmap - OxTorch v8.2
 
-## [3.7.0] The BitNet Leapfrog & Rebranding (LATEST)
-- [x] **OxTorch Rebranding**: Global project transition and documentation overhaul.
-- [x] **BitNet 1.58b**: Native `Ternary` types and dequantization-free kernels.
-- [x] **F16 CPU Parallelization**: Performance parity on legacy non-AVX512 hardware.
-- [x] **100% Bit-Perfect BitNet**: Parity verified between CPU and Vulkan backends.
-- [x] **100% PyTorch Fallback Dispatcher**: `import oxtorch as torch` drop-in replacement via `oxtorch/` package.
-- [x] Phase 6 — Atomized Benchmark Suite: 167 self-contained benchmark files (BF16/F16/F32/INT8/Monster), each saving results to tests/results/*.json. OxTorch faster in **88/167** tests. MatMul CPU (BF16): **400–700x** faster than PyTorch fallback.
+## [8.2.0] - 2026-04-01 "Iron Age - Tiled 2D Strides & Vulkan MSTS v2" (LATEST)
+- [x] **Stride-Aware Vulkan Acceleration**: Native 2D indexing (`row * s_row + col * s_col`) in shaders.
+- [x] **LDS Tiling**: Shared-memory matrix tiling for high-performance MatMul.
+- [x] **Expanded Push Constants**: Support for 11-field metadata (44 bytes).
+- [x] **Zero-Copy SSD MatMul**: True MSTS integration for non-contiguous weight blocks.
+
+## [3.7.1] - 2026-03-22 "HPC CPU Optimization & Parallel Fix"
 
 
 ## [3.6.0] Strategy: Hardware Acceleration & High-Precision Reductions

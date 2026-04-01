@@ -16,7 +16,8 @@ import hashlib
 # Add project root to path so we can import vulkan_nn_lib
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-from vulkan_nn_lib.memory import MemoryManager
+from oxtorch.memory import MemoryManager
+import oxtorch as torch
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "../../"))
@@ -264,7 +265,7 @@ class SplatEngine:
             self.log("\n!!! Stopped !!!")
         self.is_running = False
 
-    def run_pipeline(self, fps, iterations, ai_enabled):
+    def run_pipeline(self, fps, iterations, ai_enabled, use_oxtorch=True):
         try:
             self.is_running = True
             self.set_status("Initializing Project State...", 0)
@@ -306,6 +307,8 @@ class SplatEngine:
                 self.set_status("Stage 2/4: SfM Reconstruction...", 20)
                 os.makedirs(colmap_path, exist_ok=True)
                 cmd = [sys.executable, os.path.join(SCRIPT_DIR, "run_colmap.py"), "--images", frames_dir, "--output", colmap_path]
+                if use_oxtorch:
+                    cmd.append("--use_oxtorch")
                 self.run_command(cmd, "COLMAP", 20, 45)
                 self.pm.save()
 
@@ -368,6 +371,12 @@ class SplatEditor:
         self.engine = SplatEngine(self.pm, self.log, self.set_status)
         
         self.setup_ui()
+        
+        # HW State
+        self.use_oxtorch = tk.BooleanVar(value=True)
+        self.oxtorch_check = tk.Checkbutton(self.root, text="OxTorch Accel (Vulkan)", variable=self.use_oxtorch)
+        self.oxtorch_check.pack(side="bottom", anchor="se", padx=20, pady=5)
+        
         self.refresh_ui()
         self.check_queue()
         self.update_hardware_health()
@@ -666,7 +675,8 @@ class SplatEditor:
             "fps": self.fps_var.get(),
             "iterations": self.iter_var.get(),
             "ai_enabled": self.ai_var.get(),
-            "research_mode": self.reconstruct_mode.get()
+            "research_mode": self.reconstruct_mode.get(),
+            "use_oxtorch": self.use_oxtorch.get()
         })
         threading.Thread(target=self._run_pipeline_worker, daemon=True).start()
         self.refresh_ui()
@@ -675,7 +685,8 @@ class SplatEditor:
         fps = self.fps_var.get()
         iters = self.iter_var.get()
         ai = self.ai_var.get()
-        if self.engine.run_pipeline(fps, iters, ai):
+        oxt = self.use_oxtorch.get()
+        if self.engine.run_pipeline(fps, iters, ai, oxt):
             self.queue.put(("done", None))
         else:
             self.queue.put(("error", "Pipeline failed. Check logs."))

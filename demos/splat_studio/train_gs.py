@@ -11,10 +11,10 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-import vulkan_nn_lib.torch_shim as torch
-import vulkan_nn_lib.core as vnn
-from vulkan_nn_lib.optimizers import AutoAdam
-from vulkan_nn_lib.memory import MemoryManager
+import oxtorch as torch
+import vulkannn_rusted as vnn
+from oxtorch.optimizers import AutoAdam
+from oxtorch.memory import MemoryManager
 
 # Dynamic VRAM budget for Taichi
 vram_budget_gb = MemoryManager.get_vram_budget() / 1024**3
