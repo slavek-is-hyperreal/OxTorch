@@ -18,6 +18,7 @@ pub fn sigmoid_f32(buf: &mut [f32]) {
 
     #[cfg(target_arch = "aarch64")]
     {
+        use std::arch::aarch64::*; // aarch64-fix only, dies in wave 2: missing import.
         for chunk in buf.chunks_exact_mut(4) {
             unsafe {
                 let v = vld1q_f32(chunk.as_ptr());

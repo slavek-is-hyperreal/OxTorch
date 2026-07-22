@@ -1,5 +1,9 @@
 //! 256-bit AVX2 + FMA Implementation for FP32 Atan2.
 //! Part of the OxTorch Scientific-Grade Specialization Matrix.
+//!
+//! BENCH: PENDING (hw: x86_64 w/ AVX2+FMA). Reference box (i5-3450) lacks AVX2.
+//! Compiles + cross-checked; expected to beat avx1 (FMA folds the polynomial),
+//! but unmeasured — do not claim a number until run on real AVX2 silicon.
 //! Utilizes Fused Multiply-Add (FMA) and 8-vector register blocking to saturate the pipeline.
 
 #[cfg(target_arch = "x86_64")]

@@ -1,5 +1,9 @@
 //! 128-bit NEON SIMD Implementation for FP32 Atan2.
 //! Part of the OxTorch Scientific-Grade Specialization Matrix.
+//!
+//! BENCH: PENDING (hw: aarch64/NEON). Reference box is x86 — measure on ARM.
+//! Compiles under `cargo check --target aarch64-unknown-linux-gnu` (the missing
+//! `vst1q_f32` mut-ptr and the bogus `vandq_f32` were fixed in Wave 0).
 //! Optimized for ARM v8/v9 (Graviton/Apple Silicon) with branchless VBSL selection.
 
 #[cfg(target_arch = "aarch64")]
@@ -131,25 +135,27 @@ pub unsafe fn atan2(y: &[f32], x: &[f32], res: &mut [f32]) {
         // Or simply vbslq against the sign bit of Y.
         // The report suggests XOR bits to avoid branching.
         // We'll use the bitwise XOR logic since it's consistent across architectures.
-        let sign_mask = vreinterpretq_f32_u32(vdupq_n_u32(0x80000000));
-        f0 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f0), vreinterpretq_u32_f32(vandq_f32(y0, sign_mask))));
-        f1 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f1), vreinterpretq_u32_f32(vandq_f32(y1, sign_mask))));
-        f2 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f2), vreinterpretq_u32_f32(vandq_f32(y2, sign_mask))));
-        f3 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f3), vreinterpretq_u32_f32(vandq_f32(y3, sign_mask))));
-        f4 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f4), vreinterpretq_u32_f32(vandq_f32(y4, sign_mask))));
-        f5 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f5), vreinterpretq_u32_f32(vandq_f32(y5, sign_mask))));
-        f6 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f6), vreinterpretq_u32_f32(vandq_f32(y6, sign_mask))));
-        f7 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f7), vreinterpretq_u32_f32(vandq_f32(y7, sign_mask))));
+        // aarch64-fix (Wave 0): std::arch has no `vandq_f32`; operate on the u32
+        // reinterpretation directly. Kept as a real fix — this NEON kernel stays.
+        let sign_mask = vdupq_n_u32(0x80000000);
+        f0 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f0), vandq_u32(vreinterpretq_u32_f32(y0), sign_mask)));
+        f1 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f1), vandq_u32(vreinterpretq_u32_f32(y1), sign_mask)));
+        f2 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f2), vandq_u32(vreinterpretq_u32_f32(y2), sign_mask)));
+        f3 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f3), vandq_u32(vreinterpretq_u32_f32(y3), sign_mask)));
+        f4 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f4), vandq_u32(vreinterpretq_u32_f32(y4), sign_mask)));
+        f5 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f5), vandq_u32(vreinterpretq_u32_f32(y5), sign_mask)));
+        f6 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f6), vandq_u32(vreinterpretq_u32_f32(y6), sign_mask)));
+        f7 = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(f7), vandq_u32(vreinterpretq_u32_f32(y7), sign_mask)));
 
         // Store Block
-        vst1q_f32(res.as_ptr().add(i), f0);
-        vst1q_f32(res.as_ptr().add(i + 4), f1);
-        vst1q_f32(res.as_ptr().add(i + 8), f2);
-        vst1q_f32(res.as_ptr().add(i + 12), f3);
-        vst1q_f32(res.as_ptr().add(i + 16), f4);
-        vst1q_f32(res.as_ptr().add(i + 20), f5);
-        vst1q_f32(res.as_ptr().add(i + 24), f6);
-        vst1q_f32(res.as_ptr().add(i + 28), f7);
+        vst1q_f32(res.as_mut_ptr().add(i), f0);
+        vst1q_f32(res.as_mut_ptr().add(i + 4), f1);
+        vst1q_f32(res.as_mut_ptr().add(i + 8), f2);
+        vst1q_f32(res.as_mut_ptr().add(i + 12), f3);
+        vst1q_f32(res.as_mut_ptr().add(i + 16), f4);
+        vst1q_f32(res.as_mut_ptr().add(i + 20), f5);
+        vst1q_f32(res.as_mut_ptr().add(i + 24), f6);
+        vst1q_f32(res.as_mut_ptr().add(i + 28), f7);
 
         i += 32;
     }

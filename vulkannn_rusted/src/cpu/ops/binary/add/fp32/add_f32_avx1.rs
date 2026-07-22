@@ -1,5 +1,10 @@
 //! Specialized AVX1 Implementation for Ivy Bridge (Intel Core 3rd Gen).
 //! Part of the OxTorch Scientific-Grade Specialization Matrix.
+//!
+//! BENCH: 1.37× vs scalar at 1 M (i5-3450, AVX1, `cargo bench -- add_f32`,
+//! 2026-07); LOSES below LLC (4 K: 0.76×, 64 K: 0.86×) because the streaming
+//! `vmovntps` stores discard cache locality. Memory-bound → win only past LLC,
+//! so the Tier II dispatcher gates this kernel on NON_TEMPORAL_MIN (mod.rs).
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;

@@ -5,6 +5,7 @@ __pycache__/
 
 # Virtual Environment
 venv/
+.venv/
 ENV/
 
 # Project Data (Important!)
@@ -32,6 +33,9 @@ video/
 
 # Weights and Large Archives
 *.bin
+# ...but kernel parity snapshots are source of truth and MUST be committed.
+# They outlive src/cpu_old (deleted in Wave 6); see cpu/parity_harness.rs.
+!tests/golden/*.bin
 *.tar.gz
 weights_gemma_3n*/
 vulkan_nn_lib/weights/

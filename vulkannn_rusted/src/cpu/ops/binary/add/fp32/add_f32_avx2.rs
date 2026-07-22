@@ -1,5 +1,9 @@
 //! 256-bit AVX2 SIMD Implementation with FMA-as-ADD Port Saturation.
 //! Part of the OxTorch Scientific-Grade Specialization Matrix.
+//!
+//! BENCH: PENDING (hw: x86_64 w/ AVX2+FMA). Reference box (i5-3450) is Ivy
+//! Bridge — no AVX2 — so this cannot be measured here. Compiles + cross-checked;
+//! gated behind NON_TEMPORAL_MIN like avx1 until measured on real AVX2 silicon.
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;

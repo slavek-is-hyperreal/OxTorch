@@ -192,7 +192,9 @@ impl Tensor {
                 let b = bytemuck::cast_slice::<u8, half::bf16>(buf_b.as_slice());
                 let mut buf_res = crate::io_uring_engine::AlignedBuffer::new(total_bytes);
                 let res = bytemuck::cast_slice_mut::<u8, half::bf16>(buf_res.as_mut_slice());
-                unsafe { crate::cpu::ops::binary::add::bf16::add_bf16_avx_serial(a, b, res); }
+                // Tier II serial entry (arch-uniform, dispatches internally, no rayon).
+                // Was `add_bf16_avx_serial` — an x86-only symbol that broke aarch64.
+                crate::cpu::ops::binary::add::bf16::add_bf16(a, b, res);
                 let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
                     IoEngineType::ReadWrite(e) => e.clone(),
                     _ => unreachable!(),

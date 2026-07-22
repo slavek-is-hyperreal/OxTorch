@@ -1,6 +1,10 @@
 //! Specialized AVX1 Implementation for Ivy Bridge (Intel Core 3rd Gen).
 //! Part of the OxTorch Scientific-Grade Specialization Matrix.
 //! Optimized for Port 1 affinity and 3rd-order Minimax Polynomial accuracy.
+//!
+//! BENCH: 2.44–2.61× vs scalar (i5-3450, AVX1, `cargo bench -- atan2_f32`,
+//! 2026-07). 4 K: 2.61×, 64 K: 2.55×, 1 M: 2.44×. Compute-bound → wins at every
+//! N. (This is the kernel the compile-time-cfg dispatch used to skip entirely.)
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;

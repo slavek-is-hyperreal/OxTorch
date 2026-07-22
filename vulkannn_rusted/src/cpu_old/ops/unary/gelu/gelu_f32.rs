@@ -104,10 +104,13 @@ unsafe fn gelu_f32_sse2_inplace(buf: &mut [f32]) {
 #[cfg(target_arch = "aarch64")]
 fn gelu_f32_neon(buf: &mut [f32]) {
     use std::arch::aarch64::*;
-    let vk = vdupq_n_f32(0.7978845608); // sqrt(2/pi)
-    let vc = vdupq_n_f32(0.044715);
-    let vhalf = vdupq_n_f32(0.5);
-    let vone = vdupq_n_f32(1.0);
+    // aarch64-fix only, dies in wave 2: these NEON intrinsics need an unsafe block.
+    let (vk, vc, vhalf, vone) = unsafe {(
+        vdupq_n_f32(0.7978845608), // sqrt(2/pi)
+        vdupq_n_f32(0.044715),
+        vdupq_n_f32(0.5),
+        vdupq_n_f32(1.0),
+    )};
     
     let n4 = (buf.len() / 4) * 4;
     for i in (0..n4).step_by(4) {

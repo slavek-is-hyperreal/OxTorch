@@ -47,10 +47,11 @@ fn mul_f16_neon(a: &[half::f16], b: &[half::f16], res: &mut [half::f16]) {
     let n4 = (a.len() / 4) * 4;
     for i in (0..n4).step_by(4) {
         unsafe {
-            let va = vcvt_f32_f16(vld1_u16(a.as_ptr().add(i) as *const u16));
-            let vb = vcvt_f32_f16(vld1_u16(b.as_ptr().add(i) as *const u16));
+            // aarch64-fix only, dies in wave 1: u16<->f16 reinterpret was missing.
+            let va = vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(a.as_ptr().add(i) as *const u16)));
+            let vb = vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(b.as_ptr().add(i) as *const u16)));
             let vr = vmulq_f32(va, vb);
-            vst1_u16(res.as_mut_ptr().add(i) as *mut u16, vcvt_f16_f32(vr));
+            vst1_u16(res.as_mut_ptr().add(i) as *mut u16, vreinterpret_u16_f16(vcvt_f16_f32(vr)));
         }
     }
     mul_f16_scalar(&a[n4..], &b[n4..], &mut res[n4..]);

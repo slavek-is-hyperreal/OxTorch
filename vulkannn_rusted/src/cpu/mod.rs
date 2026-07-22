@@ -2,6 +2,10 @@ pub mod ops;
 pub mod conversions;
 pub mod tiling_cpu;
 pub mod dispatch;
+pub mod thresholds;
+pub mod simd_util;
+#[cfg(test)]
+pub mod parity_harness;
 
 // Bridge to cpu_old for incremental migration. 
 // Symbols in this module (src/cpu) will shadow those in cpu_old.

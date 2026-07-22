@@ -1,5 +1,8 @@
 //! 128-bit NEON SIMD Implementation for FP32 Addition.
 //! Part of the OxTorch Scientific-Grade Specialization Matrix.
+//!
+//! BENCH: PENDING (hw: aarch64/NEON). Reference box is x86 — measure on ARM.
+//! Compiles under `cargo check --target aarch64-unknown-linux-gnu`.
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::*;
