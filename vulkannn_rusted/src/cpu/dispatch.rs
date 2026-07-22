@@ -38,7 +38,8 @@ pub enum Arch {
     Sse2 = 2,
     Avx1 = 3,
     Avx2 = 4,
-    Neon = 5,
+    Avx512 = 5,
+    Neon = 6,
 }
 
 /// Sentinel stored in [`FORCED_ARCH`] meaning "no override, use detection".
@@ -60,6 +61,7 @@ impl Arch {
             Arch::Sse2 => 2,
             Arch::Avx1 => 3,
             Arch::Avx2 => 4,
+            Arch::Avx512 => 5,
             // aarch64 baseline vector unit; ranks above Swar in its own family.
             Arch::Neon => 2,
         }
@@ -73,6 +75,7 @@ impl Arch {
             Arch::Sse2 => "sse2",
             Arch::Avx1 => "avx1",
             Arch::Avx2 => "avx2",
+            Arch::Avx512 => "avx512",
             Arch::Neon => "neon",
         }
     }
@@ -85,6 +88,7 @@ impl Arch {
             "sse2" => Some(Arch::Sse2),
             "avx1" | "avx" => Some(Arch::Avx1),
             "avx2" => Some(Arch::Avx2),
+            "avx512" | "avx512f" => Some(Arch::Avx512),
             "neon" => Some(Arch::Neon),
             _ => None,
         }
@@ -97,7 +101,8 @@ impl Arch {
             2 => Some(Arch::Sse2),
             3 => Some(Arch::Avx1),
             4 => Some(Arch::Avx2),
-            5 => Some(Arch::Neon),
+            5 => Some(Arch::Avx512),
+            6 => Some(Arch::Neon),
             _ => None,
         }
     }
@@ -108,7 +113,7 @@ impl Arch {
     pub const fn family_matches_target(self) -> bool {
         match self {
             Arch::Scalar | Arch::Swar => true,
-            Arch::Sse2 | Arch::Avx1 | Arch::Avx2 => cfg!(target_arch = "x86_64"),
+            Arch::Sse2 | Arch::Avx1 | Arch::Avx2 | Arch::Avx512 => cfg!(target_arch = "x86_64"),
             Arch::Neon => cfg!(target_arch = "aarch64"),
         }
     }
@@ -155,6 +160,16 @@ pub fn forced_arch() -> Option<Arch> {
 pub fn detect_arch() -> Arch {
     #[cfg(target_arch = "x86_64")]
     {
+        // AVX-512 leaf kernels enable f/dq/vl (+fma); gate on all of them so we
+        // never dispatch to a kernel using an instruction the CPU lacks. Any
+        // AVX-512-foundation CPU (Skylake-X onward) provides the whole set.
+        if is_x86_feature_detected!("avx512f")
+            && is_x86_feature_detected!("avx512dq")
+            && is_x86_feature_detected!("avx512vl")
+            && is_x86_feature_detected!("fma")
+        {
+            return Arch::Avx512;
+        }
         // Every avx2 leaf kernel in this crate enables "avx2,fma"; gate the rung
         // on both so a rare AVX2-without-FMA CPU never reaches an FMA kernel.
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
@@ -664,10 +679,12 @@ mod tests {
             Arch::Sse2,
             Arch::Avx1,
             Arch::Avx2,
+            Arch::Avx512,
             Arch::Neon,
         ] {
             assert_eq!(Arch::from_name(a.name()), Some(a));
         }
-        assert_eq!(Arch::from_name("avx512"), None);
+        assert_eq!(Arch::from_name("avx512"), Some(Arch::Avx512));
+        assert_eq!(Arch::from_name("bogus"), None);
     }
 }

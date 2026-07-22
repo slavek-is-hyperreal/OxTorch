@@ -200,6 +200,10 @@ fn bench_add_f32(c: &mut Criterion) {
                 &mut group, "avx2", is_x86_feature_detected!("avx2"), n, a, b, out.as_mut_slice(),
                 |x, y, r| unsafe { fp32::add_f32_avx2::add(x, y, r) },
             );
+            bench_binary_f32_variant(
+                &mut group, "avx512", is_x86_feature_detected!("avx512f"), n, a, b, out.as_mut_slice(),
+                |x, y, r| unsafe { fp32::add_f32_avx512::add(x, y, r) },
+            );
         }
 
         #[cfg(target_arch = "aarch64")]
@@ -240,6 +244,10 @@ fn bench_atan2_f32(c: &mut Criterion) {
             bench_binary_f32_variant(
                 &mut group, "avx2", is_x86_feature_detected!("avx2"), n, a, b, out.as_mut_slice(),
                 |y, x, r| unsafe { fp32::atan2_f32_avx2::atan2(y, x, r) },
+            );
+            bench_binary_f32_variant(
+                &mut group, "avx512", is_x86_feature_detected!("avx512f"), n, a, b, out.as_mut_slice(),
+                |y, x, r| unsafe { fp32::atan2_f32_avx512::atan2(y, x, r) },
             );
         }
 

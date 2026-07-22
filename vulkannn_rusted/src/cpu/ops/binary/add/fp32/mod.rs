@@ -15,6 +15,8 @@ pub mod add_f32_scalar;
 pub mod add_f32_avx1;
 #[cfg(target_arch = "x86_64")]
 pub mod add_f32_avx2;
+#[cfg(target_arch = "x86_64")]
+pub mod add_f32_avx512;
 
 #[cfg(target_arch = "aarch64")]
 pub mod add_f32_neon;
@@ -42,6 +44,8 @@ pub fn add(a: &[f32], b: &[f32], res: &mut [f32]) {
     let arch = crate::cpu::dispatch::active_arch();
 
     match arch {
+        #[cfg(target_arch = "x86_64")]
+        Arch::Avx512 if forced || a.len() >= NON_TEMPORAL_MIN => unsafe { add_f32_avx512::add(a, b, res) },
         #[cfg(target_arch = "x86_64")]
         Arch::Avx2 if forced || a.len() >= NON_TEMPORAL_MIN => unsafe { add_f32_avx2::add(a, b, res) },
         #[cfg(target_arch = "x86_64")]
