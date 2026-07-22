@@ -15,5 +15,5 @@ pub use crate::cpu_old::*;
 pub use ops::binary::add::add_bf16;
 pub use ops::binary::sub::sub_bf16;
 pub use ops::binary::mul::{mul_bf16, mul_f32, mul_f16, mul_i8, mul_broadcast_f32};
-pub use ops::binary::div::div_bf16;
+pub use ops::binary::div::{div_bf16, div_f32, div_f16, div_i8};
 pub use ops::binary::atan2::atan2_f32;
