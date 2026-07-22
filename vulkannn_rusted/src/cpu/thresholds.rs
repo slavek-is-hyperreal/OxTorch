@@ -143,6 +143,13 @@ define_thresholds! {
     MulI8 => ("MUL_I8", 4_000_000),
 
     // ---------------------------------------------------------------------
+    // POW (tensor ^ scalar exponent)
+    // ---------------------------------------------------------------------
+    // No legacy value — cpu_old pow_f32 had no rayon gate. 512_000 matches the
+    // migrated-tree convention (cpu/ops/binary/add).
+    PowF32 => ("POW_F32", 512_000),
+
+    // ---------------------------------------------------------------------
     // SCALAR (tensor ⊕ scalar broadcast path)
     // ---------------------------------------------------------------------
     /// src/cpu_old/ops/binary/scalar.rs:6 — legacy `PAR_THRESHOLD` in `scalar_op_f32`.

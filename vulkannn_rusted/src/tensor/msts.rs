@@ -426,7 +426,7 @@ impl Tensor {
                 (DataType::F32, "silu") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::silu_f32(tile.slot_res.as_slice_mut::<f32>()) },
                 (DataType::F32, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::tanh_f32(tile.slot_res.as_slice_mut::<f32>()) },
                 (DataType::F32, "exp") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::exp_f32(tile.slot_res.as_slice_mut::<f32>()) },
-                (DataType::F32, "pow") if other.is_none() => legacy_ops::pow_f32(tile.slot_a.as_slice::<f32>(), tile.slot_res.as_slice_mut::<f32>(), param1),
+                (DataType::F32, "pow") if other.is_none() => core_ops::binary::pow::pow_f32_serial(tile.slot_a.as_slice::<f32>(), tile.slot_res.as_slice_mut::<f32>(), param1),
 
                 (DataType::BF16, "relu") if other.is_none() => legacy_ops::relu_bf16(tile.slot_a.as_slice::<half::bf16>(), tile.slot_res.as_slice_mut::<half::bf16>()),
                 (DataType::BF16, "neg") if other.is_none() => legacy_ops::neg_bf16(tile.slot_a.as_slice::<half::bf16>(), tile.slot_res.as_slice_mut::<half::bf16>()),
