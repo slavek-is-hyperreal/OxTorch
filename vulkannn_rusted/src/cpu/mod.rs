@@ -19,3 +19,7 @@ pub use ops::binary::div::{div_bf16, div_f32, div_f16, div_i8};
 pub use ops::binary::atan2::atan2_f32;
 pub use ops::binary::pow::{pow_f32, pow_f32_inplace};
 pub use ops::binary::scalar::{scalar_op_f32, scalar_op_f16, scalar_op_bf16, scalar_op_i8};
+pub use ops::unary::relu::{
+    relu_f32, relu_f16, relu_bf16, relu_i8,
+    relu_f32_inplace, relu_f16_inplace, relu_bf16_inplace, relu_i8_inplace,
+};
