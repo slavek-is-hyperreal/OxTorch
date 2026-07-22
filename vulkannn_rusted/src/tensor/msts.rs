@@ -101,13 +101,13 @@ impl Tensor {
                     let (a, _) = self.get_slice_raw_f16();
                     let (b, _) = other.get_slice_raw_f16();
                     let (res, _) = res_tensor.get_slice_raw_mut_f16();
-                    legacy_ops::add_f16(a, b, res);
+                    core_ops::binary::add::add_f16(a, b, res);
                 },
                 (DataType::F16, "sub") => {
                     let (a, _) = self.get_slice_raw_f16();
                     let (b, _) = other.get_slice_raw_f16();
                     let (res, _) = res_tensor.get_slice_raw_mut_f16();
-                    legacy_ops::sub_f16(a, b, res);
+                    core_ops::binary::sub::sub_f16(a, b, res);
                 },
                 (DataType::F16, "mul") => {
                     let (a, _) = self.get_slice_raw_f16();
@@ -126,13 +126,13 @@ impl Tensor {
                     let (a, _) = self.get_slice_raw_i8();
                     let (b, _) = other.get_slice_raw_i8();
                     let (res, _) = res_tensor.get_slice_raw_mut_i8();
-                    legacy_ops::add_i8(a, b, res);
+                    core_ops::binary::add::add_i8(a, b, res);
                 },
                 (DataType::Int8, "sub") => {
                     let (a, _) = self.get_slice_raw_i8();
                     let (b, _) = other.get_slice_raw_i8();
                     let (res, _) = res_tensor.get_slice_raw_mut_i8();
-                    legacy_ops::sub_i8(a, b, res);
+                    core_ops::binary::sub::sub_i8(a, b, res);
                 },
                 (DataType::Int8, "mul") => {
                     let (a, _) = self.get_slice_raw_i8();
@@ -206,7 +206,7 @@ impl Tensor {
                 let b = bytemuck::cast_slice::<u8, i8>(buf_b.as_slice());
                 let mut buf_res = crate::io_uring_engine::AlignedBuffer::new(total_bytes);
                 let res = bytemuck::cast_slice_mut::<u8, i8>(buf_res.as_mut_slice());
-                legacy_ops::add_i8(a, b, res);
+                core_ops::binary::add::add_i8(a, b, res);
                 let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
                     IoEngineType::ReadWrite(e) => e.clone(),
                     _ => unreachable!(),
@@ -218,7 +218,7 @@ impl Tensor {
                 let b = bytemuck::cast_slice::<u8, i8>(buf_b.as_slice());
                 let mut buf_res = crate::io_uring_engine::AlignedBuffer::new(total_bytes);
                 let res = bytemuck::cast_slice_mut::<u8, i8>(buf_res.as_mut_slice());
-                legacy_ops::sub_i8(a, b, res);
+                core_ops::binary::sub::sub_i8(a, b, res);
                 let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
                     IoEngineType::ReadWrite(e) => e.clone(),
                     _ => unreachable!(),
@@ -408,13 +408,13 @@ impl Tensor {
                 (DataType::BF16, "mul") if other.is_some() => core_ops::mul_bf16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::BF16, "div") if other.is_some() => core_ops::div_bf16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
 
-                (DataType::F16, "add") if other.is_some() => legacy_ops::add_f16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
-                (DataType::F16, "sub") if other.is_some() => legacy_ops::sub_f16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
+                (DataType::F16, "add") if other.is_some() => core_ops::binary::add::add_f16_serial(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
+                (DataType::F16, "sub") if other.is_some() => core_ops::binary::sub::sub_f16_serial(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::F16, "mul") if other.is_some() => core_ops::binary::mul::mul_f16_serial(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::F16, "div") if other.is_some() => core_ops::binary::div::div_f16_serial(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
 
-                (DataType::Int8, "add") if other.is_some() => legacy_ops::add_i8(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
-                (DataType::Int8, "sub") if other.is_some() => legacy_ops::sub_i8(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
+                (DataType::Int8, "add") if other.is_some() => core_ops::binary::add::add_i8_serial(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
+                (DataType::Int8, "sub") if other.is_some() => core_ops::binary::sub::sub_i8_serial(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::Int8, "mul") if other.is_some() => core_ops::binary::mul::mul_i8_serial(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::Int8, "div") if other.is_some() => core_ops::binary::div::div_i8_serial(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
 
