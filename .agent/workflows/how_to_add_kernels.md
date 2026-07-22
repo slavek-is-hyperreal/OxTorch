@@ -48,4 +48,38 @@ Rejestruje operację w systemie OxTorch, kierując ją na ścieżkę **RAM-FastP
 4. **Sync**: Git Plumbing Merge po uzyskaniu 100% stabilności.
 
 ---
-*Status: OxTorch v3.8.0 Ready*
+
+## 5. Konwencje ustalone w migracji cpu_old→cpu (precedensy — nie rozstrzygaj od nowa)
+
+### 5.1 Szczebel i8 bez AVX2 = SSE4.1, NIE nowy wariant enuma `Arch`
+`_mm_max_epi8` / signed-byte SIMD to **SSE4.1**, nie SSE2 (SSE2 nie ma
+signed-byte max). Rozwiązanie przyjęte dla `relu_i8`: osobny plik
+`[op]_i8_sse41.rs` dispatchowany **bezpośrednim** `is_x86_feature_detected!("sse4.1")`
+w `i8/mod.rs` — NIE przez `active_arch()`, NIE jako `#[cfg]` wewnątrz pliku sse2,
+NIE jako nowy wariant enuma `Arch`. Enum `Arch` (Scalar/Swar/Sse2/Avx1/Avx2/
+Avx512/Neon) pozostaje nietknięty. Kolejne opy i8 mają iść tym samym wzorcem.
+
+### 5.2 SWAR wraca do macierzy tylko ze zweryfikowanego źródła
+Bit-trick SWAR (GPR-only fallback) wolno dodać **wyłącznie** gdy pochodzi z
+autorytatywnego źródła (np. Hacker's Delight z numerem strony), NIE z wyobraźni,
+i z testem różnicowym vs scalar. Dla i8 (256×256 kombinacji) test jest wyczerpujący
+— użyj tego. Powód: `add_i8_swar` w legacy miał bug carry-leak między bajtami
+(patrz `cpu/ops/binary/add/i8/mod.rs`). `TODO` z tą adnotacją > kernel z wiarą.
+
+### 5.3 Transcendentalne (exp/sigmoid/silu/tanh/gelu): tolerancja i wyrocznia
+Reguła 1 (transkrybuj legacy) jest **nadpisana** dla tej rodziny — współczynniki
+z Cephes, gate = parity-vs-oracle (f64→f32) w granicy ULP, NIE vs legacy.
+Pełna polityka + granice ULP + decyzja gelu=tanh-approx: `docs/kernel_specs/README.md`.
+Każdy op ma `docs/kernel_specs/{op}_spec.md`.
+
+### 5.4 Rozbieżności vs torch (div/0→0, relu(NaN)→0, …)
+Nie „naprawiaj" ich w migracji (Reguła 6). Dopisz do `docs/known_divergences.md`
+z decyzją KEEP/FIX/OPEN. Jeden świadomy przegląd po Fali 6.
+
+### 5.5 Dwie powierzchnie unary
+Każdy op unary eksponuje out-of-place `[op]` ORAZ in-place `[op]_inplace` na
+Tier II i Tier III (msts woła in-place). Wzorzec: makro `tier3_unary!` w
+`unary/relu/mod.rs`.
+
+---
+*Status: OxTorch v3.8.0 Ready (konwencje migracyjne §5 dodane 2026-07)*
