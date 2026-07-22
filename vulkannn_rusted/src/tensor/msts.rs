@@ -88,7 +88,7 @@ impl Tensor {
                     let (a, _) = self.get_slice_raw_f32();
                     let (b, _) = other.get_slice_raw_f32();
                     let (res, _) = res_tensor.get_slice_raw_mut_f32();
-                    legacy_ops::mul_f32(a, b, res);
+                    core_ops::binary::mul::mul_f32(a, b, res);
                 },
                 (DataType::F32, "div") => {
                     let (a, _) = self.get_slice_raw_f32();
@@ -113,7 +113,7 @@ impl Tensor {
                     let (a, _) = self.get_slice_raw_f16();
                     let (b, _) = other.get_slice_raw_f16();
                     let (res, _) = res_tensor.get_slice_raw_mut_f16();
-                    legacy_ops::mul_f16(a, b, res);
+                    core_ops::binary::mul::mul_f16(a, b, res);
                 },
                 (DataType::F16, "div") => {
                     let (a, _) = self.get_slice_raw_f16();
@@ -138,7 +138,7 @@ impl Tensor {
                     let (a, _) = self.get_slice_raw_i8();
                     let (b, _) = other.get_slice_raw_i8();
                     let (res, _) = res_tensor.get_slice_raw_mut_i8();
-                    legacy_ops::mul_i8(a, b, res);
+                    core_ops::binary::mul::mul_i8(a, b, res);
                 },
                 
                 _ => return Err(pyo3::exceptions::PyValueError::new_err(format!("RAM-FastPath not implemented for {:?} {}", self.dtype, op))),
@@ -230,7 +230,7 @@ impl Tensor {
                 let b = bytemuck::cast_slice::<u8, i8>(buf_b.as_slice());
                 let mut buf_res = crate::io_uring_engine::AlignedBuffer::new(total_bytes);
                 let res = bytemuck::cast_slice_mut::<u8, i8>(buf_res.as_mut_slice());
-                legacy_ops::mul_i8(a, b, res);
+                core_ops::binary::mul::mul_i8(a, b, res);
                 let engine_out = match res_tensor.ssd_engine.as_ref().unwrap() {
                     IoEngineType::ReadWrite(e) => e.clone(),
                     _ => unreachable!(),
@@ -399,7 +399,7 @@ impl Tensor {
             // EXHAUSTIVE BINARY DISPATCH (F32, BF16, F16, Int8)
                 (DataType::F32, "add") if other.is_some() => core_ops::add_f32(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::F32, "sub") if other.is_some() => core_ops::sub_f32(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
-                (DataType::F32, "mul") if other.is_some() => legacy_ops::mul_f32(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
+                (DataType::F32, "mul") if other.is_some() => core_ops::binary::mul::mul_f32_serial(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::F32, "div") if other.is_some() => legacy_ops::div_f32(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::F32, "atan2") if other.is_some() => core_ops::atan2_f32(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
 
@@ -410,12 +410,12 @@ impl Tensor {
 
                 (DataType::F16, "add") if other.is_some() => legacy_ops::add_f16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::F16, "sub") if other.is_some() => legacy_ops::sub_f16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
-                (DataType::F16, "mul") if other.is_some() => legacy_ops::mul_f16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
+                (DataType::F16, "mul") if other.is_some() => core_ops::binary::mul::mul_f16_serial(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::F16, "div") if other.is_some() => legacy_ops::div_f16(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
 
                 (DataType::Int8, "add") if other.is_some() => legacy_ops::add_i8(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::Int8, "sub") if other.is_some() => legacy_ops::sub_i8(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
-                (DataType::Int8, "mul") if other.is_some() => legacy_ops::mul_i8(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
+                (DataType::Int8, "mul") if other.is_some() => core_ops::binary::mul::mul_i8_serial(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
                 (DataType::Int8, "div") if other.is_some() => legacy_ops::div_i8(tile.slot_a.as_slice(), tile.slot_b.as_slice(), tile.slot_res.as_slice_mut()),
 
                 // EXHAUSTIVE UNARY DISPATCH (relu, gelu, sigmoid, silu, tanh, exp, neg, pow)

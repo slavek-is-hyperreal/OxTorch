@@ -218,6 +218,55 @@ fn bench_add_f32(c: &mut Criterion) {
     group.finish();
 }
 
+// mul (memory-bound; plain cached stores — expect SIMD >= scalar at all N)
+fn bench_mul_f32(c: &mut Criterion) {
+    use vulkannn_rusted::cpu::ops::binary::mul::fp32;
+
+    let mut group = c.benchmark_group("mul_f32");
+    for &n in SIZES {
+        let a = Aligned64::filled(n, 0x9E37_79B9);
+        let b = Aligned64::filled(n, 0x85EB_CA6B);
+        let mut out = Aligned64::new(n);
+        let (a, b) = (a.as_slice(), b.as_slice());
+        group.throughput(Throughput::Bytes((n * 4 * 3) as u64));
+
+        bench_binary_f32_variant(
+            &mut group, "scalar", true, n, a, b, out.as_mut_slice(),
+            |x, y, r| fp32::mul_f32_scalar::mul(x, y, r),
+        );
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            bench_binary_f32_variant(
+                &mut group, "sse2", is_x86_feature_detected!("sse2"), n, a, b, out.as_mut_slice(),
+                |x, y, r| unsafe { fp32::mul_f32_sse2::mul_f32_sse2(x, y, r) },
+            );
+            bench_binary_f32_variant(
+                &mut group, "avx1", is_x86_feature_detected!("avx"), n, a, b, out.as_mut_slice(),
+                |x, y, r| unsafe { fp32::mul_f32_avx1::mul_f32_avx1(x, y, r) },
+            );
+            bench_binary_f32_variant(
+                &mut group, "avx2", is_x86_feature_detected!("avx2"), n, a, b, out.as_mut_slice(),
+                |x, y, r| unsafe { fp32::mul_f32_avx2::mul_f32_avx2(x, y, r) },
+            );
+            bench_binary_f32_variant(
+                &mut group, "avx512", is_x86_feature_detected!("avx512f"), n, a, b, out.as_mut_slice(),
+                |x, y, r| unsafe { fp32::mul_f32_avx512::mul_f32_avx512(x, y, r) },
+            );
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            bench_binary_f32_variant(
+                &mut group, "neon", std::arch::is_aarch64_feature_detected!("neon"),
+                n, a, b, out.as_mut_slice(),
+                |x, y, r| unsafe { fp32::mul_f32_neon::mul_f32_neon(x, y, r) },
+            );
+        }
+    }
+    group.finish();
+}
+
 // atan2 (compute-bound: polynomial eval — expect a clean SIMD win at every N)
 fn bench_atan2_f32(c: &mut Criterion) {
     use vulkannn_rusted::cpu::ops::binary::atan2::fp32;
@@ -323,8 +372,9 @@ fn bench_dispatch_overhead(c: &mut Criterion) {
 
 criterion_group!(sub_f32, bench_sub_f32);
 criterion_group!(add_f32, bench_add_f32);
+criterion_group!(mul_f32, bench_mul_f32);
 criterion_group!(atan2_f32, bench_atan2_f32);
 criterion_group!(sub_bf16, bench_sub_bf16);
 criterion_group!(dispatch_overhead, bench_dispatch_overhead);
 
-criterion_main!(sub_f32, add_f32, atan2_f32, sub_bf16, dispatch_overhead);
+criterion_main!(sub_f32, add_f32, mul_f32, atan2_f32, sub_bf16, dispatch_overhead);
