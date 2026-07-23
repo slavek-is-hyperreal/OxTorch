@@ -44,18 +44,49 @@ exactly the class Krok C exists to catch.
 The golden test currently **locks the reversed (buggy) reality** so it can't
 change silently; flip its assertion to `out == expected` once fixed.
 
-### Open question for the user (blocks Wave 5)
-Which layout is canonical?
-- **(A)** Models load pre-packed from safetensors already in the compute kernels'
-  MSB-first order ⇒ the compute kernels are correct and
-  `execute_to_bitnet` (the f32→bitnet quantiser) is the buggy path (its
-  "matches safetensors" comment would be wrong). Fix = flip the packer's shifts.
-- **(B)** `execute_to_bitnet`'s LSB-first "matches safetensors" is correct ⇒ ALL
-  four compute kernels read rows reversed. Fix = flip the compute shifts
-  (`>>6`↔`>>0`, `>>4`↔`>>2`) in swar/avx2/sse/scalar.
+### RESOLUTION (ground truth, 2026-07) — canonical = MSB-first ⇒ Option A
+Source: Microsoft **BitNet** `src/ggml-bitnet-mad.cpp` (`quantize_i2_s` +
+`ggml_vec_dot_i2_i8_s_1x1` / `_1x4` / `_1xN` / `_Nx1`, main branch,
+https://github.com/microsoft/BitNet/blob/main/src/ggml-bitnet-mad.cpp):
+- Packer: `i2_weight[…] |= q8[…] << (6 - 2*group_idx)` ⇒ the FIRST element
+  (`group_idx 0`) lands in bits **[7:6] (MSB)**; the last (`group_idx 3`) in
+  **[1:0] (LSB)**.
+- Kernel: `xq8_0 = (byte >> 6) & 0x03` (first element ← MSB). Packer and kernel
+  agree with each other — MSB-first is the canonical convention this ecosystem
+  (bitnet.cpp / GGUF I2_S) is built on.
 
-Either fix is one-directional and small, but choosing WRONG silently permutes
-every BitNet layer's output rows. Needs a ground-truth check against a real
-pre-packed safetensors BitNet weight (or the model author's intent) — not a
-guess. Until decided, bitnet migration is on hold; matmul and quantization (the
-other Wave-5 items) are independent and can proceed first.
+Mapped onto OxTorch:
+- OxTorch **compute kernels** (swar/avx2/sse/scalar) read row0 from `(byte>>6)&3`
+  = **MSB-first ⇒ they MATCH the canonical convention and are CORRECT.**
+- OxTorch **packer** `execute_to_bitnet` writes row0 into `(q0<<0)` = LSB ⇒ it is
+  the OUTLIER. **This is Option A: fix the PACKER, not the kernels.**
+
+**Recommended fix (deferred — see caveats):** in `tensor/conversion.rs::
+execute_to_bitnet` (BitNet2), pack MSB-first:
+`(q0<<6)|(q1<<4)|(q2<<2)|(q3<<0)` instead of `(q0<<0)|(q1<<2)|(q2<<4)|(q3<<6)`.
+That makes OxTorch internally consistent AND aligned with bitnet.cpp/GGUF.
+
+### Two caveats before APPLYING the fix (why it is not applied yet)
+1. **Grouping is a separate axis, unverified.** Microsoft I2_S packs 4 *strided*
+   elements per byte — `{p, p+32, p+64, p+96}` from a 128-element block
+   (`group_pos = j % 32`, `group_idx = j / 32`) — NOT 4 consecutive weights.
+   OxTorch's `execute_to_bitnet` packs 4 *consecutive rows* per byte
+   (row-interleaved 1×4). So OxTorch's byte-*grouping* is its own format, not
+   GGUF I2_S. Pack and compute in OxTorch AGREE on the grouping (both use
+   4-consecutive-rows), so this does not cause an internal bug — but it means
+   OxTorch weights are NOT byte-compatible with GGUF I2_S, only with themselves.
+2. **`.safetensors` provenance unconfirmed.** The packer's "matches safetensors"
+   comment points at the HF `microsoft/bitnet-b1.58-2B-4T` (non-GGUF) format. The
+   GGUF I2_S source above is *very strong corroborating evidence* for MSB-first,
+   but does not by itself prove the byte order inside a real HF `.safetensors`
+   produced by a different converter. Before flipping the packer, byte-inspect a
+   real pre-packed HF tensor (or the HF repo's packing code) to confirm MSB-first
+   there too.
+
+### Consequence for Wave 5
+- The **compute kernels are established CORRECT** (MSB-first), so **bitnet
+  compute may migrate as move-not-rewrite** without change.
+- The **packer fix (Option A) is deferred** pending the real-safetensors byte
+  check (caveat 2). It is a `tensor/conversion.rs` change, separable from the
+  cpu-kernel migration. Flagged, not silently dropped.
+- **matmul and quantization are independent** and proceed first (user directive).
