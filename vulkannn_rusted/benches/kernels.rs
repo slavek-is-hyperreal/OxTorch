@@ -423,8 +423,30 @@ criterion_group!(sub_f32, bench_sub_f32);
 criterion_group!(add_f32, bench_add_f32);
 criterion_group!(mul_f32, bench_mul_f32);
 criterion_group!(div_f32, bench_div_f32);
+criterion_group!(sum_f32, bench_sum_f32);
 criterion_group!(atan2_f32, bench_atan2_f32);
 criterion_group!(sub_bf16, bench_sub_bf16);
 criterion_group!(dispatch_overhead, bench_dispatch_overhead);
 
-criterion_main!(sub_f32, add_f32, mul_f32, div_f32, atan2_f32, sub_bf16, dispatch_overhead);
+criterion_main!(sub_f32, add_f32, mul_f32, div_f32, sum_f32, atan2_f32, sub_bf16, dispatch_overhead);
+
+// sum (f64-accumulate reduction) — scalar naive f64 vs avx1 widen-accumulate.
+fn bench_sum_f32(c: &mut Criterion) {
+    use vulkannn_rusted::cpu::ops::reduction::sum::fp32;
+    let mut group = c.benchmark_group("sum_f32");
+    for &n in SIZES {
+        let a = Aligned64::filled(n, 0x9E37_79B9);
+        let a = a.as_slice();
+        group.throughput(Throughput::Bytes((n * 4) as u64));
+        group.bench_with_input(BenchmarkId::new("scalar", n), &n, |b, _| {
+            b.iter(|| black_box(fp32::sum_f32_scalar::sum(black_box(a))))
+        });
+        #[cfg(target_arch = "x86_64")]
+        if is_x86_feature_detected!("avx") {
+            group.bench_with_input(BenchmarkId::new("avx1", n), &n, |b, _| {
+                b.iter(|| black_box(unsafe { fp32::sum_f32_avx1::sum(black_box(a)) }))
+            });
+        }
+    }
+    group.finish();
+}
