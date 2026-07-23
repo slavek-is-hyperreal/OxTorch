@@ -52,3 +52,6 @@ pub use ops::reduction::sum::{sum_f32, sum_f16, sum_bf16, sum_i8, sum_f32_acc, s
 pub use ops::reduction::max::{max_f32, max_f16, max_bf16, max_i8};
 pub use ops::reduction::argmax::{argmax_f32, argmax_f16};
 pub use ops::reduction::softmax::{softmax_f32, softmax_f16, softmax_bf16, softmax_i8};
+pub use ops::norm::layer_norm::{layer_norm_f32, layer_norm_f16, layer_norm_bf16};
+pub use ops::norm::rms_norm::{rms_norm_f32, rms_norm_f16, rms_norm_bf16};
+pub use ops::norm::sub_layer_norm::sub_layer_norm_f32;
