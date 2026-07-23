@@ -51,6 +51,7 @@ fn cpu_unary_f32(op: &str, x: Vec<f32>) -> PyResult<Vec<f32>> {
         "exp" => cpu::exp_f32(&x, &mut out),
         "sigmoid" => cpu::sigmoid_f32(&x, &mut out),
         "silu" => cpu::silu_f32(&x, &mut out),
+        "tanh" => cpu::tanh_f32(&x, &mut out),
         _ => return Err(pyo3::exceptions::PyValueError::new_err(format!("cpu_unary_f32: unknown op {op}"))),
     }
     Ok(out)

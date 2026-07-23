@@ -186,6 +186,13 @@ define_thresholds! {
     SiluF32 => ("SILU_F32", 512_000),
 
     // ---------------------------------------------------------------------
+    // TANH (unary) — no explicit legacy gate; 512_000 = migrated convention.
+    // ---------------------------------------------------------------------
+    TanhBf16 => ("TANH_BF16", 512_000),
+    TanhF16 => ("TANH_F16", 512_000),
+    TanhF32 => ("TANH_F32", 512_000),
+
+    // ---------------------------------------------------------------------
     // SCALAR (tensor ⊕ scalar broadcast path)
     // ---------------------------------------------------------------------
     /// src/cpu_old/ops/binary/scalar.rs:6 — legacy `PAR_THRESHOLD` in `scalar_op_f32`.

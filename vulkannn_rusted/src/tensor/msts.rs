@@ -275,7 +275,7 @@ impl Tensor {
             (DataType::BF16, "exp") => core_ops::unary::exp::exp_bf16_inplace(buf.as_slice_mut_generic()),
             (DataType::BF16, "sigmoid") => core_ops::unary::sigmoid::sigmoid_bf16_inplace(buf.as_slice_mut_generic()),
             (DataType::BF16, "silu") => core_ops::unary::silu::silu_bf16_inplace(buf.as_slice_mut_generic()),
-            (DataType::BF16, "tanh") => legacy_ops::tanh_bf16(buf.as_slice_mut_generic()),
+            (DataType::BF16, "tanh") => core_ops::unary::tanh::tanh_bf16_inplace(buf.as_slice_mut_generic()),
             (DataType::BF16, "gelu") => legacy_ops::gelu_bf16(buf.as_slice_mut_generic()),
 
             (DataType::F32, "relu") => {
@@ -293,7 +293,7 @@ impl Tensor {
             (DataType::F32, "exp") => core_ops::unary::exp::exp_f32_inplace(buf.as_slice_mut_generic()),
             (DataType::F32, "sigmoid") => core_ops::unary::sigmoid::sigmoid_f32_inplace(buf.as_slice_mut_generic()),
             (DataType::F32, "silu") => core_ops::unary::silu::silu_f32_inplace(buf.as_slice_mut_generic()),
-            (DataType::F32, "tanh") => legacy_ops::tanh_f32(buf.as_slice_mut_generic()),
+            (DataType::F32, "tanh") => core_ops::unary::tanh::tanh_f32_inplace(buf.as_slice_mut_generic()),
             (DataType::F32, "gelu") => legacy_ops::gelu_f32(buf.as_slice_mut_generic()),
             
             (DataType::F16, "relu") => {
@@ -424,7 +424,7 @@ impl Tensor {
                 (DataType::F32, "gelu") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::gelu_f32(tile.slot_res.as_slice_mut::<f32>()) },
                 (DataType::F32, "sigmoid") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::sigmoid::sigmoid_f32_inplace_serial(tile.slot_res.as_slice_mut::<f32>()) },
                 (DataType::F32, "silu") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::silu::silu_f32_inplace_serial(tile.slot_res.as_slice_mut::<f32>()) },
-                (DataType::F32, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::tanh_f32(tile.slot_res.as_slice_mut::<f32>()) },
+                (DataType::F32, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::tanh::tanh_f32_inplace_serial(tile.slot_res.as_slice_mut::<f32>()) },
                 (DataType::F32, "exp") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::exp::exp_f32_inplace_serial(tile.slot_res.as_slice_mut::<f32>()) },
                 (DataType::F32, "pow") if other.is_none() => core_ops::binary::pow::pow_f32_serial(tile.slot_a.as_slice::<f32>(), tile.slot_res.as_slice_mut::<f32>(), param1),
 
@@ -433,7 +433,7 @@ impl Tensor {
                 (DataType::BF16, "gelu") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::gelu_bf16(tile.slot_res.as_slice_mut::<half::bf16>()) },
                 (DataType::BF16, "sigmoid") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::sigmoid::sigmoid_bf16_inplace_serial(tile.slot_res.as_slice_mut::<half::bf16>()) },
                 (DataType::BF16, "silu") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::silu::silu_bf16_inplace_serial(tile.slot_res.as_slice_mut::<half::bf16>()) },
-                (DataType::BF16, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::tanh_bf16(tile.slot_res.as_slice_mut::<half::bf16>()) },
+                (DataType::BF16, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::tanh::tanh_bf16_inplace_serial(tile.slot_res.as_slice_mut::<half::bf16>()) },
                 (DataType::BF16, "exp") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::exp::exp_bf16_inplace_serial(tile.slot_res.as_slice_mut::<half::bf16>()) },
 
                 (DataType::F16, "relu") if other.is_none() => core_ops::unary::relu::relu_f16_serial(tile.slot_a.as_slice::<half::f16>(), tile.slot_res.as_slice_mut::<half::f16>()),
@@ -441,13 +441,13 @@ impl Tensor {
                 (DataType::F16, "gelu") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::gelu_f16(tile.slot_res.as_slice_mut::<half::f16>()) },
                 (DataType::F16, "sigmoid") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::sigmoid::sigmoid_f16_inplace_serial(tile.slot_res.as_slice_mut::<half::f16>()) },
                 (DataType::F16, "silu") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::silu::silu_f16_inplace_serial(tile.slot_res.as_slice_mut::<half::f16>()) },
-                (DataType::F16, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::tanh_f16(tile.slot_res.as_slice_mut::<half::f16>()) },
+                (DataType::F16, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::tanh::tanh_f16_inplace_serial(tile.slot_res.as_slice_mut::<half::f16>()) },
                 (DataType::F16, "exp") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::exp::exp_f16_inplace_serial(tile.slot_res.as_slice_mut::<half::f16>()) },
 
                 (DataType::Int8, "relu") if other.is_none() => core_ops::unary::relu::relu_i8_serial(tile.slot_a.as_slice::<i8>(), tile.slot_res.as_slice_mut::<i8>()),
                 (DataType::Int8, "sigmoid") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::sigmoid::sigmoid_i8(tile.slot_res.as_slice_mut::<i8>()) },
                 (DataType::Int8, "silu") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::silu::silu_i8(tile.slot_res.as_slice_mut::<i8>()) },
-                (DataType::Int8, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::tanh_i8(tile.slot_res.as_slice_mut::<i8>()) },
+                (DataType::Int8, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::tanh::tanh_i8(tile.slot_res.as_slice_mut::<i8>()) },
 
                 _ => return Err(pyo3::exceptions::PyValueError::new_err(format!("MSTS v2 Fallback not covered: {:?} {}", self.dtype, op))),
             }

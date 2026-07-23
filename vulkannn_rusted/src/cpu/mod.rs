@@ -40,3 +40,7 @@ pub use ops::unary::silu::{
     silu_f32, silu_f16, silu_bf16, silu_i8,
     silu_f32_inplace, silu_f16_inplace, silu_bf16_inplace,
 };
+pub use ops::unary::tanh::{
+    tanh_f32, tanh_f16, tanh_bf16, tanh_i8,
+    tanh_f32_inplace, tanh_f16_inplace, tanh_bf16_inplace,
+};

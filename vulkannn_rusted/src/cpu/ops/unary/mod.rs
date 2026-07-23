@@ -5,6 +5,7 @@ pub mod neg;
 pub mod exp;
 pub mod sigmoid;
 pub mod silu;
+pub mod tanh;
 
 pub use relu::{
     relu_f32, relu_f16, relu_bf16, relu_i8,
@@ -36,4 +37,10 @@ pub use silu::{
     silu_f32_inplace, silu_f16_inplace, silu_bf16_inplace,
     silu_f32_serial, silu_f32_inplace_serial,
     silu_f16_inplace_serial, silu_bf16_inplace_serial,
+};
+pub use tanh::{
+    tanh_f32, tanh_f16, tanh_bf16, tanh_i8,
+    tanh_f32_inplace, tanh_f16_inplace, tanh_bf16_inplace,
+    tanh_f32_serial, tanh_f32_inplace_serial,
+    tanh_f16_inplace_serial, tanh_bf16_inplace_serial,
 };
