@@ -9,7 +9,7 @@ use std::arch::aarch64::*;
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-unsafe fn exp4(x: float32x4_t) -> float32x4_t {
+pub(crate) unsafe fn exp4(x: float32x4_t) -> float32x4_t {
     let log2ef = vdupq_n_f32(1.44269504088896341);
     let c1 = vdupq_n_f32(0.693359375);
     let c2 = vdupq_n_f32(-2.12194440e-4);

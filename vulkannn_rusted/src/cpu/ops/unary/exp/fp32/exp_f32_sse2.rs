@@ -9,7 +9,7 @@ use std::arch::x86_64::*;
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
-unsafe fn exp4(x: __m128) -> __m128 {
+pub(crate) unsafe fn exp4(x: __m128) -> __m128 {
     let log2ef = _mm_set1_ps(1.44269504088896341);
     let c1 = _mm_set1_ps(0.693359375);
     let c2 = _mm_set1_ps(-2.12194440e-4);

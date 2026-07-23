@@ -10,7 +10,7 @@ use std::arch::x86_64::*;
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn exp8(x: __m256) -> __m256 {
+pub(crate) unsafe fn exp8(x: __m256) -> __m256 {
     let log2ef = _mm256_set1_ps(1.44269504088896341);
     let c1 = _mm256_set1_ps(0.693359375);
     let c2 = _mm256_set1_ps(-2.12194440e-4);

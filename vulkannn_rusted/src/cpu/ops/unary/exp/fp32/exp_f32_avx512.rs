@@ -9,7 +9,7 @@ use std::arch::x86_64::*;
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 #[inline]
-unsafe fn exp16(x: __m512) -> __m512 {
+pub(crate) unsafe fn exp16(x: __m512) -> __m512 {
     let log2ef = _mm512_set1_ps(1.44269504088896341);
     let c1 = _mm512_set1_ps(0.693359375);
     let c2 = _mm512_set1_ps(-2.12194440e-4);

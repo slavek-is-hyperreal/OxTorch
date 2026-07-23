@@ -172,6 +172,13 @@ define_thresholds! {
     ReluI8 => ("RELU_I8", 512_000),
 
     // ---------------------------------------------------------------------
+    // SIGMOID (unary) — no explicit legacy gate; 512_000 = migrated convention.
+    // ---------------------------------------------------------------------
+    SigmoidBf16 => ("SIGMOID_BF16", 512_000),
+    SigmoidF16 => ("SIGMOID_F16", 512_000),
+    SigmoidF32 => ("SIGMOID_F32", 512_000),
+
+    // ---------------------------------------------------------------------
     // SCALAR (tensor ⊕ scalar broadcast path)
     // ---------------------------------------------------------------------
     /// src/cpu_old/ops/binary/scalar.rs:6 — legacy `PAR_THRESHOLD` in `scalar_op_f32`.

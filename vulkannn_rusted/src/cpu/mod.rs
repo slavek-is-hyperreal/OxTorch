@@ -31,3 +31,7 @@ pub use ops::unary::exp::{
     exp_f32, exp_f16, exp_bf16,
     exp_f32_inplace, exp_f16_inplace, exp_bf16_inplace,
 };
+pub use ops::unary::sigmoid::{
+    sigmoid_f32, sigmoid_f16, sigmoid_bf16, sigmoid_i8,
+    sigmoid_f32_inplace, sigmoid_f16_inplace, sigmoid_bf16_inplace,
+};

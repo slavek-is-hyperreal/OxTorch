@@ -49,6 +49,7 @@ fn cpu_unary_f32(op: &str, x: Vec<f32>) -> PyResult<Vec<f32>> {
     let mut out = vec![0f32; x.len()];
     match op {
         "exp" => cpu::exp_f32(&x, &mut out),
+        "sigmoid" => cpu::sigmoid_f32(&x, &mut out),
         _ => return Err(pyo3::exceptions::PyValueError::new_err(format!("cpu_unary_f32: unknown op {op}"))),
     }
     Ok(out)
