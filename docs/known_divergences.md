@@ -71,6 +71,19 @@ agreed to correct post-migration. **OPEN** = not yet decided.
 - **Post-Wave-6 note:** recommended FIX (align with torch NaN propagation),
   reviewed together with §2 relu(NaN).
 
+## 6. `argmax` ignores NaN (torch: returns the NaN index) — OPEN, leaning FIX
+
+- **Where:** `cpu/ops/reduction/argmax/*`. The scan uses `val > max_val` (strict,
+  from -inf), so a NaN never updates the running max: argmax([1, NaN, 3]) = 2
+  (index of 3). torch treats NaN as the maximum and returns its index (= 1).
+  (Tie-breaking matches torch: both return the FIRST max index — argmax([3,1,3,3])
+  = 0 — so ties are fine; only NaN diverges.)
+- **Legacy:** identical. Transcribed verbatim (Rule 6).
+- **Severity:** medium — a NaN in the row is silently skipped rather than
+  surfaced. Same family as max §5 / relu §2.
+- **Post-Wave-6 note:** recommended FIX (treat NaN as max, matching torch),
+  reviewed with §5.
+
 ## 3. `exp` (and dependents) — SIMD polynomial vs scalar `std::exp` — OPEN
 
 - **Where:** `cpu/ops/unary/exp` and everything built on it (sigmoid, silu,
