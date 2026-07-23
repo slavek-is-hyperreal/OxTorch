@@ -10,7 +10,7 @@ use crate::cpu::ops::unary::exp::fp32::exp_f32_sse2::exp4;
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
-unsafe fn sig4(x: __m128) -> __m128 {
+pub(crate) unsafe fn sig4(x: __m128) -> __m128 {
     let one = _mm_set1_ps(1.0);
     let z = exp4(_mm_or_ps(x, _mm_set1_ps(-0.0))); // exp(-|x|), overflow-free
     let mask = _mm_cmplt_ps(x, _mm_setzero_ps());  // x < 0

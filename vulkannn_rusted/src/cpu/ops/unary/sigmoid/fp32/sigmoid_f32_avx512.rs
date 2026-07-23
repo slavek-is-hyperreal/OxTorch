@@ -9,7 +9,7 @@ use crate::cpu::ops::unary::exp::fp32::exp_f32_avx512::exp16;
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
-unsafe fn sig16(x: __m512) -> __m512 {
+pub(crate) unsafe fn sig16(x: __m512) -> __m512 {
     let one = _mm512_set1_ps(1.0);
     let z = exp16(_mm512_castsi512_ps(_mm512_or_si512(_mm512_castps_si512(x), _mm512_castps_si512(_mm512_set1_ps(-0.0)))));
     let mask = _mm512_cmp_ps_mask::<_CMP_LT_OQ>(x, _mm512_setzero_ps());

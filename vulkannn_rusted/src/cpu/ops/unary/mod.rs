@@ -4,6 +4,7 @@ pub mod relu;
 pub mod neg;
 pub mod exp;
 pub mod sigmoid;
+pub mod silu;
 
 pub use relu::{
     relu_f32, relu_f16, relu_bf16, relu_i8,
@@ -29,4 +30,10 @@ pub use sigmoid::{
     sigmoid_f32_inplace, sigmoid_f16_inplace, sigmoid_bf16_inplace,
     sigmoid_f32_serial, sigmoid_f32_inplace_serial,
     sigmoid_f16_inplace_serial, sigmoid_bf16_inplace_serial,
+};
+pub use silu::{
+    silu_f32, silu_f16, silu_bf16, silu_i8,
+    silu_f32_inplace, silu_f16_inplace, silu_bf16_inplace,
+    silu_f32_serial, silu_f32_inplace_serial,
+    silu_f16_inplace_serial, silu_bf16_inplace_serial,
 };

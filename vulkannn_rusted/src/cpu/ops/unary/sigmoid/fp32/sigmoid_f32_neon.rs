@@ -8,7 +8,7 @@ use std::arch::aarch64::*;
 use crate::cpu::ops::unary::exp::fp32::exp_f32_neon::exp4;
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn sig4(x: float32x4_t) -> float32x4_t {
+pub(crate) unsafe fn sig4(x: float32x4_t) -> float32x4_t {
     let one = vdupq_n_f32(1.0);
     let neg_abs = vnegq_f32(vabsq_f32(x));
     let z = exp4(neg_abs);

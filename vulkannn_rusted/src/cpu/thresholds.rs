@@ -179,6 +179,13 @@ define_thresholds! {
     SigmoidF32 => ("SIGMOID_F32", 512_000),
 
     // ---------------------------------------------------------------------
+    // SILU (unary) — no explicit legacy gate; 512_000 = migrated convention.
+    // ---------------------------------------------------------------------
+    SiluBf16 => ("SILU_BF16", 512_000),
+    SiluF16 => ("SILU_F16", 512_000),
+    SiluF32 => ("SILU_F32", 512_000),
+
+    // ---------------------------------------------------------------------
     // SCALAR (tensor ⊕ scalar broadcast path)
     // ---------------------------------------------------------------------
     /// src/cpu_old/ops/binary/scalar.rs:6 — legacy `PAR_THRESHOLD` in `scalar_op_f32`.

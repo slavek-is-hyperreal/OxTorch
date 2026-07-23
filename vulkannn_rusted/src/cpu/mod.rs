@@ -36,3 +36,7 @@ pub use ops::unary::sigmoid::{
     sigmoid_f32, sigmoid_f16, sigmoid_bf16, sigmoid_i8,
     sigmoid_f32_inplace, sigmoid_f16_inplace, sigmoid_bf16_inplace,
 };
+pub use ops::unary::silu::{
+    silu_f32, silu_f16, silu_bf16, silu_i8,
+    silu_f32_inplace, silu_f16_inplace, silu_bf16_inplace,
+};

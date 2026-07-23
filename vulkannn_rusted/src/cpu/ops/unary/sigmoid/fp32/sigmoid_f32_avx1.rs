@@ -9,7 +9,7 @@ use crate::cpu::ops::unary::exp::fp32::exp_f32_avx1::exp8;
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx")]
-unsafe fn sig8(x: __m256) -> __m256 {
+pub(crate) unsafe fn sig8(x: __m256) -> __m256 {
     let one = _mm256_set1_ps(1.0);
     let z = exp8(_mm256_or_ps(x, _mm256_set1_ps(-0.0))); // exp(-|x|)
     let mask = _mm256_cmp_ps::<_CMP_LT_OQ>(x, _mm256_setzero_ps());
