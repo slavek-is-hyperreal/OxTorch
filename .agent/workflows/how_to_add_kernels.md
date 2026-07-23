@@ -76,6 +76,28 @@ Każdy op ma `docs/kernel_specs/{op}_spec.md`.
 Nie „naprawiaj" ich w migracji (Reguła 6). Dopisz do `docs/known_divergences.md`
 z decyzją KEEP/FIX/OPEN. Jeden świadomy przegląd po Fali 6.
 
+### 5.6 SWAR — lista zakazów (Grupa F katalogu; szczepionka)
+Prymitywy SWAR żyją w `src/cpu/swar.rs`, każdy z formułą, źródłem z
+`docs/research/swar_catalog.md` i **wyczerpującym testem** (2^16 par/lane vs
+scalar). Bramka: 100% wyczerpujący pas. Ale są operacje, których **NIE WOLNO**
+robić w SWAR — dla każdej powód:
+- **F1 i8×i8→i8 mnożenie:** produkt 8×8 to 16 bitów, sąsiednie lane'y nachodzą;
+  brak maskowania rozdzielającego w jednym mnożeniu. → poszerz do i16 lub scalar.
+- **F2 signed saturating add/sub:** brak czystej word-SWAR formuły z pełną
+  ważnością i8 w źródłach pierwotnych (to dokładnie gdzie żył bug carry-leak).
+  → poszerz do i16, saturuj, zwęź. (Unsigned-sat da się, z własnym testem.)
+- **F3 transcendentalne / dzielenie na lane'ach:** brak formy SWAR; per-lane
+  iteracja albo LUT. Dzielenie przez runtime-wartość nie ma word-parallel tricku.
+- **F4 arytmetyka f16/bf16 poza domeną znaku:** add/mul half-float wymaga
+  wyrównania wykładnika + normalizacji — nie wyrażalne jako lane-parallel bit-ops.
+  Tylko neg/abs/copysign/relu-select (Grupa B) są exact. → konwersja przez f32.
+- **F5 porównania wartości f16/bf16 w domenie bitowej:** sign-magnitude nie jest
+  monotoniczne jako u16 (ujemne sortują odwrotnie; ±0 remisuje; NaN łamie).
+  → scalar per-lane albo konwersja do f32.
+Dodatkowo: **maski compare per-lane (A7 eq / A8 lt) wymagają borrow-CONTAINED
+formuły** (borrow każdego lane'a wchłonięty przez pre-set bit graniczny, jak A2);
+musl HASZERO to DETEKTOR (borrow kaskaduje przez pole zer), nie maska per-lane.
+
 ### 5.5 Dwie powierzchnie unary
 Każdy op unary eksponuje out-of-place `[op]` ORAZ in-place `[op]_inplace` na
 Tier II i Tier III (msts woła in-place). Wzorzec: makro `tier3_unary!` w
