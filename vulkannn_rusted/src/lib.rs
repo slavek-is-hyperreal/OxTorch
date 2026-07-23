@@ -40,6 +40,20 @@ fn set_par_threshold(op: &str, n: usize) -> PyResult<bool> {
     }
 }
 
+/// Test hook: run a CPU f32 unary op over a flat array and return the result.
+/// Exists so the Python parity suite can reach the RAM-path transcendental
+/// kernels directly (the high-level unary path is not exposed to Python for
+/// in-memory tensors). Not a production API.
+#[pyfunction]
+fn cpu_unary_f32(op: &str, x: Vec<f32>) -> PyResult<Vec<f32>> {
+    let mut out = vec![0f32; x.len()];
+    match op {
+        "exp" => cpu::exp_f32(&x, &mut out),
+        _ => return Err(pyo3::exceptions::PyValueError::new_err(format!("cpu_unary_f32: unknown op {op}"))),
+    }
+    Ok(out)
+}
+
 /// Pin the dispatch ladder to a specific SIMD tier ("scalar"/"sse2"/"avx1"/
 /// "avx2"/"neon"/"swar"), or "auto"/"" to restore normal detection. Requests
 /// wider than the CPU supports (or off-family) are ignored, not executed.
@@ -64,6 +78,7 @@ fn vulkannn_rusted(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_available_ram_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(set_par_threshold, m)?)?;
     m.add_function(wrap_pyfunction!(force_arch, m)?)?;
+    m.add_function(wrap_pyfunction!(cpu_unary_f32, m)?)?;
     m.add_class::<DataType>()?;
     m.add_class::<Tensor>()?;
     m.add_class::<models::bitnet::BitNetModel>()?;

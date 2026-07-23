@@ -2,6 +2,7 @@
 
 pub mod relu;
 pub mod neg;
+pub mod exp;
 
 pub use relu::{
     relu_f32, relu_f16, relu_bf16, relu_i8,
@@ -15,4 +16,10 @@ pub use neg::{
     neg_f32_inplace, neg_f16_inplace, neg_bf16_inplace,
     neg_f32_serial, neg_f16_serial, neg_bf16_serial,
     neg_f32_inplace_serial, neg_f16_inplace_serial, neg_bf16_inplace_serial,
+};
+pub use exp::{
+    exp_f32, exp_f16, exp_bf16,
+    exp_f32_inplace, exp_f16_inplace, exp_bf16_inplace,
+    exp_f32_serial, exp_f32_inplace_serial,
+    exp_f16_inplace_serial, exp_bf16_inplace_serial,
 };

@@ -280,7 +280,7 @@ impl Tensor {
                         "sigmoid" => { v_out.copy_from_slice(v_in); crate::cpu::sigmoid_f32(v_out); },
                         "silu" => { v_out.copy_from_slice(v_in); crate::cpu::silu_f32(v_out); },
                         "tanh" => { v_out.copy_from_slice(v_in); crate::cpu::tanh_f32(v_out); },
-                        "exp" => { v_out.copy_from_slice(v_in); crate::cpu::exp_f32(v_out); },
+                        "exp" => { v_out.copy_from_slice(v_in); crate::cpu::exp_f32_inplace(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
                 },
@@ -343,7 +343,7 @@ impl Tensor {
                         "sigmoid" => { v_out.copy_from_slice(v_in); crate::cpu::sigmoid_f32(v_out); },
                         "silu" => { v_out.copy_from_slice(v_in); crate::cpu::silu_f32(v_out); },
                         "tanh" => { v_out.copy_from_slice(v_in); crate::cpu::tanh_f32(v_out); },
-                        "exp" => { v_out.copy_from_slice(v_in); crate::cpu::exp_f32(v_out); },
+                        "exp" => { v_out.copy_from_slice(v_in); crate::cpu::exp_f32_inplace(v_out); },
                         _ => { v_out.copy_from_slice(v_in); },
                     }
                 },

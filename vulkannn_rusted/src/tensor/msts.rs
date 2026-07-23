@@ -272,7 +272,7 @@ impl Tensor {
                 let out_s = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
                 core_ops::unary::neg::neg_bf16(in_s, out_s);
             },
-            (DataType::BF16, "exp") => legacy_ops::exp_bf16(buf.as_slice_mut_generic()),
+            (DataType::BF16, "exp") => core_ops::unary::exp::exp_bf16_inplace(buf.as_slice_mut_generic()),
             (DataType::BF16, "sigmoid") => legacy_ops::sigmoid_bf16(buf.as_slice_mut_generic()),
             (DataType::BF16, "silu") => legacy_ops::silu_bf16(buf.as_slice_mut_generic()),
             (DataType::BF16, "tanh") => legacy_ops::tanh_bf16(buf.as_slice_mut_generic()),
@@ -290,7 +290,7 @@ impl Tensor {
                 let out_s = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
                 core_ops::unary::neg::neg_f32(in_s, out_s);
             },
-            (DataType::F32, "exp") => legacy_ops::exp_f32(buf.as_slice_mut_generic()),
+            (DataType::F32, "exp") => core_ops::unary::exp::exp_f32_inplace(buf.as_slice_mut_generic()),
             (DataType::F32, "sigmoid") => legacy_ops::sigmoid_f32(buf.as_slice_mut_generic()),
             (DataType::F32, "silu") => legacy_ops::silu_f32(buf.as_slice_mut_generic()),
             (DataType::F32, "tanh") => legacy_ops::tanh_f32(buf.as_slice_mut_generic()),
@@ -425,7 +425,7 @@ impl Tensor {
                 (DataType::F32, "sigmoid") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::sigmoid_f32(tile.slot_res.as_slice_mut::<f32>()) },
                 (DataType::F32, "silu") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::silu_f32(tile.slot_res.as_slice_mut::<f32>()) },
                 (DataType::F32, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::tanh_f32(tile.slot_res.as_slice_mut::<f32>()) },
-                (DataType::F32, "exp") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::exp_f32(tile.slot_res.as_slice_mut::<f32>()) },
+                (DataType::F32, "exp") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::exp::exp_f32_inplace_serial(tile.slot_res.as_slice_mut::<f32>()) },
                 (DataType::F32, "pow") if other.is_none() => core_ops::binary::pow::pow_f32_serial(tile.slot_a.as_slice::<f32>(), tile.slot_res.as_slice_mut::<f32>(), param1),
 
                 (DataType::BF16, "relu") if other.is_none() => core_ops::unary::relu::relu_bf16_serial(tile.slot_a.as_slice::<half::bf16>(), tile.slot_res.as_slice_mut::<half::bf16>()),
@@ -434,7 +434,7 @@ impl Tensor {
                 (DataType::BF16, "sigmoid") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::sigmoid_bf16(tile.slot_res.as_slice_mut::<half::bf16>()) },
                 (DataType::BF16, "silu") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::silu_bf16(tile.slot_res.as_slice_mut::<half::bf16>()) },
                 (DataType::BF16, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::tanh_bf16(tile.slot_res.as_slice_mut::<half::bf16>()) },
-                (DataType::BF16, "exp") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::exp_bf16(tile.slot_res.as_slice_mut::<half::bf16>()) },
+                (DataType::BF16, "exp") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::exp::exp_bf16_inplace_serial(tile.slot_res.as_slice_mut::<half::bf16>()) },
 
                 (DataType::F16, "relu") if other.is_none() => core_ops::unary::relu::relu_f16_serial(tile.slot_a.as_slice::<half::f16>(), tile.slot_res.as_slice_mut::<half::f16>()),
                 (DataType::F16, "neg") if other.is_none() => core_ops::unary::neg::neg_f16_serial(tile.slot_a.as_slice::<half::f16>(), tile.slot_res.as_slice_mut::<half::f16>()),
@@ -442,7 +442,7 @@ impl Tensor {
                 (DataType::F16, "sigmoid") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::sigmoid_f16(tile.slot_res.as_slice_mut::<half::f16>()) },
                 (DataType::F16, "silu") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::silu_f16(tile.slot_res.as_slice_mut::<half::f16>()) },
                 (DataType::F16, "tanh") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::tanh_f16(tile.slot_res.as_slice_mut::<half::f16>()) },
-                (DataType::F16, "exp") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::exp_f16(tile.slot_res.as_slice_mut::<half::f16>()) },
+                (DataType::F16, "exp") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; core_ops::unary::exp::exp_f16_inplace_serial(tile.slot_res.as_slice_mut::<half::f16>()) },
 
                 (DataType::Int8, "relu") if other.is_none() => core_ops::unary::relu::relu_i8_serial(tile.slot_a.as_slice::<i8>(), tile.slot_res.as_slice_mut::<i8>()),
                 (DataType::Int8, "sigmoid") if other.is_none() => { unsafe { std::ptr::copy_nonoverlapping(tile.slot_a.get_ptr(), tile.slot_res.get_ptr(), tile.slot_a.size) }; legacy_ops::sigmoid_i8(tile.slot_res.as_slice_mut::<i8>()) },

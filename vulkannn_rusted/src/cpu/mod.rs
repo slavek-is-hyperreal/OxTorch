@@ -27,3 +27,7 @@ pub use ops::unary::neg::{
     neg_f32, neg_f16, neg_bf16,
     neg_f32_inplace, neg_f16_inplace, neg_bf16_inplace,
 };
+pub use ops::unary::exp::{
+    exp_f32, exp_f16, exp_bf16,
+    exp_f32_inplace, exp_f16_inplace, exp_bf16_inplace,
+};
