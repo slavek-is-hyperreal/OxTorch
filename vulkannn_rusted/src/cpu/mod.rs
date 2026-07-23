@@ -49,3 +49,4 @@ pub use ops::unary::gelu::{
     gelu_f32_inplace, gelu_f16_inplace, gelu_bf16_inplace,
 };
 pub use ops::reduction::sum::{sum_f32, sum_f16, sum_bf16, sum_i8, sum_f32_acc, sum_f16_acc, sum_bf16_acc, sum_i8_acc};
+pub use ops::reduction::max::{max_f32, max_f16, max_bf16, max_i8};

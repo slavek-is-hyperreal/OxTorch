@@ -840,22 +840,22 @@ impl Tensor {
             
             match (self.dtype, op) {
                 (DataType::F32, "sum") | (DataType::F32, "mean") => acc_f64 += core_ops::reduction::sum::sum_f32_acc(tile.slot_a.as_slice()),
-                (DataType::F32, "max") => acc_f32 = legacy_ops::max_f32(tile.slot_a.as_slice(), acc_f32),
+                (DataType::F32, "max") => acc_f32 = core_ops::reduction::max::max_f32(tile.slot_a.as_slice(), acc_f32),
                 (DataType::F32, "min") => {
                     let slice = tile.slot_a.as_slice::<f32>();
                     for &x in slice { if x < acc_f32 { acc_f32 = x; } }
                 },
 
                 (DataType::BF16, "sum") | (DataType::BF16, "mean") => acc_f64 += core_ops::reduction::sum::sum_bf16_acc(tile.slot_a.as_slice()),
-                (DataType::BF16, "max") => acc_f32 = legacy_ops::max_bf16(tile.slot_a.as_slice(), acc_f32),
+                (DataType::BF16, "max") => acc_f32 = core_ops::reduction::max::max_bf16(tile.slot_a.as_slice(), acc_f32),
 
                 (DataType::F16, "sum") | (DataType::F16, "mean") => acc_f64 += core_ops::reduction::sum::sum_f16_acc(tile.slot_a.as_slice()),
-                (DataType::F16, "max") => acc_f32 = legacy_ops::max_f16(tile.slot_a.as_slice(), acc_f32),
+                (DataType::F16, "max") => acc_f32 = core_ops::reduction::max::max_f16(tile.slot_a.as_slice(), acc_f32),
 
                 (DataType::Int8, "sum") | (DataType::Int8, "mean") => acc_f64 += core_ops::reduction::sum::sum_i8_acc(tile.slot_a.as_slice()) as f64,
                 (DataType::Int8, "max") => acc_f32 = {
                     let s = tile.slot_a.as_slice::<i8>();
-                    let m = legacy_ops::max_i8(s, acc_f32 as i8);
+                    let m = core_ops::reduction::max::max_i8(s, acc_f32 as i8);
                     m as f32
                 },
 

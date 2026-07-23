@@ -55,6 +55,22 @@ agreed to correct post-migration. **OPEN** = not yet decided.
   correctly. NEON already uses `vnegq_f32` (correct).
 - **Post-Wave-6 note:** recommended FIX (switch SIMD tiers to sign XOR).
 
+## 5. `max` reduction ignores NaN (torch: propagates NaN) — OPEN, leaning FIX
+
+- **Where:** `cpu/ops/reduction/max/*` (all dtypes). `f32::max` and
+  `_mm*_max_ps`/`vmaxq_f32` all return the non-NaN operand, so a NaN in the input
+  is silently dropped: `max([1, NaN, 3]) = 3`. torch (and numpy.max) propagate:
+  `= NaN`.
+- **Legacy:** identical (`a.max(b)` fold + `_mm256_max_ps`). Transcribed verbatim.
+- **Severity:** HIGH — same class as relu(NaN) §2. A NaN that torch surfaces at
+  the reduction output is silently masked here; a model that visibly NaNs under
+  PyTorch can look healthy under OxTorch. Note this also affects softmax's
+  max-subtraction stabilisation (a NaN row max would be dropped).
+- **Fix cost:** cheap — an explicit `is_nan` check / a compare-and-select that
+  keeps NaN in the running max.
+- **Post-Wave-6 note:** recommended FIX (align with torch NaN propagation),
+  reviewed together with §2 relu(NaN).
+
 ## 3. `exp` (and dependents) — SIMD polynomial vs scalar `std::exp` — OPEN
 
 - **Where:** `cpu/ops/unary/exp` and everything built on it (sigmoid, silu,
