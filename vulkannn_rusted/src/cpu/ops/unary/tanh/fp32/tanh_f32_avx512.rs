@@ -8,7 +8,7 @@ use crate::cpu::ops::unary::exp::fp32::exp_f32_avx512::exp16;
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
-unsafe fn tanh16(x: __m512) -> __m512 {
+pub(crate) unsafe fn tanh16(x: __m512) -> __m512 {
     let one = _mm512_set1_ps(1.0);
     let two = _mm512_set1_ps(2.0);
     let absmask = _mm512_set1_ps(f32::from_bits(0x7fff_ffff));

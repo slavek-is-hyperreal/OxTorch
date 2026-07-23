@@ -10,7 +10,7 @@ use crate::cpu::ops::unary::exp::fp32::exp_f32_avx2::exp8;
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn tanh8(x: __m256) -> __m256 {
+pub(crate) unsafe fn tanh8(x: __m256) -> __m256 {
     let one = _mm256_set1_ps(1.0);
     let two = _mm256_set1_ps(2.0);
     let sign = _mm256_set1_ps(-0.0);

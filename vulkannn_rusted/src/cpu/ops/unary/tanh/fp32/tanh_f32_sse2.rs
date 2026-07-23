@@ -8,7 +8,7 @@ use crate::cpu::ops::unary::exp::fp32::exp_f32_sse2::exp4;
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
-unsafe fn tanh4(x: __m128) -> __m128 {
+pub(crate) unsafe fn tanh4(x: __m128) -> __m128 {
     let one = _mm_set1_ps(1.0);
     let two = _mm_set1_ps(2.0);
     let sign = _mm_set1_ps(-0.0);

@@ -44,3 +44,7 @@ pub use ops::unary::tanh::{
     tanh_f32, tanh_f16, tanh_bf16, tanh_i8,
     tanh_f32_inplace, tanh_f16_inplace, tanh_bf16_inplace,
 };
+pub use ops::unary::gelu::{
+    gelu_f32, gelu_f16, gelu_bf16, gelu_i8,
+    gelu_f32_inplace, gelu_f16_inplace, gelu_bf16_inplace,
+};
