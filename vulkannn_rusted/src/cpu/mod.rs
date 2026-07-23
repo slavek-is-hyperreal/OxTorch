@@ -55,3 +55,5 @@ pub use ops::reduction::softmax::{softmax_f32, softmax_f16, softmax_bf16, softma
 pub use ops::norm::layer_norm::{layer_norm_f32, layer_norm_f16, layer_norm_bf16};
 pub use ops::norm::rms_norm::{rms_norm_f32, rms_norm_f16, rms_norm_bf16};
 pub use ops::norm::sub_layer_norm::sub_layer_norm_f32;
+pub use ops::sequence::cat::{cat_f32, cat_f16, cat_bf16, cat_i8};
+pub use ops::indexing::index_select::{index_select_f32, index_select_f16, index_select_bf16, index_select_i8, embedding_f32};
