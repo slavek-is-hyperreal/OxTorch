@@ -57,3 +57,5 @@ pub use ops::norm::rms_norm::{rms_norm_f32, rms_norm_f16, rms_norm_bf16};
 pub use ops::norm::sub_layer_norm::sub_layer_norm_f32;
 pub use ops::sequence::cat::{cat_f32, cat_f16, cat_bf16, cat_i8};
 pub use ops::indexing::index_select::{index_select_f32, index_select_f16, index_select_bf16, index_select_i8, embedding_f32};
+pub use ops::matmul::{matmul_f32, matmul_f16, matmul_bf16, linear_f32, linear_f16, linear_bf16};
+pub use ops::quantization::{quantize_per_token_absmax_f32, quantize_per_token_absmax_bf16, quantize_per_token_absmax_f16};
