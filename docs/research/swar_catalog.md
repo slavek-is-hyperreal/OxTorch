@@ -4,12 +4,15 @@
 > - **Source:** deep research report ("VERIFIED SWAR Technique Catalog"),
 >   produced by Sonnet-class deep research, supplied by the user.
 > - **Ingested:** 2026-07-23, at migration HEAD `9689fe0`.
-> - **Status:** SPOT-CHECK REQUIRED BEFORE IMPLEMENTATION. Per project protocol
->   (migration addendum §2), three sources must be independently re-verified
->   before any card here is implemented (Stage 1 / Krok B): musl `HASZERO` (E1),
->   A2 wrapping-sub formula (Chessprogramming wiki), RTN Eq. 8 (C4a,
->   arXiv:1912.02057 §3.4). This status line is updated to "spot-check done:
->   <results>" once that runs. Until then, do NOT implement from this catalog.
+> - **Status:** SPOT-CHECK DONE 2026-07-23 — ALL THREE CONFIRMED VERBATIM:
+>   1. musl `HASZERO` (E1): git.musl-libc.org strlen.c = `((x)-ONES & ~(x) &
+>      HIGHS)`, `ONES=(size_t)-1/UCHAR_MAX`=0x01..01, `HIGHS=ONES*(UCHAR_MAX/2+1)`
+>      =0x80..80. Catalog E1 MATCHES (outer parens equivalent by C precedence).
+>   2. A2 wrapping-sub (Chessprogramming wiki): `((x|H) - (y&~H)) ^ ((x^~y)&H)`.
+>      Catalog A2 MATCHES exactly (A1 add also matches).
+>   3. RTN Eq.8 (C4a, ar5iv 1912.02057 §3.4): `bC(c) − 2·bC((W₂⊕A₂)∧c)`,
+>      `c=W₁∧A₁`; Table 1 sign bit 1→+1, 0→−1. Catalog C4a MATCHES exactly.
+>   Catalog is trustworthy for Stage 1 implementation.
 > - **Cards flagged partially-unconfirmed by the catalog itself** (treat per the
 >   catalog's own guidance): arXiv:2601.11660 subtractive notation; TAB
 >   (DOI 10.1145/3508390) reconstruction eq (paywalled). For C4b rely on

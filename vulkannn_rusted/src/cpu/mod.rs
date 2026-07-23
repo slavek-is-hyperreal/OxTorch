@@ -1,4 +1,5 @@
 pub mod ops;
+pub mod swar;
 pub mod conversions;
 pub mod tiling_cpu;
 pub mod dispatch;
