@@ -51,3 +51,4 @@ pub use ops::unary::gelu::{
 pub use ops::reduction::sum::{sum_f32, sum_f16, sum_bf16, sum_i8, sum_f32_acc, sum_f16_acc, sum_bf16_acc, sum_i8_acc};
 pub use ops::reduction::max::{max_f32, max_f16, max_bf16, max_i8};
 pub use ops::reduction::argmax::{argmax_f32, argmax_f16};
+pub use ops::reduction::softmax::{softmax_f32, softmax_f16, softmax_bf16, softmax_i8};
